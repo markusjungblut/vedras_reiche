@@ -1,0 +1,18 @@
+{
+  "name": "vedras-reiche",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "npm run dev --workspace @vedras/game-core",
+    "build": "npm run build --workspace @vedras/game-core",
+    "typecheck": "npm run typecheck --workspace @vedras/game-core",
+    "test": "npm run test --workspace @vedras/game-core"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
