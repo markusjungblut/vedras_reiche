@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
   GameActionType, GameEventType, GamePhase, Suit,
-  createGameState, createTerritoryCard, startRound,
+  createGameState, createGridMap, createTerritoryCard, getTerritoryArea,
+  proposeTerritorySplit, chooseSplitPart, startRound,
 } from "../dist/index.js";
 import {
   beginStartAuctions,
@@ -102,6 +103,35 @@ test("two start auction rounds use disjoint P+1 displays and end with two territ
   const round = startRound(state, new SequenceRandomSource([0, 1, 1, 2, 1, 3, 1]), timestamp);
   assert.equal(round.state.round, 1);
   assert.equal(round.events.some((event) => event.type === GameEventType.RoundStarted), true);
+});
+
+test("a raster start auction tie uses divider proposal and chooser decision", () => {
+  const cells = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [
+    `${index % 8},${Math.floor(index / 8)}`, "t1",
+  ]));
+  const random = new SequenceRandomSource(Array(6).fill(0));
+  let state = { ...makeSetup(), map: createGridMap({ width: 8, height: 5, format: "A4" }, cells) };
+  state = { ...state, territories: state.territories.map((territory) => territory.id === "t1"
+    ? { ...territory, card: createTerritoryCard(Suit.Hearts, 5) } : territory) };
+  state = beginStartAuctions(state, "B", random, timestamp).state;
+  state = open(state);
+  state = bid(state, "A", 2).state;
+  state = bid(state, "B", 2).state;
+  assert.deepEqual([state.pendingSplit.dividerPlayerId, state.pendingSplit.firstChooserPlayerId], ["A", "B"]);
+  const partACells = Array.from({ length: 20 }, (_, index) => ({ x: index % 8, y: Math.floor(index / 8) }));
+  state = proposeTerritorySplit(state, { type: GameActionType.ProposeTerritorySplit,
+    splitId: state.pendingSplit.id, playerId: "A", partACells, originalCardPart: "A" }, timestamp).state;
+  state = chooseSplitPart(state, { type: GameActionType.ChooseSplitPart,
+    splitId: state.pendingSplit.id, playerId: "B", chosenPart: "B" }, random, timestamp).state;
+  const other = state.territories.find((territory) => territory.id.startsWith("t1:split:"));
+  assert.equal(state.territories.find((territory) => territory.id === "t1").ownerId, "A");
+  assert.equal(other.ownerId, "B");
+  assert.equal(state.territories.find((territory) => territory.id === "t1").card.suit, Suit.Hearts);
+  assert.ok(other.card);
+  assert.equal(getTerritoryArea(state.map, "t1"), 20);
+  assert.equal(getTerritoryArea(state.map, other.id), 20);
+  assert.equal(state.pendingSplit, undefined);
+  assert.equal(state.startAuctions.round, 2);
 });
 
 test("all zero and later non-awards rotate the auctioneer and wrap the fixed display", () => {
@@ -211,6 +241,10 @@ test("a legal two-player split can complete round one and immediately draw round
 test("split resolution keeps the start auction pending until controlled map parts arrive", () => {
   const random = new SequenceRandomSource(Array(6).fill(0));
   const setup = makeSetup();
+  const mapCells = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [
+    `${index % 8},${Math.floor(index / 8)}`, "t1",
+  ]));
+  setup.map = createGridMap({ width: 8, height: 5, format: "A4" }, mapCells);
   setup.territories[0] = {
     ...setup.territories[0], card: createTerritoryCard(Suit.Clubs, 12),
   };
@@ -235,11 +269,24 @@ test("split resolution keeps the start auction pending until controlled map part
     dividerPlayerId: resolution.firstChooserPlayerId,
   }, random, timestamp));
   assert.deepEqual(state, pendingSnapshot);
-  const result = resolveTerritorySplit(state, resolution, random, timestamp);
+  assert.throws(() => resolveTerritorySplit(state, resolution, random, timestamp));
+  const proposal = proposeTerritorySplit(state, {
+    type: GameActionType.ProposeTerritorySplit,
+    splitId: state.pendingSplit.id,
+    playerId: state.pendingSplit.dividerPlayerId,
+    partACells: Array.from({ length: 20 }, (_, index) => ({ x: index % 8, y: Math.floor(index / 8) })),
+    originalCardPart: "A",
+  }, timestamp).state;
+  const result = chooseSplitPart(proposal, {
+    type: GameActionType.ChooseSplitPart,
+    splitId: proposal.pendingSplit.id,
+    playerId: proposal.pendingSplit.firstChooserPlayerId,
+    chosenPart: "B",
+  }, random, timestamp);
   assert.equal(result.state.startAuctions.round, 2);
   assert.equal(result.state.pendingSplit, undefined);
   assert.equal(result.state.territories.find((territory) => territory.id === "t1").ownerId, "A");
-  assert.equal(result.state.territories.find((territory) => territory.id === "split-t1").ownerId, "B");
+  assert.equal(result.state.territories.find((territory) => territory.id.startsWith("t1:split:")).ownerId, "B");
   assert.equal(result.events.some((event) => event.type === GameEventType.TerritorySplitResolved), true);
 });
 

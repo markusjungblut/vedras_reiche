@@ -139,7 +139,7 @@ test("winning with the last available basic bid immediately refreshes all three"
   assert.ok(final.events.some((event) => event.type === GameEventType.BasicBidsRefreshed));
 });
 
-test("two highest bidders create a pending split without payment or invented split roles", () => {
+test("two highest bidders create a pending split with immediate roles and no payment", () => {
   let state = open(stateWith()).state;
   state = submit(state, "A", 2, 2).state;
   state = submit(state, "B", 3, 1).state;
@@ -147,8 +147,8 @@ test("two highest bidders create a pending split without payment or invented spl
   assert.equal(final.state.auction, undefined);
   assert.deepEqual(final.state.pendingSplit.tiedPlayerIds, ["A", "B"]);
   assert.equal(final.state.pendingSplit.auctionKind, "NORMAL");
-  assert.equal(final.state.pendingSplit.dividerPlayerId, undefined);
-  assert.equal(final.state.pendingSplit.firstChooserPlayerId, undefined);
+  assert.equal(final.state.pendingSplit.dividerPlayerId, "A");
+  assert.equal(final.state.pendingSplit.firstChooserPlayerId, "B");
   assert.equal(final.state.territories.find((territory) => territory.id === "X").ownerId, null);
   assert.equal(final.state.players[0].globalInfluence, 6);
   assert.equal(final.state.players[1].globalInfluence, 6);

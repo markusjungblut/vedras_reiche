@@ -33,7 +33,7 @@ Das Repository verwendet npm Workspaces und TypeScript im Strict Mode.
 
 Vor Runde 1 finden zwei Startauktionsrunden statt. Jede legt mit der eingespeisten `RandomSource` `Spielerzahl + 1` neutrale Gebiete in zufälliger, anschließend fester Reihenfolge aus. Die zweite Auslage enthält keine Gebiete der ersten, auch wenn diese neutral geblieben sind. Das nächste noch neutrale Gebiet der Auslage wird versteigert; nach dem letzten Gebiet beginnt ein weiterer Durchlauf durch dieselbe Auslage. Der Auktionssteller wandert nach jeder einzelnen Auktion im Uhrzeigersinn. Er wählt das Gebiet nicht aus.
 
-In jeder Startauktionsrunde erhält jeder Spieler die Gebote `0` bis `Spielerzahl`. Nur Spieler ohne Gebiet aus dieser Runde bieten mit. Jedes aufgedeckte Gebot wird verbraucht, auch die `0` und auch bei einem verlorenen Gebot. Ein Spieler ohne Gebiet erhält sofort einen neuen vollständigen Satz, wenn sein Satz aufgebraucht ist. Ein eindeutiger Höchstbietender erhält das Gebiet und scheidet für diese Startauktionsrunde aus. Bei lauter Nullen oder mindestens drei Höchstbietenden bleibt das Gebiet neutral. Genau zwei Höchstbietende führen zu einer ausstehenden Gebietsteilung, bis eine Geometrieauflösung eine legale Teilung oder deren Unmöglichkeit meldet. Nach zwei vollständig abgeschlossenen Runden besitzt jeder Spieler zwei Gebiete; für das reguläre Spiel stehen sechs globale Einflusspunkte und die Grundgebote `1`, `2`, `3` bereit.
+In jeder Startauktionsrunde erhält jeder Spieler die Gebote `0` bis `Spielerzahl`. Nur Spieler ohne Gebiet aus dieser Runde bieten mit. Jedes aufgedeckte Gebot wird verbraucht, auch die `0` und auch bei einem verlorenen Gebot. Ein Spieler ohne Gebiet erhält sofort einen neuen vollständigen Satz, wenn sein Satz aufgebraucht ist. Ein eindeutiger Höchstbietender erhält das Gebiet und scheidet für diese Startauktionsrunde aus. Bei lauter Nullen oder mindestens drei Höchstbietenden bleibt das Gebiet neutral. Genau zwei Höchstbietende führen zur zweistufigen, im Core geometrisch geprüften Gebietsteilung: Einer zieht die Grenze, der andere wählt zuerst. Nach zwei vollständig abgeschlossenen Runden besitzt jeder Spieler zwei Gebiete; für das reguläre Spiel stehen sechs globale Einflusspunkte und die Grundgebote `1`, `2`, `3` bereit.
 
 ## Runden und Aktivierungen
 
@@ -52,7 +52,7 @@ Die offenen Aktivierungen werden zu Beginn der Phase ermittelt. Erhält ein Gebi
 | ♥ Herz | Wahl zwischen genau einem globalen Einfluss oder zwei lokalen Einflusspunkten auf einem angrenzenden neutralen Gebiet. |
 | ♠ Pik | Ein einmal verwendbarer Bonus mit Spieler und Herkunftsgebiet wird für die laufende Runde vorgemerkt und verfällt am Rundenende, wenn er ungenutzt bleibt. Die Bonusberechnung gehört zum späteren Kriegssystem. |
 
-Nachbarschaften liegen derzeit als logische Beziehungen zwischen Gebieten vor. Sie reichen für Zielvalidierung und Grenzmarkierungen. Die tatsächliche Karten- und Grenzgeometrie, einschließlich einer Verschiebung um bis zu zwei Kästchen, ist noch nicht modelliert. Die abstrakte Gebietsfläche ersetzt keine Raster- oder Polygonberechnung.
+Nachbarschaften und Flächen werden aus der Rasterkarte berechnet. Die ♦-Verschiebung um bis zu zwei Kästchen und ihre Kriegswirkung folgen weiterhin in AP5.
 
 ## Aktionsphase und normale Auktionen
 
@@ -62,13 +62,17 @@ Bei einer normalen Auktion müssen alle Spieler verdeckt bieten, auch ohne Nachb
 
 Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über eine legale Gebietsteilung offen. Bei mindestens drei Höchstbietenden bleibt das Gebiet neutral und niemand bezahlt. Nach dem ersten solchen Gleichstand darf der aktive Spieler innerhalb derselben Grundaktion eine zweite Auktion eröffnen oder seinen Zug beenden. Eine dritte Auktion ist nicht möglich. Nach vollständig abgewickelter Aktion folgt der nächste Spieler. Erst nach der letzten Aktion ist die Runde abgeschlossen und kann die nächste beginnen; nach der letzten Spielrunde folgt `SCORING`.
 
-Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. Ein späterer Server muss vor der Aufdeckung die Gebotshöhen aus den Ansichten anderer Spieler entfernen.
+Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor der Aufdeckung gegnerische Gebotshöhen und geheime Fraktionssymbole anderer Spieler. Ein späterer Server darf nur diese serverseitig redigierte Spieleransicht an Clients senden.
 
 ## Visual Debug Client
 
-Der Browser-Client zeigt einen vorbereiteten Spielstand mit Anna, Ben und Clara sowie 16 abstrakten Gebieten. Das feste Raster ist nur eine Übersicht; Spielnachbarschaften stammen aus dem Core-Zustand. Startauktionen, Aktivierungen und normale Auktionen lassen sich lokal als Pass-and-play bedienen. Das Ereignisprotokoll, ein einblendbarer Rohzustand und sichtbare Domain-Fehler helfen beim Nachvollziehen der Regeln.
+Der Browser-Client zeigt einen vorbereiteten Spielstand mit Anna, Ben und Clara sowie 16 Gebieten auf einer echten 32×20-Debug-Rasterkarte. Rasterzellen, gemeinsame Kanten, Besitzerfarben, Karten-Symbole, Aktivierungszahlen und POIs werden aus `GameState.map` dargestellt. Ein Klick auf ein Kästchen wählt das Gebiet; Zoom- und Einpassen-Steuerungen erleichtern die Ansicht. Startauktionen, Aktivierungen und normale Auktionen lassen sich lokal als Pass-and-play bedienen.
 
-Ein wählbarer Debug-Seed macht den Zufallsablauf bei gleichen Entscheidungen reproduzierbar. Schnellstart-Szenarien führen gültige Core-Aktionen aus, um bestimmte Phasen schneller zu erreichen. Der Debug Client enthält keine echte Karten- oder Grenzgeometrie und keinen Multiplayer-Modus.
+Ein wählbarer Debug-Seed macht den Zufallsablauf bei gleichen Entscheidungen reproduzierbar. Schnellstart-Szenarien führen gültige Core-Aktionen aus, um bestimmte Phasen schneller zu erreichen. Die Demo-Rasterabmessung ist ausschließlich eine Fixture und keine neue Spielregel; ein Multiplayer-Modus ist nicht enthalten.
+
+## AP4: Rastergeometrie und Gebietsteilung
+
+Der Game Core verwendet ein orthogonales Raster als einzige Geometriequelle. `getTerritoryArea`, `isTerritoryConnected`, `getAdjacentTerritoryIds` und `getSharedBorder` arbeiten direkt auf `GridMapState`. POIs und Siedlungen/Städte liegen auf konkreten Zellen. Bei einer Zweiwege-Auktion zieht der Divider die Grenze; der First Chooser wählt in einem zweiten, core-validierten Schritt. Der neue Teil erhält eine unbenutzte Gebietskarte; bei vollständig verwendeten 48 Karten wird der gedruckte Wert der ursprünglichen Karte dupliziert. Zusätzliche Aktivierungszahl und Symbol bleiben beim ursprünglichen Kartenteil. Die Normalauktion verwendet dieselbe Rollenregel wie die Startauktion.
 
 ## Installation und Entwicklung
 
@@ -93,4 +97,4 @@ Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen Grundm
 
 ## Grenze dieses Arbeitspakets
 
-Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Der Web Client zeigt die Ergebnisse, ohne Spielregeln nachzubauen. Die tatsächliche Gebietsteilung und Grenzgeometrie, Kriegsauswertung, Wertung, grafische Karte und Multiplayer bleiben spätere Arbeitspakete. Eine ausstehende Gebietsteilung wird bis zu einer kontrolliert gelieferten Auflösung nicht als Flächenrechnung simuliert.
+Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Kriegsauswertung, Grenzverschiebung durch Krieg, Wertung und Multiplayer bleiben spätere Arbeitspakete. Die Kartenbasis und der geometrische Auktionssplit sind in AP4 enthalten.

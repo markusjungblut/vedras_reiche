@@ -3,7 +3,7 @@ import type { SubmitAuctionBidAction } from "../actions/game-action.js";
 import { createEvents, type EventDescription } from "../events/create-events.js";
 import { GameEventType } from "../events/game-event.js";
 import type { PlayerId, TerritoryId } from "../model/ids.js";
-import { getNextPlayer, getPlayerOrderFromStartPlayer } from "../rules/player-order.js";
+import { getNextPlayer, determineSplitRoles } from "../rules/player-order.js";
 import { GamePhase } from "../state/game-phase.js";
 import type { GameState } from "../state/game-state.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
@@ -300,10 +300,11 @@ export function submitStartAuctionBid(
         { type: GameEventType.AuctionResolved, payload: { auctionId: auction.id, result: reason } }]);
   }
   if (tiedPlayerIds.length === 2) {
-    const playerOrder = state.players.map((player) => player.id);
-    const clockwise = getPlayerOrderFromStartPlayer(playerOrder, start.auctioneerPlayerId);
-    const dividerPlayerId = clockwise.find((id) => tiedPlayerIds.includes(id))!;
-    const firstChooserPlayerId = tiedPlayerIds.find((id) => id !== dividerPlayerId)!;
+    const roles = determineSplitRoles(
+      state.players.map((player) => player.id),
+      start.auctioneerPlayerId,
+      [tiedPlayerIds[0]!, tiedPlayerIds[1]!],
+    );
     const splitId = `${auction.id}:split`;
     return result({ ...consumedState,
       pendingSplit: {
@@ -315,15 +316,15 @@ export function submitStartAuctionBid(
         tiedPlayerIds: [tiedPlayerIds[0]!, tiedPlayerIds[1]!],
         bids,
         auctioneerPlayerId: start.auctioneerPlayerId,
-        dividerPlayerId,
-        firstChooserPlayerId,
+        ...roles,
+        stage: "AWAITING_DIVISION",
       },
     }, timestamp, [...baseDescriptions,
       { type: GameEventType.AuctionTiedTwoPlayers,
         payload: { auctionId: auction.id, territoryId: auction.territoryId, tiedPlayerIds } },
       { type: GameEventType.TerritorySplitRequired,
         payload: { splitId, auctionId: auction.id, territoryId: auction.territoryId,
-          dividerPlayerId, firstChooserPlayerId } },
+          dividerPlayerId: roles.dividerPlayerId, firstChooserPlayerId: roles.firstChooserPlayerId } },
     ]);
   }
   const winnerId = tiedPlayerIds[0]!;

@@ -1,7 +1,9 @@
 # Offene Regelfragen
 
-Die bisher erfassten Fragen zu den Startauktionen sind durch die neue Regelergänzung geklärt und aus dieser Liste entfernt.
+Die bisher erfassten Fragen zu den Startauktionen und zur Rollenverteilung bei normalen Auktionen sind geklärt.
 
-## Rollen bei der Teilung nach einer normalen Auktion
+## Geklärte Entscheidung: Zweiergleichstand
 
-Wenn bei einer normalen Auktion genau zwei Spieler das höchste Gebot abgegeben haben: Wer von beiden zieht die Grenze, und wer wählt zuerst? Die Anleitung regelt diese Rollen ausdrücklich für die Startauktionen, aber nicht für normale Auktionen. Der Game Core hält beide Spieler und die ausstehende Teilung fest. Eine spätere Kartenauflösung kann die Rollen entgegennehmen; ihre Zuweisung muss noch geregelt werden.
+Start- und normale Auktion verwenden dieselbe Rollenregel. Referenz ist bei der Startauktion der Auktionssteller, bei der normalen Auktion der Eröffner. Ist die Referenz unter den beiden Höchstbietenden, zieht sie die Grenze. Andernfalls zieht der vom Referenzspieler aus im Uhrzeigersinn zuerst erreichte Höchstbietende. Der andere wählt zuerst. Die gemeinsame Core-Funktion `determineSplitRoles` legt beide Rollen sofort im Pending-Split fest.
+
+Weitere offene Fragen sind für AP4 nicht erforderlich; Kriegsauswertung und Grenzverschiebungen folgen in AP5.

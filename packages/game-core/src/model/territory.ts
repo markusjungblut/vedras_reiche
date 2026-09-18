@@ -1,21 +1,30 @@
 import type { PlayerId, PointOfInterestId, TerritoryId } from "./ids.js";
 import type { TerritoryCard } from "./territory-card.js";
+import type { GridCell } from "../map/grid-map.js";
 
 export enum SettlementKind {
   Settlement = "SETTLEMENT",
   City = "CITY",
 }
 
-/** Geometry and exact border placement are deferred to the map package. */
+export interface SettlementFeature {
+  readonly id: string;
+  readonly kind: SettlementKind;
+  readonly position: GridCell;
+}
+
 export interface Territory {
   readonly id: TerritoryId;
   readonly ownerId: PlayerId | null;
-  /** Abstract area value; the map's grid geometry is not represented here. */
-  readonly area: number;
-  readonly adjacentTerritoryIds: readonly TerritoryId[];
+  /** @deprecated Derived from GameState.map when a raster map is present. */
+  readonly area?: number;
+  /** @deprecated Derived from GameState.map when a raster map is present. */
+  readonly adjacentTerritoryIds?: readonly TerritoryId[];
   readonly card?: TerritoryCard;
   readonly pointOfInterestIds?: readonly PointOfInterestId[];
   readonly settlement?: SettlementKind;
+  /** Position-aware development; territory ownership is derived from the map. */
+  readonly settlementFeature?: SettlementFeature;
   readonly weakened?: boolean;
   readonly participatedInWarThisRound?: boolean;
   readonly localInfluenceByPlayerId?: Readonly<Record<PlayerId, number>>;

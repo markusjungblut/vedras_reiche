@@ -1,7 +1,7 @@
 import type { PlayerId } from "../model/ids.js";
 import type { TerritoryId } from "../model/ids.js";
 import type { Suit } from "../model/territory-card.js";
-import type { Territory } from "../model/territory.js";
+import type { GridCell } from "../map/grid-map.js";
 import type { NormalAuctionBid, StartAuctionBid } from "../auctions/auction-state.js";
 
 export enum GameActionType {
@@ -14,12 +14,14 @@ export enum GameActionType {
   ForfeitAction = "FORFEIT_ACTION",
   StartWar = "START_WAR",
   ActivateTerritory = "ACTIVATE_TERRITORY",
+  ProposeTerritorySplit = "PROPOSE_TERRITORY_SPLIT",
+  ChooseSplitPart = "CHOOSE_SPLIT_PART",
 }
 
 export type ActivationChoice =
   | { readonly type: "DIAMOND_NEUTRAL_BORDER"; readonly targetTerritoryId: TerritoryId }
   | { readonly type: "DIAMOND_MARK_BORDER"; readonly targetTerritoryId: TerritoryId }
-  | { readonly type: "CLUB_BUILD_SETTLEMENT"; readonly targetTerritoryId: TerritoryId }
+  | { readonly type: "CLUB_BUILD_SETTLEMENT"; readonly targetTerritoryId: TerritoryId; readonly position?: GridCell }
   | { readonly type: "CLUB_UPGRADE_CITY"; readonly targetTerritoryId: TerritoryId }
   | { readonly type: "CLUB_ADD_ACTIVATION_NUMBER"; readonly targetTerritoryId: TerritoryId }
   | { readonly type: "CLUB_ADD_SECOND_SUIT"; readonly targetTerritoryId: TerritoryId; readonly suit: Suit }
@@ -59,22 +61,27 @@ export interface SubmitAuctionBidAction {
   readonly bid: StartAuctionBid | NormalAuctionBid;
 }
 
-export type ResolveTerritorySplitAction =
-  | {
-      readonly type: GameActionType.ResolveTerritorySplit;
-      readonly splitId: string;
-      readonly resolution: "SPLIT_NOT_POSSIBLE";
-    }
-  | {
-      readonly type: GameActionType.ResolveTerritorySplit;
-      readonly splitId: string;
-      readonly resolution: "LEGAL_SPLIT";
-      /** Geometry is supplied and validated by a future map resolver. */
-      readonly originalCardPart: Territory;
-      readonly newCardPart: Territory;
-      readonly dividerPlayerId: PlayerId;
-      readonly firstChooserPlayerId: PlayerId;
-    };
+export interface ResolveTerritorySplitAction {
+  readonly type: GameActionType.ResolveTerritorySplit;
+  readonly splitId: string;
+  /** Only demonstrably impossible raster partitions may use this action. */
+  readonly resolution: "SPLIT_NOT_POSSIBLE";
+}
+
+export interface ProposeTerritorySplitAction {
+  readonly type: GameActionType.ProposeTerritorySplit;
+  readonly splitId: string;
+  readonly playerId: PlayerId;
+  readonly partACells: readonly GridCell[];
+  readonly originalCardPart: "A" | "B";
+}
+
+export interface ChooseSplitPartAction {
+  readonly type: GameActionType.ChooseSplitPart;
+  readonly splitId: string;
+  readonly playerId: PlayerId;
+  readonly chosenPart: "A" | "B";
+}
 
 export interface EndActionTurnAction {
   readonly type: GameActionType.EndActionTurn;
@@ -99,6 +106,8 @@ export type GameAction =
   | OpenAuctionAction
   | SubmitAuctionBidAction
   | ResolveTerritorySplitAction
+  | ProposeTerritorySplitAction
+  | ChooseSplitPartAction
   | EndActionTurnAction
   | ForfeitAction
   | StartWarAction

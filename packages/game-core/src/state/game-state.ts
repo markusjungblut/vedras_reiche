@@ -5,6 +5,7 @@ import type { GameId, PlayerId } from "../model/ids.js";
 import type { Player } from "../model/player.js";
 import type { PointOfInterest } from "../model/point-of-interest.js";
 import type { Territory } from "../model/territory.js";
+import type { GridMapState } from "../map/grid-map.js";
 import type { GamePhase } from "./game-phase.js";
 import type {
   ActivationPhaseState,
@@ -22,6 +23,8 @@ export interface GameState {
   /** Array order is the permanent clockwise player order. */
   readonly players: readonly Player[];
   readonly territories: readonly Territory[];
+  /** Authoritative raster geometry; omitted only during pre-map setup. */
+  readonly map?: GridMapState;
   readonly pointsOfInterest: readonly PointOfInterest[];
   readonly borderMarks: readonly BorderMark[];
   readonly startPlayerId: PlayerId;

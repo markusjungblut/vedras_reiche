@@ -7,6 +7,7 @@ import { getPlayerOrderFromStartPlayer } from "../rules/player-order.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import { GamePhase } from "./game-phase.js";
 import type { GameState } from "./game-state.js";
+import { areStateTerritoriesAdjacent } from "./geometry-selectors.js";
 
 export interface PotentialBasicActions {
   readonly canOpenAuction: boolean;
@@ -18,7 +19,7 @@ export function getPotentialAuctionTerritoryIds(state: GameState, playerId: Play
   const own = state.territories.filter((territory) => territory.ownerId === playerId);
   return state.territories
     .filter((target) => target.ownerId === null && own.some((source) =>
-      source.adjacentTerritoryIds.includes(target.id) || target.adjacentTerritoryIds.includes(source.id)))
+      areStateTerritoriesAdjacent(state, source.id, target.id)))
     .map((territory) => territory.id);
 }
 
@@ -27,16 +28,16 @@ export interface PotentialWarTarget {
   readonly defenderTerritoryId: TerritoryId;
 }
 
-/** Returns AP4 handoff candidates; combat legality remains in the core war module. */
+/** Returns war candidates; combat resolution remains in AP5. */
 export function getPotentialWarTargets(state: GameState, playerId: PlayerId): PotentialWarTarget[] {
   const own = state.territories.filter((territory) => territory.ownerId === playerId);
   const opponents = state.territories.filter((territory) => territory.ownerId !== null && territory.ownerId !== playerId);
   return own.flatMap((attacker) => opponents
-    .filter((defender) => attacker.adjacentTerritoryIds.includes(defender.id) || defender.adjacentTerritoryIds.includes(attacker.id))
+    .filter((defender) => areStateTerritoriesAdjacent(state, attacker.id, defender.id))
     .map((defender) => ({ attackerTerritoryId: attacker.id, defenderTerritoryId: defender.id })));
 }
 
-/** Logical adjacency only; AP4 will validate the remaining war rules. */
+/** Raster adjacency is checked here; remaining war rules and combat follow in AP5. */
 export function getPotentialBasicActions(state: GameState, playerId: PlayerId): PotentialBasicActions {
   return {
     canOpenAuction: getPotentialAuctionTerritoryIds(state, playerId).length > 0,
@@ -180,7 +181,7 @@ export function forfeitCurrentBasicAction(state: GameState, timestamp: string): 
   return { state: { ...advanced, events: [...state.events, ...events] }, events };
 }
 
-/** Slim handoff for AP4; no combat result is computed here. */
+/** Slim handoff until AP5; no combat result is computed here. */
 export function startPendingWar(state: GameState, action: StartWarAction, timestamp: string): ActionResult {
   if (state.phase !== GamePhase.ActionPhase || state.actionPhase === undefined ||
       state.activePlayerId !== action.playerId) {
@@ -194,8 +195,7 @@ export function startPendingWar(state: GameState, action: StartWarAction, timest
   const defender = state.territories.find((territory) => territory.id === action.defenderTerritoryId);
   if (attacker?.ownerId !== action.playerId || defender?.ownerId === null ||
       defender?.ownerId === undefined || defender.ownerId === action.playerId ||
-      !(attacker.adjacentTerritoryIds.includes(defender.id) ||
-        defender.adjacentTerritoryIds.includes(attacker.id))) {
+      !areStateTerritoriesAdjacent(state, attacker.id, defender.id)) {
     throw new DomainError(DomainErrorCode.InvalidBorderTarget);
   }
   const events = createEvents(state, timestamp, [{

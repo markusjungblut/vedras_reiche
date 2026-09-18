@@ -2,6 +2,7 @@ import type { TerritoryId } from "../model/ids.js";
 import { Suit } from "../model/territory-card.js";
 import type { GameState } from "../state/game-state.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
+import { getStateAdjacentTerritoryIds } from "../state/geometry-selectors.js";
 
 export interface DiamondTargets {
   readonly neutralTerritoryIds: readonly TerritoryId[];
@@ -21,9 +22,9 @@ export function getDiamondTargets(state: GameState, sourceTerritoryId: Territory
     throw new DomainError(DomainErrorCode.InvalidSuitSelection);
   }
 
-  const neighbors = state.territories.filter((territory) =>
-    source.adjacentTerritoryIds.includes(territory.id),
-  );
+  const neighbors = getStateAdjacentTerritoryIds(state, source.id)
+    .map((id) => state.territories.find((territory) => territory.id === id))
+    .filter((territory): territory is typeof source => territory !== undefined);
   return {
     neutralTerritoryIds: neighbors.filter((territory) => territory.ownerId === null).map((territory) => territory.id),
     opponentTerritoryIds: neighbors

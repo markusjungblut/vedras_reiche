@@ -1,4 +1,5 @@
 import type { PointOfInterestId, TerritoryId } from "./ids.js";
+import type { GridCell } from "../map/grid-map.js";
 
 export enum PointOfInterestType {
   Landmark = "LANDMARK",
@@ -7,9 +8,10 @@ export enum PointOfInterestType {
   Relic = "RELIC",
 }
 
-/** Position is deliberately omitted until the map geometry is specified. */
 export interface PointOfInterest {
   readonly id: PointOfInterestId;
   readonly type: PointOfInterestType;
-  readonly territoryId: TerritoryId;
+  readonly position: GridCell;
+  /** @deprecated The owning territory is derived from position and GameState.map. */
+  readonly territoryId?: TerritoryId;
 }

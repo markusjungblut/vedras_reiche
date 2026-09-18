@@ -10,6 +10,8 @@ import type { GameState } from "../state/game-state.js";
 import type { CardSource } from "../utils/card-source.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
+import { areStateTerritoriesAdjacent } from "../state/geometry-selectors.js";
+import { getGridCellTerritory, isCellInsideMap } from "../map/grid-map.js";
 
 export interface SymbolAbilityContext {
   readonly randomSource: RandomSource;
@@ -45,7 +47,7 @@ function getAdjacentTarget(
   errorCode: DomainErrorCode,
 ): Territory {
   const target = state.territories.find((territory) => territory.id === targetId);
-  if (target === undefined || !source.adjacentTerritoryIds.includes(targetId)) {
+  if (target === undefined || !areStateTerritoriesAdjacent(state, source.id, targetId)) {
     throw new DomainError(errorCode);
   }
   return target;
@@ -61,7 +63,7 @@ function getDevelopmentTarget(
   if (
     target === undefined ||
     target.ownerId !== playerId ||
-    (targetId !== source.id && !source.adjacentTerritoryIds.includes(targetId)) ||
+    (targetId !== source.id && !areStateTerritoriesAdjacent(state, source.id, targetId)) ||
     target.card === undefined
   ) {
     throw new DomainError(DomainErrorCode.InvalidDevelopmentTarget);
@@ -216,8 +218,19 @@ export function applySymbolAbility(
         if (target.settlement !== undefined) {
           throw new DomainError(DomainErrorCode.InvalidDevelopmentTarget);
         }
+        const position = action.choice.position;
+        if (state.map !== undefined && (position === undefined || !isCellInsideMap(state.map, position) ||
+            getGridCellTerritory(state.map, position) !== target.id)) {
+          throw new DomainError(DomainErrorCode.InvalidDevelopmentTarget);
+        }
         return {
-          state: replaceTerritory(state, { ...target, settlement: SettlementKind.Settlement }),
+          state: replaceTerritory(state, {
+            ...target,
+            settlement: SettlementKind.Settlement,
+            ...(position === undefined ? {} : {
+              settlementFeature: { id: `settlement:${target.id}`, kind: SettlementKind.Settlement, position },
+            }),
+          }),
           event: describe(GameEventType.ClubSettlementCreated, action, {
             targetTerritoryId: target.id,
           }),
@@ -228,7 +241,13 @@ export function applySymbolAbility(
           throw new DomainError(DomainErrorCode.InvalidDevelopmentTarget);
         }
         return {
-          state: replaceTerritory(state, { ...target, settlement: SettlementKind.City }),
+          state: replaceTerritory(state, {
+            ...target,
+            settlement: SettlementKind.City,
+            ...(target.settlementFeature === undefined ? {} : {
+              settlementFeature: { ...target.settlementFeature, kind: SettlementKind.City },
+            }),
+          }),
           event: describe(GameEventType.ClubCityCreated, action, {
             targetTerritoryId: target.id,
           }),

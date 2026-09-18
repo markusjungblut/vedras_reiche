@@ -1,4 +1,4 @@
-import type { GameState } from "@vedras/game-core";
+import { getPointOfInterestTerritory, getStateAdjacentTerritoryIds, getStateTerritoryArea, type GameState } from "@vedras/game-core";
 import { suitClass, suitName, suitSymbol } from "../formatters/suit-label";
 
 interface TerritoryDetailsProps {
@@ -14,7 +14,7 @@ export function TerritoryDetails({ state, territoryId, playerName }: TerritoryDe
   }
   const marks = state.borderMarks.filter((mark) => mark.territoryIds.includes(territory.id));
   const pendingBorders = state.pendingDiamondBorderChanges.filter((change) => change.sourceTerritoryId === territory.id || change.neutralTerritoryId === territory.id);
-  const pois = state.pointsOfInterest.filter((poi) => territory.pointOfInterestIds?.includes(poi.id) || poi.territoryId === territory.id);
+  const pois = state.pointsOfInterest.filter((poi) => territory.pointOfInterestIds?.includes(poi.id) || getPointOfInterestTerritory(state, poi) === territory.id);
   const localInfluence = Object.entries(territory.localInfluenceByPlayerId ?? {}).filter(([, amount]) => amount > 0);
   const card = territory.card;
   return (
@@ -29,8 +29,8 @@ export function TerritoryDetails({ state, territoryId, playerName }: TerritoryDe
         </div>}
         <dl className="details-list">
           <div><dt>Besitzer</dt><dd>{territory.ownerId === null ? "Neutral" : playerName(territory.ownerId)}</dd></div>
-          <div><dt>Fläche</dt><dd>{territory.area}</dd></div>
-          <div><dt>Nachbarn</dt><dd>{territory.adjacentTerritoryIds.join(", ") || "Keine"}</dd></div>
+          <div><dt>Fläche</dt><dd>{getStateTerritoryArea(state, territory.id)}</dd></div>
+          <div><dt>Nachbarn</dt><dd>{getStateAdjacentTerritoryIds(state, territory.id).join(", ") || "Keine"}</dd></div>
           {territory.settlement && <div><dt>Entwicklung</dt><dd>{territory.settlement === "CITY" ? "Stadt" : "Siedlung"}</dd></div>}
           {territory.weakened !== undefined && <div><dt>Schwächung</dt><dd>{territory.weakened ? "Ja" : "Nein"}</dd></div>}
           {territory.participatedInWarThisRound !== undefined && <div><dt>Krieg diese Runde</dt><dd>{territory.participatedInWarThisRound ? "Ja" : "Nein"}</dd></div>}

@@ -1,4 +1,5 @@
 import type { PlayerId, TerritoryId } from "../model/ids.js";
+import type { GridCell } from "../map/grid-map.js";
 
 export interface StartAuctionBid {
   readonly kind: "START";
@@ -47,6 +48,12 @@ export interface PendingTerritorySplit {
   readonly bids: Readonly<Record<PlayerId, AuctionBid>>;
   readonly openerPlayerId?: PlayerId;
   readonly auctioneerPlayerId?: PlayerId;
-  readonly dividerPlayerId?: PlayerId;
-  readonly firstChooserPlayerId?: PlayerId;
+  readonly dividerPlayerId: PlayerId;
+  readonly firstChooserPlayerId: PlayerId;
+  readonly stage: "AWAITING_DIVISION" | "AWAITING_CHOICE";
+  readonly proposal?: {
+    readonly partACells: readonly GridCell[];
+    readonly partBCells: readonly GridCell[];
+    readonly originalCardPart: "A" | "B";
+  };
 }

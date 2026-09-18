@@ -9,6 +9,7 @@ import { GamePhase } from "../state/game-phase.js";
 import type { GameState } from "../state/game-state.js";
 import { getPotentialAuctionTerritoryIds } from "../state/action-phase.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
+import { determineSplitRoles } from "../rules/player-order.js";
 
 const BASIC_BIDS = [1, 2, 3] as const;
 
@@ -229,6 +230,11 @@ export function submitNormalAuctionBid(
   }
 
   if (tiedPlayerIds.length === 2) {
+    const roles = determineSplitRoles(
+      state.players.map((player) => player.id),
+      auction.openerPlayerId!,
+      [tiedPlayerIds[0]!, tiedPlayerIds[1]!],
+    );
     const pendingSplit: PendingTerritorySplit = {
       id: `${auction.id}:split`,
       auctionId: auction.id,
@@ -238,10 +244,16 @@ export function submitNormalAuctionBid(
       tiedPlayerIds: [tiedPlayerIds[0]!, tiedPlayerIds[1]!],
       bids,
       ...(auction.openerPlayerId === undefined ? {} : { openerPlayerId: auction.openerPlayerId }),
+      ...roles,
+      stage: "AWAITING_DIVISION",
     };
     descriptions.push(
       { type: GameEventType.AuctionTiedTwoPlayers, payload: { auctionId: auction.id, territoryId: auction.territoryId, playerIds: tiedPlayerIds, value: highest } },
-      { type: GameEventType.TerritorySplitRequired, payload: { splitId: pendingSplit.id, auctionId: auction.id, territoryId: auction.territoryId, playerIds: tiedPlayerIds } },
+      { type: GameEventType.TerritorySplitRequired, payload: {
+        splitId: pendingSplit.id, auctionId: auction.id, territoryId: auction.territoryId,
+        playerIds: tiedPlayerIds, dividerPlayerId: roles.dividerPlayerId,
+        firstChooserPlayerId: roles.firstChooserPlayerId,
+      } },
     );
     return appendEvents(state, timestamp, { ...withoutAuction, pendingSplit }, descriptions);
   }

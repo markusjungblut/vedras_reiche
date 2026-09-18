@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import {
   applyAction,
+  areCellsOrthogonallyConnected,
   DomainError,
   GameActionType,
   GamePhase,
@@ -8,12 +9,17 @@ import {
   getPotentialAuctionTerritoryIds,
   getPotentialWarTargets,
   getDiamondTargets,
+  getStateAdjacentTerritoryIds,
+  getMinimumTerritoryArea,
+  getTerritoryCells,
+  validateTerritorySplit,
   startRound,
   Suit,
   type ActivationChoice,
   type GameAction,
   type GameState,
   type Territory,
+  type GridCell,
 } from "@vedras/game-core";
 import { ActionPanel } from "./components/ActionPanel";
 import { EventLog } from "./components/EventLog";
@@ -39,6 +45,12 @@ interface Runtime {
   readonly cardSource: CardSource;
 }
 
+interface SplitDraft {
+  readonly splitId: string;
+  readonly partAKeys: readonly string[];
+  readonly originalCardPart: "A" | "B";
+}
+
 function nextTimestamp(state: GameState): string {
   return new Date(Date.UTC(2026, 0, 1) + state.events.length * 1000).toISOString();
 }
@@ -48,7 +60,8 @@ function playerName(state: GameState, id: string): string {
 }
 
 function neighboringTerritories(state: GameState, source: Territory): Territory[] {
-  return state.territories.filter((territory) => source.adjacentTerritoryIds.includes(territory.id));
+  const adjacent = new Set(getStateAdjacentTerritoryIds(state, source.id));
+  return state.territories.filter((territory) => adjacent.has(territory.id));
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -61,6 +74,9 @@ interface ControlProps {
   readonly onSelectTerritory: (id: string) => void;
   readonly onAction: (action: GameAction) => void;
   readonly onStartRound: () => void;
+  readonly splitDraft?: SplitDraft | undefined;
+  readonly onToggleSplitCell: (cell: GridCell) => void;
+  readonly onSetOriginalCardPart: (part: "A" | "B") => void;
 }
 
 function AuctionBidControls({ state, onAction }: Pick<ControlProps, "state" | "onAction">) {
@@ -140,6 +156,62 @@ function AuctionBidControls({ state, onAction }: Pick<ControlProps, "state" | "o
       </>}
       <small>Nach der Abgabe zeigt die Ansicht nur noch „abgegeben“.</small>
     </div>}
+  </section>;
+}
+
+function SplitEditor({ state, onAction, splitDraft, onToggleSplitCell, onSetOriginalCardPart }: ControlProps) {
+  const split = state.pendingSplit!;
+  const map = state.map;
+  const original = state.territories.find((territory) => territory.id === split.originalTerritoryId);
+  const allCells = map && original ? getTerritoryCells(map, original.id) : [];
+  const partAKeys = splitDraft?.partAKeys ?? [];
+  const originalCardPart = splitDraft?.originalCardPart ?? "A";
+  if (!map || !original) return <p>Für diese Teilung ist keine Rasterkarte verfügbar.</p>;
+  const partA = partAKeys.map((key) => {
+    const [x, y] = key.split(",").map(Number);
+    return { x, y } as GridCell;
+  });
+  const minimum = getMinimumTerritoryArea(map.format);
+  const validation = validateTerritorySplit(map, original.id, partA, minimum);
+  const partAConnected = areCellsOrthogonallyConnected(partA);
+  const partBConnected = areCellsOrthogonallyConnected(validation.partBCells);
+  const divider = split.dividerPlayerId ?? split.openerPlayerId ?? split.auctioneerPlayerId;
+  const chooser = split.firstChooserPlayerId;
+  if (split.stage === "AWAITING_CHOICE" && split.proposal) {
+    return <section className="control-section" aria-label="Gebietsteilung auswählen">
+      <div className="section-kicker">Cut and Choose · Auswahl</div>
+      <h3>{chooser ? `${playerName(state, chooser)} wählt zuerst` : "Auswahl steht an"}</h3>
+      <p>Teil A: {split.proposal.partACells.length} · Teil B: {split.proposal.partBCells.length} Kästchen. Die helle Linie auf der Karte ist die neue Grenze.</p>
+      <div className="button-row">
+        <button type="button" className="primary-button" onClick={() => onAction({ type: GameActionType.ChooseSplitPart, splitId: split.id, playerId: chooser ?? "", chosenPart: "A" })}>Teil A wählen</button>
+        <button type="button" className="secondary-button" onClick={() => onAction({ type: GameActionType.ChooseSplitPart, splitId: split.id, playerId: chooser ?? "", chosenPart: "B" })}>Teil B wählen</button>
+      </div>
+    </section>;
+  }
+  return <section className="control-section" aria-label="Gebietsteilung bearbeiten">
+    <div className="section-kicker">Cut and Choose · Grenze ziehen</div>
+    <h3>{divider ? `${playerName(state, divider)} zieht die Grenze` : "Divider zieht die Grenze"}</h3>
+    <p>{chooser ? `${playerName(state, chooser)} wählt anschließend zuerst.` : "Danach wählt der andere Höchstbietende zuerst."} Klicke die Zellen direkt auf der Karte oder hier an.</p>
+    <p>Teil A: {partA.length} Kästchen {partA.length >= minimum ? "✓" : `✗ mindestens ${minimum}`} · Zusammenhang {partAConnected ? "✓" : "✗"}</p>
+    <p>Teil B: {validation.partBCells.length} Kästchen {validation.partBCells.length >= minimum ? "✓" : `✗ mindestens ${minimum}`} · Zusammenhang {partBConnected ? "✓" : "✗"}</p>
+    <p>{validation.valid ? "Beide Teile sind zusammenhängend und regelkonform." : `Noch nicht gültig: ${validation.reason ?? "Mindestgröße oder Zusammenhang fehlt"}.`}</p>
+    <div className="split-cell-grid" aria-label="Zellen des ursprünglichen Gebiets">
+      {allCells.map((cell) => {
+        const key = `${cell.x},${cell.y}`;
+        const inA = partAKeys.includes(key);
+        return <button key={key} type="button" className={inA ? "split-cell part-a" : "split-cell part-b"} onClick={() => onToggleSplitCell(cell)} aria-label={`Kästchen ${cell.x}, ${cell.y}: Teil ${inA ? "A" : "B"}`}>{inA ? "A" : "B"}</button>;
+      })}
+    </div>
+    <div className="button-row">
+      <button type="button" className={originalCardPart === "A" ? "selected-button" : "secondary-button"} onClick={() => onSetOriginalCardPart("A")}>Teil A behält die Karte</button>
+      <button type="button" className={originalCardPart === "B" ? "selected-button" : "secondary-button"} onClick={() => onSetOriginalCardPart("B")}>Teil B behält die Karte</button>
+    </div>
+    <button type="button" className="primary-button" disabled={!validation.valid || divider === undefined}
+      onClick={() => divider !== undefined && onAction({ type: GameActionType.ProposeTerritorySplit, splitId: split.id, playerId: divider, partACells: partA, originalCardPart })}>Teilung bestätigen</button>
+    {allCells.length < 2 * minimum && <button type="button" className="secondary-button"
+      onClick={() => onAction({ type: GameActionType.ResolveTerritorySplit, splitId: split.id, resolution: "SPLIT_NOT_POSSIBLE" })}>
+      Teilung wegen zu kleiner Fläche unmöglich
+    </button>}
   </section>;
 }
 
@@ -224,7 +296,12 @@ function ActivationControls({ state, selectedTerritoryId, onSelectTerritory, onA
               ? { type: "CLUB_ADD_ACTIVATION_NUMBER", targetTerritoryId: chosenClubTarget }
               : selectedClubChoice === "CLUB_ADD_SECOND_SUIT"
                 ? { type: "CLUB_ADD_SECOND_SUIT", targetTerritoryId: chosenClubTarget, suit: extraSuit }
-                : { type: "CLUB_BUILD_SETTLEMENT", targetTerritoryId: chosenClubTarget };
+                : {
+                  type: "CLUB_BUILD_SETTLEMENT",
+                  targetTerritoryId: chosenClubTarget,
+                  ...(state.map && getTerritoryCells(state.map, chosenClubTarget)[0] === undefined
+                    ? {} : state.map ? { position: getTerritoryCells(state.map, chosenClubTarget)[0] } : {}),
+                };
           activate(choice);
         }}>Aktivieren</button>
       <small>Eine neu erhaltene zweite Zahl wirkt erst ab der nächsten Runde.</small>
@@ -262,37 +339,28 @@ function ActionControls({ state, selectedTerritoryId, onAction }: ControlProps) 
             playerId: activePlayerId, territoryId: item.id })}>Auktion um {item.id} eröffnen</button>)}</div>
       </> : <p>Kein angrenzendes neutrales Gebiet verfügbar.</p>}
       {wars.length > 0 ? <>
-        <p>Alternativ einen Krieg als AP4-Vorgang vormerken:</p>
+        <p>Alternativ einen Krieg für die spätere AP5-Auswertung vormerken:</p>
         <div className="button-row">{wars.map(({ attackerTerritoryId, defenderTerritoryId }) => <button key={`${attackerTerritoryId}:${defenderTerritoryId}`} type="button"
           className="secondary-button" onClick={() => onAction({ type: GameActionType.StartWar,
             playerId: activePlayerId, attackerTerritoryId, defenderTerritoryId })}>
-          Krieg gegen {defenderTerritoryId} beginnen
+          Mit {attackerTerritoryId} gegen {defenderTerritoryId} beginnen
         </button>)}</div>
       </> : <p className="muted">Kein angrenzendes gegnerisches Gebiet verfügbar.</p>}
       {state.actionPhase?.secondAuctionAvailable && <button type="button" className="secondary-button"
         onClick={() => onAction({ type: GameActionType.EndActionTurn, playerId: activePlayerId })}>Zug beenden</button>}
-      {!state.actionPhase?.secondAuctionAvailable && wars.length === 0 && <p className="muted">Kriegsauswertung folgt in AP4.</p>}
+      {!state.actionPhase?.secondAuctionAvailable && wars.length === 0 && <p className="muted">Kriegsauswertung folgt in AP5.</p>}
     </>}
   </section>;
 }
 
 function PhaseControls(props: ControlProps) {
   const { state, onAction, onStartRound } = props;
-  if (state.pendingSplit) return <section className="control-section" aria-label="Ausstehende Gebietsteilung">
-    <div className="section-kicker">Gebietsteilung ausstehend</div>
-    <h3>{state.pendingSplit.originalTerritoryId}</h3>
-    <p>Teilung zwischen {state.pendingSplit.tiedPlayerIds.map((id) => playerName(state, id)).join(" und ")} ausstehend.</p>
-    <p>Die echte Karten-Geometrie ist noch nicht implementiert. Eine legale Teilung folgt mit der digitalen Karte.</p>
-    <button type="button" className="secondary-button" onClick={() => onAction({
-      type: GameActionType.ResolveTerritorySplit, splitId: state.pendingSplit!.id,
-      resolution: "SPLIT_NOT_POSSIBLE",
-    })}>Teilung als nicht möglich auflösen</button>
-  </section>;
+  if (state.pendingSplit) return <SplitEditor {...props} />;
   if (state.auction) return <AuctionBidControls state={state} onAction={onAction} />;
   if (state.pendingWar) return <section className="control-section">
     <div className="section-kicker">Krieg ausstehend</div>
     <h3>{state.pendingWar.attackerTerritoryId} gegen {state.pendingWar.defenderTerritoryId}</h3>
-    <p>Der Kampf wird erst in AP4 aufgelöst.</p>
+    <p>Der Kampf wird erst in AP5 aufgelöst.</p>
   </section>;
   switch (state.phase) {
     case GamePhase.Setup:
@@ -330,6 +398,7 @@ export default function App() {
   const [selectedTerritoryId, setSelectedTerritoryId] = useState<string | undefined>();
   const [showHidden, setShowHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [splitDraft, setSplitDraft] = useState<SplitDraft | null>(null);
   const runtime = useRef<Runtime | null>(null);
 
   const loadScenario = (kind: ScenarioKind, chosenSeed: number) => {
@@ -337,6 +406,7 @@ export default function App() {
       const demo = createScenario(kind, chosenSeed);
       runtime.current = { randomSource: demo.randomSource, cardSource: demo.cardSource };
       setState(demo.state);
+      setSplitDraft(null);
       setSelectedTerritoryId(undefined);
       setScenario(kind);
       setSeed(chosenSeed);
@@ -387,12 +457,33 @@ export default function App() {
   const name = (id: string) => state ? playerName(state, id) : id;
   const highlightedIds = state?.phase === GamePhase.ActivationPhase
     ? getAvailableActivationTerritoryIds(state) : [];
+  const split = state?.pendingSplit;
+  const initialSplitCells = split && state?.map
+    ? getTerritoryCells(state.map, split.originalTerritoryId) : [];
+  const currentSplitDraft: SplitDraft | undefined = split ? splitDraft?.splitId === split.id
+    ? splitDraft : {
+      splitId: split.id,
+      partAKeys: initialSplitCells.slice(0, Math.floor(initialSplitCells.length / 2)).map((cell) => `${cell.x},${cell.y}`),
+      originalCardPart: "A",
+    } : undefined;
+  const toggleSplitCell = (cell: GridCell) => {
+    if (!currentSplitDraft || split?.stage === "AWAITING_CHOICE") return;
+    const key = `${cell.x},${cell.y}`;
+    if (!initialSplitCells.some((item) => item.x === cell.x && item.y === cell.y)) return;
+    const partAKeys = currentSplitDraft.partAKeys.includes(key)
+      ? currentSplitDraft.partAKeys.filter((item) => item !== key)
+      : [...currentSplitDraft.partAKeys, key];
+    setSplitDraft({ ...currentSplitDraft, partAKeys });
+  };
+  const setOriginalCardPart = (part: "A" | "B") => {
+    if (currentSplitDraft) setSplitDraft({ ...currentSplitDraft, originalCardPart: part });
+  };
 
   return <div className="app-shell">
     {!state ? <main className="welcome-screen">
       <span className="eyebrow">Visual Debug Client</span>
       <h1>Vedras Reiche</h1>
-      <p>Ein lokales Testspiel mit drei Spielern und 16 abstrakten Gebieten.</p>
+      <p>Ein lokales Testspiel mit drei Spielern und 16 Rastergebieten.</p>
       <Field label="Debug-Seed">
         <input type="number" min="0" step="1" value={seedInput}
           onChange={(event) => setSeedInput(event.target.value)} />
@@ -427,7 +518,8 @@ export default function App() {
           <div className="board-column panel">
             <div className="panel-heading"><span className="section-kicker">Spielbrett</span><h2>Gebietsübersicht</h2></div>
             <TerritoryBoard state={state} selectedId={selectedTerritoryId}
-              onSelect={setSelectedTerritoryId} highlightedIds={highlightedIds} playerName={name} />
+              onSelect={setSelectedTerritoryId} highlightedIds={highlightedIds} playerName={name}
+              splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell} />
           </div>
           <div className="sidebar-column">
             <div className="panel"><PlayerPanel state={state} playerName={name} /></div>
@@ -436,7 +528,9 @@ export default function App() {
         </div>
         <div className="lower-grid">
           <ActionPanel><PhaseControls state={state} selectedTerritoryId={selectedTerritoryId}
-            onSelectTerritory={setSelectedTerritoryId} onAction={dispatch} onStartRound={beginRound} /></ActionPanel>
+            onSelectTerritory={setSelectedTerritoryId} onAction={dispatch} onStartRound={beginRound}
+            splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
+            onSetOriginalCardPart={setOriginalCardPart} /></ActionPanel>
           <div className="panel"><EventLog events={state.events} playerName={name} /></div>
         </div>
         <div className="inspector-row panel">

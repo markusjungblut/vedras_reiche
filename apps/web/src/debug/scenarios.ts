@@ -5,9 +5,12 @@ import {
   GamePhase,
   startRound,
   Suit,
+  PointOfInterestType,
+  getStateAdjacentTerritoryIds,
+  getTerritoryCells,
 } from "@vedras/game-core";
 import type { ActivationChoice, GameAction, GameState, Territory } from "@vedras/game-core";
-import { createDemoMap } from "./create-demo-map.js";
+import { createDemoGridMap, createDemoMap } from "./create-demo-map.js";
 import { DemoCardSource } from "./demo-card-source.js";
 import { SeededRandomSource } from "./seeded-random-source.js";
 
@@ -35,6 +38,13 @@ export function createDemoGame(seed = 12_345): GameState {
       startPlayerId: "anna",
     }),
     territories: createDemoMap(),
+    map: createDemoGridMap(),
+    pointsOfInterest: [
+      { id: "poi-g01", type: PointOfInterestType.Landmark, position: { x: 3, y: 2 } },
+      { id: "poi-g06", type: PointOfInterestType.Junction, position: { x: 11, y: 7 } },
+      { id: "poi-g12", type: PointOfInterestType.Fortress, position: { x: 19, y: 12 } },
+      { id: "poi-g16", type: PointOfInterestType.Relic, position: { x: 27, y: 17 } },
+    ],
   };
 }
 
@@ -119,12 +129,17 @@ function activationChoice(state: GameState, source: Territory): ActivationChoice
   if (source.card === undefined || source.ownerId === null) throw new Error("Ungültiges Debug-Aktivierungsgebiet.");
   switch (source.card.suit) {
     case Suit.Diamonds: {
-      const target = state.territories.find((territory) => source.adjacentTerritoryIds.includes(territory.id) && territory.ownerId === null);
+      const target = state.territories.find((territory) => getStateAdjacentTerritoryIds(state, source.id).includes(territory.id) && territory.ownerId === null);
       if (target === undefined) throw new Error("Kein neutrales ♦-Ziel für das Debug-Skript.");
       return { type: "DIAMOND_NEUTRAL_BORDER", targetTerritoryId: target.id };
     }
     case Suit.Clubs:
-      return { type: "CLUB_BUILD_SETTLEMENT", targetTerritoryId: source.id };
+      return {
+        type: "CLUB_BUILD_SETTLEMENT",
+        targetTerritoryId: source.id,
+        ...(state.map && getTerritoryCells(state.map, source.id)[0]
+          ? { position: getTerritoryCells(state.map, source.id)[0] } : {}),
+      };
     case Suit.Hearts:
       return { type: "HEART_GLOBAL_INFLUENCE" };
     case Suit.Spades:
@@ -157,8 +172,7 @@ function openDemonstrationAuction(scenario: DemoScenario): DemoScenario {
   const playerId = state.activePlayerId;
   if (playerId === undefined) throw new Error("Kein aktiver Spieler für die normale Debug-Auktion.");
   const target = state.territories.find((territory) => territory.ownerId === null &&
-    state.territories.some((owned) => owned.ownerId === playerId &&
-      (owned.adjacentTerritoryIds.includes(territory.id) || territory.adjacentTerritoryIds.includes(owned.id))));
+    state.territories.some((owned) => owned.ownerId === playerId && getStateAdjacentTerritoryIds(state, owned.id).includes(territory.id)));
   if (target === undefined) throw new Error("Kein neutrales Ziel für die normale Debug-Auktion.");
   return {
     state: dispatch(state, { type: GameActionType.OpenAuction, playerId, territoryId: target.id }, randomSource, cardSource),

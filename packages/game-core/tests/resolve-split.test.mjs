@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  createGameState, DomainErrorCode, GameActionType, GameEventType, GamePhase, Suit,
+  createGameState, createGridMap, getTerritoryArea, getTerritoryCells,
+  proposeTerritorySplit, chooseSplitPart,
+  DomainErrorCode, GameActionType, GameEventType, GamePhase, Suit,
 } from "../dist/index.js";
 import { openNormalAuction, submitNormalAuctionBid } from "../dist/auctions/normal-auctions.js";
 import { resolveTerritorySplit } from "../dist/auctions/resolve-split.js";
@@ -28,6 +30,10 @@ function normalSplit() {
     round: 1,
     activePlayerId: "A",
     actionPhase: { completedPlayerIds: [], auctionsOpenedByActivePlayer: 0, secondAuctionAvailable: false },
+    map: createGridMap({ width: 9, height: 5, format: "A4" }, Object.fromEntries(
+      Array.from({ length: 45 }, (_, index) => [
+        `${index % 9},${Math.floor(index / 9)}`, index === 0 ? "home" : "X",
+      ]))),
     territories: [
       { id: "home", ownerId: "A", area: 20, adjacentTerritoryIds: ["X"] },
       { id: "X", ownerId: null, area: 20, adjacentTerritoryIds: ["home"], card: originalCard,
@@ -58,6 +64,8 @@ function startSplit() {
   });
   let state = beginStartAuctions({
     ...setup,
+    map: createGridMap({ width: 8, height: 5, format: "A4" }, Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [`${index % 8},${Math.floor(index / 8)}`, "T0"]))),
     territories: Array.from({ length: 6 }, (_, index) => ({
       id: `T${index}`, ownerId: null, area: 20, adjacentTerritoryIds: [],
       card: index === 0 ? originalCard : { suit: Suit.Clubs, activationNumber: index },
@@ -89,6 +97,36 @@ function legalAction(state, ownerOfOriginal = "A", ownerOfNew = "B") {
   };
 }
 
+function legalRasterChoice(state, cardSource = { drawAndReplace: () => newCard }) {
+  const split = state.pendingSplit;
+  const cells = getTerritoryCells(state.map, split.originalTerritoryId);
+  const proposed = proposeTerritorySplit(state, {
+    type: GameActionType.ProposeTerritorySplit,
+    splitId: split.id,
+    playerId: split.dividerPlayerId,
+    partACells: cells.slice(0, cells.length / 2),
+    originalCardPart: "A",
+  }, timestamp).state;
+  return chooseSplitPart(proposed, {
+    type: GameActionType.ChooseSplitPart,
+    splitId: split.id,
+    playerId: split.firstChooserPlayerId,
+    chosenPart: "B",
+  }, random, timestamp, cardSource);
+}
+
+function newPart(state, originalId) {
+  return state.territories.find((territory) => territory.id.startsWith(`${originalId}:split:`));
+}
+
+function reduceOriginalArea(state, territoryId, area) {
+  const cells = { ...state.map.cells };
+  for (const cell of getTerritoryCells(state.map, territoryId).slice(area)) {
+    cells[`${cell.x},${cell.y}`] = null;
+  }
+  return { ...state, map: { ...state.map, cells } };
+}
+
 function rejectsWithoutMutation(state, action, code) {
   const before = structuredClone(state);
   assert.throws(() => resolveTerritorySplit(state, action, random, timestamp), (error) => error.code === code);
@@ -103,12 +141,14 @@ test("normal legal split pays both winners only after resolution and clears loca
   assert.throws(() => finishCurrentBasicAction(pending, timestamp),
     (error) => error.code === DomainErrorCode.AuctionAlreadyActive);
 
-  const resolved = resolveTerritorySplit(pending, legalAction(pending), random, timestamp);
+  const resolved = legalRasterChoice(pending);
   assert.equal(resolved.state.pendingSplit, undefined);
   assert.equal(resolved.state.territories.find((territory) => territory.id === "X").ownerId, "A");
-  assert.equal(resolved.state.territories.find((territory) => territory.id === "new").ownerId, "B");
+  assert.equal(newPart(resolved.state, "X").ownerId, "B");
   assert.deepEqual(resolved.state.territories.find((territory) => territory.id === "X").localInfluenceByPlayerId, {});
-  assert.deepEqual(resolved.state.territories.find((territory) => territory.id === "new").localInfluenceByPlayerId, {});
+  assert.deepEqual(newPart(resolved.state, "X").localInfluenceByPlayerId, {});
+  assert.equal(getTerritoryArea(resolved.state.map, "X"), 22);
+  assert.equal(getTerritoryArea(resolved.state.map, newPart(resolved.state, "X").id), 22);
   assert.equal(resolved.state.players[0].globalInfluence, 5);
   assert.equal(resolved.state.players[1].globalInfluence, 5);
   assert.equal(resolved.state.players[2].globalInfluence, 6);
@@ -121,7 +161,7 @@ test("normal legal split pays both winners only after resolution and clears loca
 });
 
 test("impossible normal split keeps neutral territory and charges no one", () => {
-  const pending = normalSplit();
+  const pending = reduceOriginalArea(normalSplit(), "X", 19);
   const resolved = resolveTerritorySplit(pending, {
     type: GameActionType.ResolveTerritorySplit,
     splitId: pending.pendingSplit.id,
@@ -168,36 +208,36 @@ test("new split part duplicates the old card only when all 48 printed cards are 
   const fullDeckState = {
     ...pending,
     territories: [
-      ...pending.territories,
+      ...pending.territories.map((territory) => territory.id === "X"
+        ? { ...territory, card: { ...originalCard, additionalSuit: Suit.Clubs, additionalActivationNumber: 11 } }
+        : territory),
       ...printedCards.map((card, index) => ({
         id: `used-${index}`, ownerId: null, area: 10, adjacentTerritoryIds: [], card,
       })),
     ],
   };
   const duplicateOriginal = legalAction(fullDeckState);
-  const resolved = resolveTerritorySplit(fullDeckState, {
-    ...duplicateOriginal,
-    newCardPart: { ...duplicateOriginal.newCardPart, card: originalCard },
-  }, random, timestamp);
-  assert.equal(resolved.state.territories.find((territory) => territory.id === "new").card.suit, originalCard.suit);
+  const resolved = legalRasterChoice(fullDeckState);
+  assert.deepEqual(newPart(resolved.state, "X").card, originalCard);
+  assert.equal(resolved.state.territories.find((territory) => territory.id === "X").card.additionalActivationNumber, 11);
+  assert.equal(resolved.state.territories.find((territory) => territory.id === "X").card.additionalSuit, Suit.Clubs);
   rejectsWithoutMutation(fullDeckState, duplicateOriginal, DomainErrorCode.InvalidSplitResolution);
 });
 
 test("start auction legal split awards both tied players and advances to round two", () => {
   const pending = startSplit();
-  const action = legalAction(pending);
-  const resolved = resolveTerritorySplit(pending, action, random, timestamp);
+  const resolved = legalRasterChoice(pending);
   assert.equal(resolved.state.pendingSplit, undefined);
   assert.equal(resolved.state.auction, undefined);
   assert.equal(resolved.state.startAuctions.round, 2);
   assert.equal(resolved.state.territories.find((territory) => territory.id === pending.pendingSplit.originalTerritoryId).ownerId, "A");
-  assert.equal(resolved.state.territories.find((territory) => territory.id === "new").ownerId, "B");
+  assert.equal(newPart(resolved.state, pending.pendingSplit.originalTerritoryId).ownerId, "B");
   assert.ok(resolved.events.some((event) => event.type === GameEventType.StartAuctionRoundStarted && event.payload.round === 2));
   assert.equal(new Set(resolved.state.events.map((event) => event.id)).size, resolved.state.events.length);
 });
 
 test("impossible start split leaves start bids consumed and continues the display", () => {
-  const pending = startSplit();
+  const pending = reduceOriginalArea(startSplit(), "T0", 19);
   const availableBefore = pending.startAuctions.availableBidsByPlayerId;
   const resolved = resolveTerritorySplit(pending, {
     type: GameActionType.ResolveTerritorySplit,

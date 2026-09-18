@@ -10,7 +10,7 @@ import { beginActionPhase } from "../state/action-phase.js";
 import { finishCurrentBasicAction, forfeitCurrentBasicAction, startPendingWar } from "../state/action-phase.js";
 import { beginStartAuctions, openNextStartAuction, submitStartAuctionBid } from "../auctions/start-auctions.js";
 import { openNormalAuction, submitNormalAuctionBid } from "../auctions/normal-auctions.js";
-import { resolveTerritorySplit } from "../auctions/resolve-split.js";
+import { chooseSplitPart, proposeTerritorySplit, resolveTerritorySplit } from "../auctions/resolve-split.js";
 import type { CardSource } from "../utils/card-source.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
@@ -147,6 +147,14 @@ export function applyAction(
       }
       const completed = finishCurrentBasicAction(resolved.state, context.timestamp);
       return { state: completed.state, events: [...resolved.events, ...completed.events] };
+    }
+    case GameActionType.ProposeTerritorySplit:
+      return proposeTerritorySplit(state, action, context.timestamp);
+    case GameActionType.ChooseSplitPart: {
+      const chosen = chooseSplitPart(state, action, context.randomSource, context.timestamp, context.cardSource);
+      if (chosen.state.pendingSplit !== undefined || state.pendingSplit?.auctionKind !== "NORMAL") return chosen;
+      const completed = finishCurrentBasicAction(chosen.state, context.timestamp);
+      return { state: completed.state, events: [...chosen.events, ...completed.events] };
     }
     case GameActionType.EndActionTurn:
       if (state.activePlayerId !== action.playerId) {

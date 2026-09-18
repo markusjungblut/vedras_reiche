@@ -89,5 +89,8 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
     case GameEventType.BorderChanged: return "Grenze geändert.";
     case GameEventType.GameFinished: return "Spiel beendet.";
     case GameEventType.AuctionStarted: return "Auktion begonnen.";
+    case GameEventType.TerritorySplitProposed: return "Grenzteilung vorgeschlagen.";
+    case GameEventType.TerritorySplitChoiceMade: return "Teil der Gebietsteilung gewählt.";
+    case GameEventType.MapGeometryChanged: return "Kartengeometrie aktualisiert.";
   }
 }
