@@ -1,11 +1,13 @@
 import {
   applyAction,
+  beginScoring,
   createGameState,
   GameActionType,
   GamePhase,
   startRound,
   Suit,
   PointOfInterestType,
+  SettlementKind,
   getStateAdjacentTerritoryIds,
   getTerritoryCells,
   getSharedBorder,
@@ -18,7 +20,7 @@ import { SeededRandomSource } from "./seeded-random-source.js";
 
 export type ScenarioKind = "START_AUCTIONS" | "ACTIVATION_PHASE" | "ACTION_PHASE" | "NORMAL_AUCTION" |
   "WAR_NORMAL" | "WAR_STRONG" | "WAR_TIE" | "WAR_WEAK" | "WAR_CONQUEST" | "WAR_CUT" |
-  "WAR_DIAMOND" | "WAR_DIAMOND_CUT" | "WAR_SPADE_FORTRESS" | "DIAMOND_NEUTRAL";
+  "WAR_DIAMOND" | "WAR_DIAMOND_CUT" | "WAR_SPADE_FORTRESS" | "DIAMOND_NEUTRAL" | "SCORING";
 
 export interface DemoScenario {
   readonly state: GameState;
@@ -269,8 +271,42 @@ function openDemonstrationAuction(scenario: DemoScenario): DemoScenario {
   };
 }
 
+/** A direct, core-started endgame fixture exposing every scoring category. */
+function scoringScenario(seed: number): DemoScenario {
+  const base = createDemoGame(seed);
+  const owners: Readonly<Record<string, string | null>> = {
+    G01: "anna", G02: "anna", G09: "anna", G10: "anna",
+    G03: "ben", G04: "ben", G14: "clara",
+  };
+  const territories = base.territories.map((territory) => {
+    const ownerId = owners[territory.id] ?? null;
+    if (territory.id === "G01") return { ...territory, ownerId, settlement: SettlementKind.City,
+      settlementFeature: { id: "score-city", kind: SettlementKind.City, position: { x: 0, y: 0 } },
+      settlementFeatures: [{ id: "score-city", kind: SettlementKind.City, position: { x: 0, y: 0 } }] };
+    if (territory.id === "G09") return { ...territory, ownerId, settlement: SettlementKind.Settlement,
+      settlementFeature: { id: "score-settlement", kind: SettlementKind.Settlement, position: { x: 0, y: 10 } },
+      settlementFeatures: [{ id: "score-settlement", kind: SettlementKind.Settlement, position: { x: 0, y: 10 } }] };
+    return { ...territory, ownerId };
+  });
+  const state: GameState = {
+    ...base,
+    phase: GamePhase.Scoring,
+    players: base.players.map((player) => ({ ...player, secretFactionSuit: player.id === "anna" ? Suit.Diamonds
+      : player.id === "ben" ? Suit.Clubs : Suit.Spades })),
+    territories,
+    pointsOfInterest: [
+      { id: "score-landmark", type: PointOfInterestType.Landmark, position: { x: 11, y: 2 } },
+      { id: "score-hub", type: PointOfInterestType.Junction, position: { x: 11, y: 12 } },
+      { id: "score-relic-a", type: PointOfInterestType.Relic, position: { x: 19, y: 2 } },
+      { id: "score-relic-b", type: PointOfInterestType.Relic, position: { x: 27, y: 2 } },
+    ],
+  };
+  return { state: beginScoring(state, TIMESTAMP).state, randomSource: new SeededRandomSource(seed), cardSource: new DemoCardSource() };
+}
+
 /** Scenarios are scripted, valid core transitions from one neutral setup fixture. */
 export function createScenario(kind: ScenarioKind, seed = 12_345): DemoScenario {
+  if (kind === "SCORING") return scoringScenario(seed);
   const start = beginAuctions(seed);
   if (kind === "START_AUCTIONS") return start;
   const auctions = completeStartAuctions(start);

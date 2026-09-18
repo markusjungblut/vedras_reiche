@@ -1,6 +1,16 @@
 import type { GameEventId, PlayerId } from "../model/ids.js";
 
 export enum GameEventType {
+  MapCreationStarted = "MAP_CREATION_STARTED",
+  SetupTerritoryCreated = "SETUP_TERRITORY_CREATED",
+  SetupTerritorySplit = "SETUP_TERRITORY_SPLIT",
+  SetupBorderChanged = "SETUP_BORDER_CHANGED",
+  PoiPlacementStarted = "POI_PLACEMENT_STARTED",
+  PoiPlaced = "POI_PLACED",
+  MapCreationCompleted = "MAP_CREATION_COMPLETED",
+  TerritoryCardsAssigned = "TERRITORY_CARDS_ASSIGNED",
+  SecretFactionsAssigned = "SECRET_FACTIONS_ASSIGNED",
+  SetupCompleted = "SETUP_COMPLETED",
   GameCreated = "GAME_CREATED",
   PlayerAdded = "PLAYER_ADDED",
   RoundStarted = "ROUND_STARTED",
@@ -49,6 +59,9 @@ export enum GameEventType {
   ActionPhaseFinished = "ACTION_PHASE_FINISHED",
   RoundFinished = "ROUND_FINISHED",
   ScoringStarted = "SCORING_STARTED",
+  LargestRealmChoiceRequired = "LARGEST_REALM_CHOICE_REQUIRED",
+  LargestRealmSelected = "LARGEST_REALM_SELECTED",
+  ScoringCompleted = "SCORING_COMPLETED",
   WarStarted = "WAR_STARTED",
   WarResolved = "WAR_RESOLVED",
   WarSpadeChoiceLocked = "WAR_SPADE_CHOICE_LOCKED",

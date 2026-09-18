@@ -18,6 +18,15 @@ import { applySymbolAbility } from "./apply-symbol-ability.js";
 import { getSharedBorder, reconcileMapBoundFeatures, validateBorderAdvance } from "../map/index.js";
 import type { ResolveNeutralDiamondAction } from "../actions/game-action.js";
 import { resolveDiamondCorrection, setWarSpadeChoice, proposeBorderAdvance, proposeWarCut, chooseWarCut } from "../war/war.js";
+import { chooseLargestRealm } from "../scoring/scoring.js";
+import {
+  beginMapCreation,
+  createSetupTerritory,
+  editSetupBorder,
+  finalizeMapCreation,
+  placeSetupPointOfInterest,
+  splitSetupTerritory,
+} from "../state/map-creation.js";
 
 export interface ActivationContext {
   readonly randomSource: RandomSource;
@@ -174,7 +183,22 @@ export function applyAction(
   action: GameAction,
   context: ActivationContext,
 ): ActionResult {
+  if (state.phase === GamePhase.Finished) {
+    throw new DomainError(DomainErrorCode.GameAlreadyFinished);
+  }
   switch (action.type) {
+    case GameActionType.BeginMapCreation:
+      return beginMapCreation(state, action, context.timestamp);
+    case GameActionType.CreateSetupTerritory:
+      return createSetupTerritory(state, action, context.timestamp);
+    case GameActionType.SplitSetupTerritory:
+      return splitSetupTerritory(state, action, context.timestamp);
+    case GameActionType.EditSetupBorder:
+      return editSetupBorder(state, action, context.timestamp);
+    case GameActionType.PlaceSetupPointOfInterest:
+      return placeSetupPointOfInterest(state, action, context.timestamp);
+    case GameActionType.FinalizeMapCreation:
+      return finalizeMapCreation(state, action, context.randomSource, context.timestamp);
     case GameActionType.ActivateTerritory:
       return activateTerritory(state, action, context);
     case GameActionType.BeginStartAuctions:
@@ -238,5 +262,7 @@ export function applyAction(
       return resolveDiamondCorrection(state, action, context.timestamp);
     case GameActionType.ResolveNeutralDiamond:
       return resolveNeutralDiamond(state, action, context.timestamp);
+    case GameActionType.ChooseLargestRealm:
+      return chooseLargestRealm(state, action, context.timestamp);
   }
 }

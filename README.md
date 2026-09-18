@@ -1,6 +1,6 @@
 # Vedras Reiche
 
-Dieses Repository enthält den Game Core und einen lokalen Visual Debug Client für eine digitale Version von **Vedras Reiche**. Arbeitspakete 1–5 decken Modelle, Runden, Aktivierungen, Auktionen, Rastergeometrie und den vollständigen Kriegsablauf ab. Ein Multiplayer-Server folgt später.
+Dieses Repository enthält den Game Core und einen lokalen Pass-and-Play-Client für eine digitale Version von **Vedras Reiche**. Arbeitspakete 1–7 decken Modelle, vollständigen Spielaufbau, Runden, Aktivierungen, Auktionen, Rastergeometrie, Krieg und Endwertung ab. Ein Multiplayer-Server folgt später.
 
 Die [ausführliche Spielanleitung](docs/rules/Vedras%20Reiche.docx) ist die maßgebliche Regelquelle. Nicht eindeutig belegte Regeln werden nicht ergänzt; tatsächlich offene Punkte stehen in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
 
@@ -28,6 +28,16 @@ OPEN_QUESTIONS.md
 ```
 
 Das Repository verwendet npm Workspaces und TypeScript im Strict Mode.
+
+## Spielaufbau
+
+`Neues Spiel` startet eine vollständige lokale Partie ohne Debug-Fixture: Zwei bis sechs Namen werden in ihre dauerhafte Sitzreihenfolge gebracht, Kartenformat und technische Rastergröße gewählt und der erste Kartenzeichner bestimmt. Im `MAP_CREATION`-Zustand erstellen die Spieler abwechselnd exakt `4 × Spielerzahl + 4` Gebiete. Ein Gebiet kann neu gezeichnet oder in zwei gültige Gebiete geteilt werden; eine Korrektur überträgt Zellen nur zwischen zwei bestehenden Gebieten.
+
+Nach `P`, `2P`, `3P` und `4P` Gebieten unterbricht der Core den Zeichenablauf für die vorgeschriebenen Wahrzeichen, Knotenpunkte, Festungen und Relikte. Finalisiert wird erst bei vollständiger POI-Tabelle und wenn jedes Gebiet Mindestfläche, orthogonalen Zusammenhang und mindestens zwei Seiten-Nachbarn besitzt. Die Karte muss als Gesamtheit nicht zusammenhängen.
+
+Erst danach zieht der Core aus den 48 gedruckten Karten gleich viele Karten pro Symbol, mischt sie und verteilt sie auf die neutralen Anfangsgebiete. Geheime Fraktionen werden per `RandomSource` in Sitzreihenfolge vergeben und im lokalen Client einzeln hinter einer Pass-and-Play-Ansicht gezeigt. Der gespeicherte letzte Kartenzeichner bestimmt den ersten Auktionssteller der vorhandenen Startauktionen.
+
+Die digitalen Standardraster für eine veröffentlichte Version sind noch keine Regelentscheidung; siehe [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
 
 ## Startauktionen
 
@@ -60,13 +70,19 @@ Die Aktionsphase beginnt beim Startspieler und läuft im Uhrzeigersinn. Jeder Sp
 
 Bei einer normalen Auktion müssen alle Spieler verdeckt bieten, auch ohne Nachbarschaft zum Gebiet. Ein Gebot besteht aus einem verfügbaren Grundgebot `1`, `2` oder `3`, ganzzahligem globalem Einfluss und gegebenenfalls eigenem lokalem Einfluss auf dem versteigerten Gebiet. Der Core wertet erst aus, wenn alle Gebote vorliegen. Nur wer tatsächlich ein Gebiet erhält, bezahlt Einfluss und erschöpft das eingesetzte Grundgebot. Nach Erschöpfung aller drei Grundgebote steht sofort ein neuer vollständiger Satz zur Verfügung. Wird das Gebiet vergeben, verfällt sämtlicher dort verbliebener lokaler Einfluss.
 
-Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über eine legale Gebietsteilung offen. Bei mindestens drei Höchstbietenden bleibt das Gebiet neutral und niemand bezahlt. Nach dem ersten solchen Gleichstand darf der aktive Spieler innerhalb derselben Grundaktion eine zweite Auktion eröffnen oder seinen Zug beenden. Eine dritte Auktion ist nicht möglich. Nach vollständig abgewickelter Aktion folgt der nächste Spieler. Erst nach der letzten Aktion ist die Runde abgeschlossen und kann die nächste beginnen; nach der letzten Spielrunde folgt `SCORING`.
+Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über eine legale Gebietsteilung offen. Bei mindestens drei Höchstbietenden bleibt das Gebiet neutral und niemand bezahlt. Nach dem ersten solchen Gleichstand darf der aktive Spieler innerhalb derselben Grundaktion eine zweite Auktion eröffnen oder seinen Zug beenden. Eine dritte Auktion ist nicht möglich. Nach vollständig abgewickelter Aktion folgt der nächste Spieler. Erst nach der letzten Aktion ist die Runde abgeschlossen und kann die nächste beginnen; nach der letzten Spielrunde beginnt `SCORING`.
+
+## Endwertung und Spielende
+
+Die Endwertung leitet Fläche, Nachbarschaften sowie die aktuelle Zugehörigkeit von POIs und Entwicklungen aus der Rasterkarte ab. Sie rechnet Gebietspunkte exakt in Hundertstel: Grundfläche und alle Prozentboni werden additiv kombiniert. Der Core speichert für jedes kontrollierte Gebiet die einzelnen Bonusanteile und für jeden Spieler die Gesamtsumme.
+
+Für das größte zusammenhängende Reich erhält eine eindeutige größte Komponente automatisch ihren Bonus. Bei mehreren gleich großen Komponenten wählt der betreffende Spieler eine davon. Sobald alle nötigen Entscheidungen vorliegen, erzeugt der Core ein unveränderliches `GameResult`, bestimmt alle punktgleichen Sieger und wechselt nach `FINISHED`. Weitere reguläre Aktionen sind dann gesperrt. Der Debug-Client bietet dafür ein Endwertungs-Szenario, aufklappbare Abrechnungen und eine optionale Punkteansicht auf der Karte.
 
 Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor der Aufdeckung gegnerische Gebotshöhen, geheime Fraktionssymbole und noch nicht gemeinsam ausgewertete gegnerische ♠-Entscheidungen. Ein späterer Server darf nur diese serverseitig redigierte Spieleransicht an Clients senden.
 
-## Visual Debug Client
+## Lokaler Client und Debug-Szenarien
 
-Der Browser-Client zeigt einen vorbereiteten Spielstand mit Anna, Ben und Clara sowie 16 Gebieten auf einer echten 32×20-Debug-Rasterkarte. Rasterzellen, gemeinsame Kanten, Besitzerfarben, Karten-Symbole, Aktivierungszahlen und POIs werden aus `GameState.map` dargestellt. Ein Klick auf ein Kästchen wählt das Gebiet; Zoom- und Einpassen-Steuerungen erleichtern die Ansicht. Startauktionen, Aktivierungen und normale Auktionen lassen sich lokal als Pass-and-play bedienen.
+Der Browser-Client startet regulär mit `Neues Spiel` und führt über Kartenbau, POIs, Karten- und Fraktionsverteilung direkt in die Startauktionen. Rasterzellen, gemeinsame Kanten, Besitzerfarben, Karten-Symbole, Aktivierungszahlen und POIs werden aus `GameState.map` dargestellt. Ein Klick oder Ziehen auf dem Raster zeichnet einen Gebietsentwurf; Zoom- und Einpassen-Steuerungen erleichtern die Ansicht. Startauktionen, Aktivierungen und normale Auktionen lassen sich lokal als Pass-and-play bedienen.
 
 Ein wählbarer Debug-Seed macht den Zufallsablauf bei gleichen Entscheidungen reproduzierbar. Schnellstarts für Gleichstand, Grenzgewinn, Vorstoß, Eroberung, Teilung, ♦, ♠ und Festungen führen die betreffenden Core-Aktionen aus. Die Demo-Rasterabmessung ist ausschließlich eine Fixture und keine neue Spielregel; ein Multiplayer-Modus ist nicht enthalten.
 
@@ -107,4 +123,4 @@ Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen außer
 
 ## Weitere Arbeitspakete
 
-Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Wertung, Savegame und Multiplayer-Server bleiben spätere Arbeitspakete.
+Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Savegame und Multiplayer-Server bleiben spätere Arbeitspakete.

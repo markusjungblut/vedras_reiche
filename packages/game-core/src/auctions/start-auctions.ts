@@ -69,14 +69,15 @@ function roundDescriptions(round: 1 | 2, display: readonly TerritoryId[]): Event
 /** Starts §8 with the clockwise successor of the last setup actor as auctioneer. */
 export function beginStartAuctions(
   state: GameState,
-  lastSetupPlayerId: PlayerId,
+  lastSetupPlayerId: PlayerId | undefined,
   random: RandomSource,
   timestamp: string,
 ): ActionResult {
   if (state.phase !== GamePhase.Setup || state.startAuctions || state.auction || state.pendingSplit) {
     throw new DomainError(DomainErrorCode.InvalidPhase, "Start auctions can begin only after setup.");
   }
-  if (!state.players.some((player) => player.id === lastSetupPlayerId)) {
+  const resolvedLastSetupPlayerId = lastSetupPlayerId ?? state.lastSetupPlayerId;
+  if (resolvedLastSetupPlayerId === undefined || !state.players.some((player) => player.id === resolvedLastSetupPlayerId)) {
     throw new DomainError(DomainErrorCode.InvalidPlayerOrder, "Last setup actor is not seated.");
   }
   if (state.territories.some((territory) => territory.ownerId !== null)) {
@@ -93,7 +94,7 @@ export function beginStartAuctions(
       displayTerritoryIds: display,
       firstDisplayTerritoryIds: display,
       nextDisplayIndex: 0,
-      auctioneerPlayerId: getNextPlayer(playerIds, lastSetupPlayerId),
+      auctioneerPlayerId: getNextPlayer(playerIds, resolvedLastSetupPlayerId),
       awardedPlayerIds: [],
       availableBidsByPlayerId: bidSets(playerIds),
     },

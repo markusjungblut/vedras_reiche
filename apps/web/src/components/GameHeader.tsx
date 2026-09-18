@@ -12,7 +12,7 @@ export function GameHeader({ state, playerName }: GameHeaderProps) {
       <div className="brand-lockup">
         <div className="brand-emblem" aria-hidden="true">♜</div>
         <div>
-          <p className="eyebrow">Visual Debug Client</p>
+          <p className="eyebrow">Lokale Partie</p>
           <h1>Vedras Reiche</h1>
         </div>
       </div>

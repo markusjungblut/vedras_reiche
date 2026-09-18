@@ -14,6 +14,8 @@ import type {
 } from "./activation-phase-state.js";
 import type { ActionPhaseState, PendingWar } from "./action-phase-state.js";
 import type { CombatResult } from "./action-phase-state.js";
+import type { GameResult, ScoringState } from "../scoring/scoring-state.js";
+import type { MapCreationState } from "./map-creation-state.js";
 
 export interface GameState {
   readonly gameId: GameId;
@@ -26,6 +28,10 @@ export interface GameState {
   readonly territories: readonly Territory[];
   /** Authoritative raster geometry; omitted only during pre-map setup. */
   readonly map?: GridMapState;
+  /** Present while the players create the initial raster map. */
+  readonly mapCreation?: MapCreationState | undefined;
+  /** Retained after map creation to derive the first start-auction auctioneer. */
+  readonly lastSetupPlayerId?: PlayerId | undefined;
   readonly pointsOfInterest: readonly PointOfInterest[];
   readonly borderMarks: readonly BorderMark[];
   readonly startPlayerId: PlayerId;
@@ -47,5 +53,9 @@ export interface GameState {
   } | undefined;
   readonly pendingDiamondBorderChanges: readonly PendingDiamondBorderChange[];
   readonly spadeActivations: readonly SpadeActivation[];
+  /** Set during SCORING and retained with the result after FINISHED. */
+  readonly scoring?: ScoringState | undefined;
+  /** Immutable end-of-game score, created exactly once. */
+  readonly result?: GameResult | undefined;
   readonly events: readonly GameEvent[];
 }

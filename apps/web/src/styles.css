@@ -15,6 +15,17 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .welcome-screen { width: min(900px, calc(100vw - 64px)); margin: 0 auto; padding: 12vh 0; }
 .welcome-screen h1 { margin: 8px 0 12px; font-size: clamp(42px, 7vw, 76px); letter-spacing: -.05em; }
 .welcome-screen > p { max-width: 600px; color: #aab8d2; font-size: 18px; }
+.welcome-actions { margin-top: 26px; }
+.new-game-config, .debug-welcome { margin-top: 28px; padding: 22px; }
+.config-stack { display: grid; gap: 14px; }
+.config-stack > div > small { display: block; margin-top: 4px; }
+.seat-entry { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; }
+.seat-entry > strong { color: #f1c17c; text-align: center; }
+.seat-entry input { min-height: 37px; border: 1px solid #3a4d73; border-radius: 8px; padding: 7px 9px; color: #edf2fb; background: #0c1529; }
+.seat-entry .secondary-button, .seat-entry .text-button { padding: 7px 9px; }
+.config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.validation-list { display: grid; gap: 5px; margin: 0; padding-left: 20px; color: #ffc4bc; }
+.secret-faction { padding: 16px; border: 1px solid #e6b26b; border-radius: 11px; background: #2c251d; color: #ffe1ad !important; font-size: 25px; font-weight: 800; letter-spacing: .06em; text-align: center; }
 .eyebrow, .section-kicker { margin: 0 0 5px; color: #8fa7d5; font-size: 11px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
 .panel { border: 1px solid #263657; border-radius: 18px; background: rgba(16, 25, 48, .88); box-shadow: 0 14px 45px rgba(0,0,0,.18); }
 .game-header { padding: 22px 34px 18px; border-bottom: 1px solid #253451; background: rgba(8, 13, 27, .9); }
@@ -75,6 +86,13 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .map-cell.owner-map-0.map-cell-selected, .map-cell.owner-map-1.map-cell-selected, .map-cell.owner-map-2.map-cell-selected { fill: #d58e46; }
 .map-cell.map-cell-part-a, .map-cell.map-cell-part-a:hover { fill: #a97234; }
 .map-cell.map-cell-part-b, .map-cell.map-cell-part-b:hover { fill: #3674a4; }
+.map-cell-setup-available { fill: #233d68 !important; cursor: crosshair; }
+.map-cell-setup-selected, .map-cell-setup-selected:hover { fill: #d08a42 !important; }
+.map-cell-realm-candidate-0 { fill: #735eaf !important; }
+.map-cell-realm-candidate-1 { fill: #2f7a85 !important; }
+.map-cell-realm-candidate-2 { fill: #9b673d !important; }
+.map-cell-realm-candidate-3 { fill: #8a4e70 !important; }
+.map-cell-largest-realm { fill: #c59039 !important; }
 .raster-map.is-splitting .map-cell-part-a, .raster-map.is-splitting .map-cell-part-b { cursor: crosshair; }
 .map-grid-line { stroke: #496083; stroke-width: .025; pointer-events: none; opacity: .55; }
 .map-territory-border { stroke: #aebbd5; stroke-width: .075; pointer-events: none; }
@@ -111,3 +129,15 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .war-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .war-sides p, .war-result { border: 1px solid #53648a; border-radius: 10px; padding: 12px; background: #1b2945; }
 .war-choice { border-top: 1px solid #334466; padding-top: 10px; }
+.realm-choice { display: grid; gap: 8px; padding: 12px; border: 1px solid #42577f; border-radius: 10px; background: #14213c; }
+.winner-message { padding: 11px 12px; border: 1px solid #6b5935; border-radius: 10px; background: #2b251c; color: #ffdda7 !important; }
+.score-groups { display: grid; gap: 10px; }
+.score-group { display: grid; gap: 8px; }
+.player-score { overflow: hidden; border: 1px solid #3b527d; border-radius: 11px; background: #111d36; }
+.player-score summary { display: flex; justify-content: space-between; gap: 12px; padding: 12px; cursor: pointer; }
+.player-score summary strong:last-child, .score-territory-heading strong:last-child { color: #ffd18a; font-variant-numeric: tabular-nums; }
+.score-meta { padding: 0 12px 10px; color: #8fa1c2; font-size: 12px; }
+.territory-score-list { display: grid; gap: 8px; padding: 0 12px 12px; }
+.score-territory { padding: 10px; border: 1px solid #2b3f66; border-radius: 9px; background: #0d172c; }
+.score-territory-heading, .score-lines div { display: flex; justify-content: space-between; gap: 12px; }
+.score-lines { display: grid; gap: 3px; margin-top: 7px; color: #9fb1d0; font-size: 12px; }

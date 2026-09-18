@@ -31,6 +31,16 @@ function revealedBids(event: GameEvent, playerName: PlayerName): string {
 /** Formats only recorded core events. Current private bids have no value in the submission event. */
 export function eventLabel(event: GameEvent, playerName: PlayerName): string {
   switch (event.type) {
+    case GameEventType.MapCreationStarted: return "Kartenbau begonnen.";
+    case GameEventType.SetupTerritoryCreated: return `Gebiet ${field(event, "territoryId")} gezeichnet.`;
+    case GameEventType.SetupTerritorySplit: return `Gebiet ${field(event, "originalTerritoryId")} geteilt.`;
+    case GameEventType.SetupBorderChanged: return "Setup-Grenze korrigiert.";
+    case GameEventType.PoiPlacementStarted: return "POI-Platzierung beginnt.";
+    case GameEventType.PoiPlaced: return "POI auf der Karte platziert.";
+    case GameEventType.MapCreationCompleted: return "Karte erfolgreich geprüft.";
+    case GameEventType.TerritoryCardsAssigned: return "Gebietskarten verteilt.";
+    case GameEventType.SecretFactionsAssigned: return "Geheime Fraktionen vergeben.";
+    case GameEventType.SetupCompleted: return "Spielaufbau abgeschlossen.";
     case GameEventType.GameCreated: return "Spiel erstellt.";
     case GameEventType.PlayerAdded: return `${named(event, "playerId", playerName)} nimmt teil.`;
     case GameEventType.RoundStarted: return `Runde ${field(event, "round")} beginnt.`;
@@ -83,6 +93,9 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
     case GameEventType.ActionPhaseFinished: return "Aktionsphase beendet.";
     case GameEventType.RoundFinished: return `Runde ${field(event, "round")} beendet.`;
     case GameEventType.ScoringStarted: return "Wertung beginnt.";
+    case GameEventType.LargestRealmChoiceRequired: return `${named(event, "playerId", playerName)} wählt das größte Reich.`;
+    case GameEventType.LargestRealmSelected: return `${named(event, "playerId", playerName)} hat ein größtes Reich gewählt.`;
+    case GameEventType.ScoringCompleted: return "Endwertung abgeschlossen.";
     case GameEventType.WarStarted: return `Krieg zwischen ${field(event, "attackerTerritoryId")} und ${field(event, "defenderTerritoryId")} begonnen.`;
     case GameEventType.WarSpadeChoiceLocked: return `${named(event, "playerId", playerName)} hat die ♠-Wahl bestätigt.`;
     case GameEventType.CombatRolled: return `Kampf: Angreifer ${field(event, "attackerRoll")} + ♠ ${field(event, "attackerSpadeBonus")} = ${field(event, "attackerTotal")}; Verteidiger ${field(event, "defenderRoll")} + ♠ ${field(event, "defenderSpadeBonus")} + Festungen ${field(event, "defenderFortressBonus")} = ${field(event, "defenderTotal")}. Differenz ${field(event, "difference")}.`;

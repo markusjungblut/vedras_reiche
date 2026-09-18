@@ -20,6 +20,14 @@ Der Visual Debug Client erfasst Entscheidungen, ruft Core-Aktionen direkt auf un
 
 Der Debug Client besitzt einen reproduzierbaren Seed, Testkarte, Kartenziehquelle und vorbereitete Szenarien. Diese Hilfen liegen ausschließlich unter `apps/web`; spielrelevante Änderungen laufen ausschließlich über Core-Aktionen; die React-Komponenten speichern nur Anzeige- und Eingabezustand.
 
+## Spielaufbau und Kartenerschaffung
+
+Ein neues lokales Spiel beginnt im leeren `SETUP` und wechselt mit `BeginMapCreationAction` in `MAP_CREATION`. `MapCreationState` hält den ersten und aktuellen Kartenzeichner, den fortlaufenden Cursor, die Zielzahl `4P + 4`, die Kartenbauetappe sowie die pro POI-Art platzierten Stückzahlen. `CreateSetupTerritoryAction` und `SplitSetupTerritoryAction` erzeugen jeweils genau ein neues Gebiet; die IDs entstehen im Core. `EditSetupBorderAction` ist eine Korrektur ohne Zug- oder Gebietszähleränderung.
+
+Die vier POI-Etappen liegen nach `P`, `2P`, `3P` und `4P` Gebieten. Auch ihre Platzierungen bewegen den gleichen Spielreihenfolge-Cursor weiter. Beim Abschluss prüft der Core jedes Gebiet auf Mindestfläche, orthogonalen Zusammenhang und mindestens zwei unterschiedliche gemeinsame Seiten-Nachbarn. Es gibt bewusst keine globale Zusammenhangsprüfung für die ganze Rasterkarte.
+
+Nach erfolgreicher Prüfung verteilt `drawBalancedStartingTerritoryCards` aus dem vollständigen Satz der 48 gedruckten Karten exakt `P + 1` Karten pro Symbol und mischt sie über die eingespeiste `RandomSource`. Die Fraktionen werden anschließend in dauerhafter Sitzreihenfolge gezogen; bei fünf oder sechs Personen beginnt die Restgruppe mit einer neuen Permutation aller vier Symbole. Die Spieleransicht bleibt für fremde Fraktionen redigiert. `lastSetupPlayerId` bleibt nach dem Kartenbau im Zustand, damit die bestehende Startauktion den korrekten ersten Auktionssteller ableitet.
+
 `packages/game-core` enthält die Spielmodelle und Regeln als eigenständige TypeScript-Bibliothek. Der Core hängt nicht von React, DOM, Canvas, WebSockets, Datenbanken oder Browser-APIs ab. Server, Tests, Bots und spätere Replay-Werkzeuge können dieselben Zustandsübergänge verwenden.
 
 ## Rasterkarte als Domain-Wahrheit
@@ -62,10 +70,12 @@ zwei Startauktionsrunden abschließen
   → Aktivierungsphase abwickeln
   → Aktionsphase vollständig abwickeln
   → Runde beenden
-  → nächste Runde oder SCORING
+  → nächste Runde oder SCORING → FINISHED
 ```
 
-`startRound` prüft den Abschluss der vorherigen Runde. Während einer laufenden Aktionsphase, Auktion oder ausstehenden Teilung kann keine neue Runde gestartet werden. Nach der letzten Aktionsphase geht der Zustand in `SCORING`; die Punktewertung selbst folgt später.
+`startRound` prüft den Abschluss der vorherigen Runde. Während einer laufenden Aktionsphase, Auktion oder ausstehenden Teilung kann keine neue Runde gestartet werden. Nach der letzten Aktionsphase geht der Zustand in `SCORING`. Der Core berechnet dort die Reichskomponenten aus der Rastergeometrie, wartet nur bei Gleichstand der größten Komponente auf `ChooseLargestRealmAction` und erstellt anschließend das unveränderliche `GameResult` in `FINISHED`. In `FINISHED` sind reguläre Aktionen gesperrt.
+
+Die Wertung bleibt vollständig im Game Core: `TerritoryScoreBreakdown` enthält Rasterfläche, additive Prozentboni und exakte Hundertstel, `PlayerScore` aggregiert die kontrollierten Gebiete. Der Browser zeigt diese Ergebnisse lediglich an. Die Spieleransicht enthält die Endpunktzahl und Bonusanteile, offenbart aber kein geheimes Fraktionssymbol anderer Spieler.
 
 ## Startauktionen
 
@@ -158,4 +168,4 @@ Die Anleitungsformulierung zur durch Mindestfläche eingeschränkten „vollstä
 
 ## Stand und weitere Arbeitspakete
 
-Arbeitspaket 5 ergänzt Kriegsauswertung und geometrische Grenzverschiebungen. Punktewertung, Savegame und Multiplayer-Server sind noch ausstehend. Die verbleibende Schwächungs-Formalisierung steht in [OPEN_QUESTIONS.md](../OPEN_QUESTIONS.md).
+Die Arbeitspakete 5 und 6 ergänzen Kriegsauswertung, geometrische Grenzverschiebungen, Endwertung und `FINISHED`. Arbeitspaket 7 ergänzt den vollständigen lokalen Spielaufbau vor den vorhandenen Startauktionen. Savegame und Multiplayer-Server sind noch ausstehend. Die verbleibende Schwächungs-Formalisierung steht in [OPEN_QUESTIONS.md](../OPEN_QUESTIONS.md).

@@ -2,6 +2,12 @@
 
 Die bisher erfassten Fragen zu den Startauktionen und zur Rollenverteilung bei normalen Auktionen sind geklärt.
 
+## Offene Produkt- und Balancingentscheidung: Standardraster
+
+Welche festen digitalen Rasterdimensionen sollen A4 und A5 in der veröffentlichten Version standardmäßig verwenden?
+
+Der lokale Spielaufbau verwendet bis zu dieser Entscheidung nur veränderbare technische Startwerte. Die Regel bleibt auf die Mindestflächen A4 = 20 und A5 = 10 Kästchen beschränkt.
+
 ## Geklärte Entscheidung: Zweiergleichstand
 
 Start- und normale Auktion verwenden dieselbe Rollenregel. Referenz ist bei der Startauktion der Auktionssteller, bei der normalen Auktion der Eröffner. Ist die Referenz unter den beiden Höchstbietenden, zieht sie die Grenze. Andernfalls zieht der vom Referenzspieler aus im Uhrzeigersinn zuerst erreichte Höchstbietende. Der andere wählt zuerst. Die gemeinsame Core-Funktion `determineSplitRoles` legt beide Rollen sofort im Pending-Split fest.

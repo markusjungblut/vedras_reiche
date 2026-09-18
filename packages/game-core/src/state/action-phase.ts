@@ -9,6 +9,7 @@ import { GamePhase } from "./game-phase.js";
 import type { GameState } from "./game-state.js";
 import { areStateTerritoriesAdjacent } from "./geometry-selectors.js";
 import { getSharedBorder, getTerritoryArea } from "../map/grid-map.js";
+import { beginScoring } from "../scoring/scoring.js";
 
 export interface PotentialBasicActions {
   readonly canOpenAuction: boolean;
@@ -98,6 +99,20 @@ function advancePastUnavailablePlayers(
   };
 }
 
+/** Records phase events before entering the automatic or choice-driven scoring workflow. */
+function finalizeAdvancedState(
+  previous: GameState,
+  advanced: GameState,
+  timestamp: string,
+  descriptions: readonly EventDescription[],
+): ActionResult {
+  const events = createEvents(previous, timestamp, descriptions);
+  const withEvents: GameState = { ...advanced, events: [...previous.events, ...events] };
+  if (withEvents.phase !== GamePhase.Scoring) return { state: withEvents, events };
+  const scoring = beginScoring(withEvents, timestamp);
+  return { state: scoring.state, events: [...events, ...scoring.events] };
+}
+
 /** Called only when all territory activations are resolved. */
 export function beginActionPhase(state: GameState, timestamp: string): ActionResult {
   if (state.phase !== GamePhase.ActivationPhase ||
@@ -119,8 +134,7 @@ export function beginActionPhase(state: GameState, timestamp: string): ActionRes
     },
   };
   const advanced = advancePastUnavailablePlayers(provisional, descriptions);
-  const events = createEvents(state, timestamp, descriptions);
-  return { state: { ...advanced, events: [...state.events, ...events] }, events };
+  return finalizeAdvancedState(state, advanced, timestamp, descriptions);
 }
 
 /** Completes the opener's one basic action after every pending auction step is resolved. */
@@ -150,8 +164,7 @@ export function finishCurrentBasicAction(state: GameState, timestamp: string): A
     },
   };
   const advanced = advancePastUnavailablePlayers(provisional, descriptions);
-  const events = createEvents(state, timestamp, descriptions);
-  return { state: { ...advanced, events: [...state.events, ...events] }, events };
+  return finalizeAdvancedState(state, advanced, timestamp, descriptions);
 }
 
 /** For a player who has neither an auction target nor a potential war target. */
@@ -177,8 +190,7 @@ export function forfeitCurrentBasicAction(state: GameState, timestamp: string): 
     },
   };
   const advanced = advancePastUnavailablePlayers(provisional, descriptions);
-  const events = createEvents(state, timestamp, descriptions);
-  return { state: { ...advanced, events: [...state.events, ...events] }, events };
+  return finalizeAdvancedState(state, advanced, timestamp, descriptions);
 }
 
 export function startPendingWar(state: GameState, action: StartWarAction, timestamp: string): ActionResult {

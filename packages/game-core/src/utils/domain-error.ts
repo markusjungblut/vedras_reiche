@@ -49,6 +49,14 @@ export enum DomainErrorCode {
   NotFirstChooser = "NOT_FIRST_CHOOSER",
   DiamondCorrectionUnavailable = "DIAMOND_CORRECTION_UNAVAILABLE",
   InvalidDiamondNeutralChange = "INVALID_DIAMOND_NEUTRAL_CHANGE",
+  InvalidLargestRealmChoice = "INVALID_LARGEST_REALM_CHOICE",
+  GameAlreadyFinished = "GAME_ALREADY_FINISHED",
+  InvalidMapCreationState = "INVALID_MAP_CREATION_STATE",
+  InvalidSetupTerritory = "INVALID_SETUP_TERRITORY",
+  InvalidSetupSplit = "INVALID_SETUP_SPLIT",
+  InvalidSetupBorder = "INVALID_SETUP_BORDER",
+  InvalidPoiPlacement = "INVALID_POI_PLACEMENT",
+  InvalidMapCreation = "INVALID_MAP_CREATION",
 }
 
 export class DomainError extends Error {

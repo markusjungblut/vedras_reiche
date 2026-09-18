@@ -192,7 +192,7 @@ test("a legal war snapshots geometry and locks both territories for the round", 
     (error) => error.code === DomainErrorCode.InvalidPhase);
 });
 
-test("the fully completed last round enters scoring", () => {
+test("the fully completed last round enters and completes scoring when no choice is needed", () => {
   const base = {
     ...readyGame(),
     phase: GamePhase.ActivationPhase,
@@ -205,11 +205,12 @@ test("the fully completed last round enters scoring", () => {
     ],
   };
   const finished = beginActionPhase(base, timestamp);
-  assert.equal(finished.state.phase, GamePhase.Scoring);
+  assert.equal(finished.state.phase, GamePhase.Finished);
   assert.equal(finished.state.actionPhase.completedPlayerIds.length, 3);
   assert.ok(finished.events.some((event) => event.type === GameEventType.ActionPhaseFinished));
   assert.ok(finished.events.some((event) => event.type === GameEventType.RoundFinished));
   assert.ok(finished.events.some((event) => event.type === GameEventType.ScoringStarted));
+  assert.ok(finished.events.some((event) => event.type === GameEventType.ScoringCompleted));
   assert.throws(() => startRound(finished.state, new SequenceRandomSource([]), timestamp),
     (error) => error.code === DomainErrorCode.InvalidPhase);
 });
