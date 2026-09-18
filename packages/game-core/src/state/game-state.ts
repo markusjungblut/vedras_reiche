@@ -13,6 +13,7 @@ import type {
   SpadeActivation,
 } from "./activation-phase-state.js";
 import type { ActionPhaseState, PendingWar } from "./action-phase-state.js";
+import type { CombatResult } from "./action-phase-state.js";
 
 export interface GameState {
   readonly gameId: GameId;
@@ -36,6 +37,14 @@ export interface GameState {
   readonly auction?: AuctionState | undefined;
   readonly pendingSplit?: PendingTerritorySplit | undefined;
   readonly pendingWar?: PendingWar | undefined;
+  readonly lastWarResult?: {
+    readonly round: number;
+    readonly attackerPlayerId: PlayerId;
+    readonly defenderPlayerId: PlayerId;
+    readonly attackerTerritoryId: string;
+    readonly defenderTerritoryId: string;
+    readonly combat: CombatResult;
+  } | undefined;
   readonly pendingDiamondBorderChanges: readonly PendingDiamondBorderChange[];
   readonly spadeActivations: readonly SpadeActivation[];
   readonly events: readonly GameEvent[];

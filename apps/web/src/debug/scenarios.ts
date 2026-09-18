@@ -8,17 +8,21 @@ import {
   PointOfInterestType,
   getStateAdjacentTerritoryIds,
   getTerritoryCells,
+  getSharedBorder,
+  getCellsWithinBorderDepth,
 } from "@vedras/game-core";
-import type { ActivationChoice, GameAction, GameState, Territory } from "@vedras/game-core";
+import type { ActivationChoice, GameAction, GameState, Territory, RandomSource } from "@vedras/game-core";
 import { createDemoGridMap, createDemoMap } from "./create-demo-map.js";
 import { DemoCardSource } from "./demo-card-source.js";
 import { SeededRandomSource } from "./seeded-random-source.js";
 
-export type ScenarioKind = "START_AUCTIONS" | "ACTIVATION_PHASE" | "ACTION_PHASE" | "NORMAL_AUCTION";
+export type ScenarioKind = "START_AUCTIONS" | "ACTIVATION_PHASE" | "ACTION_PHASE" | "NORMAL_AUCTION" |
+  "WAR_NORMAL" | "WAR_STRONG" | "WAR_TIE" | "WAR_WEAK" | "WAR_CONQUEST" | "WAR_CUT" |
+  "WAR_DIAMOND" | "WAR_DIAMOND_CUT" | "WAR_SPADE_FORTRESS" | "DIAMOND_NEUTRAL";
 
 export interface DemoScenario {
   readonly state: GameState;
-  readonly randomSource: SeededRandomSource;
+  readonly randomSource: RandomSource;
   readonly cardSource: DemoCardSource;
 }
 
@@ -48,7 +52,7 @@ export function createDemoGame(seed = 12_345): GameState {
   };
 }
 
-function dispatch(state: GameState, action: GameAction, randomSource: SeededRandomSource, cardSource: DemoCardSource): GameState {
+function dispatch(state: GameState, action: GameAction, randomSource: RandomSource, cardSource: DemoCardSource): GameState {
   return applyAction(state, action, { randomSource, cardSource, timestamp: TIMESTAMP }).state;
 }
 
@@ -162,9 +166,93 @@ function completeActivations(scenario: DemoScenario): DemoScenario {
       territoryId: source.id,
       choice: activationChoice(state, source),
     }, randomSource, cardSource);
+    const pendingDiamond = state.pendingDiamondBorderChanges[0];
+    if (pendingDiamond) state = dispatch(state, { type: GameActionType.ResolveNeutralDiamond,
+      effectId: pendingDiamond.id, playerId: pendingDiamond.playerId, claimedCells: [] }, randomSource, cardSource);
   }
   if (state.phase !== GamePhase.ActionPhase) throw new Error("Die Debug-Aktivierung erreichte keine Aktionsphase.");
   return { state, randomSource, cardSource };
+}
+
+class CombatRandomSource implements RandomSource {
+  private index = 0;
+  constructor(private readonly dice: readonly number[], private readonly fallback: RandomSource) {}
+  nextInt(min: number, max: number): number {
+    if (min === 1 && max === 6 && this.index < this.dice.length) return this.dice[this.index++]!;
+    return this.fallback.nextInt(min, max);
+  }
+}
+
+function warScenario(scenario: DemoScenario, kind: ScenarioKind): DemoScenario {
+  const base = scenario.state;
+  const attacker = base.territories.find((territory) => territory.ownerId === base.activePlayerId &&
+    base.territories.some((target) => target.ownerId === null && getStateAdjacentTerritoryIds(base, territory.id).includes(target.id)));
+  if (!attacker || !base.map || !base.activePlayerId) throw new Error("Kein Angriffspaar im Debug-Szenario.");
+  const defender = base.territories.find((territory) => territory.ownerId === null &&
+    getStateAdjacentTerritoryIds(base, attacker.id).includes(territory.id))!;
+  const defenderPlayer = base.players.find((player) => player.id !== base.activePlayerId)!;
+  let map = base.map;
+  if (kind === "WAR_CONQUEST") {
+    const border = getSharedBorder(map, attacker.id, defender.id);
+    const cell = getCellsWithinBorderDepth(map, defender.id, border, 1)[0]!;
+    map = { ...map, cells: { ...map.cells, [`${cell.x},${cell.y}`]: attacker.id } };
+  }
+  if (kind === "WAR_DIAMOND_CUT") {
+    const neutral = base.territories.find((territory) => territory.ownerId === null && territory.id !== defender.id &&
+      getStateAdjacentTerritoryIds(base, defender.id).includes(territory.id));
+    if (!neutral) throw new Error("Kein angrenzendes neutrales Gebiet für die ♦-Teilung.");
+    const border = getSharedBorder(map, defender.id, neutral.id);
+    const cells = { ...map.cells };
+    for (const cell of getCellsWithinBorderDepth(map, neutral.id, border, 2).slice(0, 8)) {
+      cells[`${cell.x},${cell.y}`] = defender.id;
+    }
+    map = { ...map, cells };
+  }
+  if (kind === "WAR_STRONG") {
+    const border = getSharedBorder(map, attacker.id, defender.id);
+    const keep = new Set(getCellsWithinBorderDepth(map, attacker.id, border, 8).slice(0, 19).map((cell) => `${cell.x},${cell.y}`));
+    const cells = { ...map.cells };
+    for (const cell of getTerritoryCells(map, attacker.id)) if (!keep.has(`${cell.x},${cell.y}`)) cells[`${cell.x},${cell.y}`] = null;
+    map = { ...map, format: "A5", cells };
+  }
+  const defenderCells = getTerritoryCells(map, defender.id);
+  const state: GameState = {
+    ...base, map,
+    territories: base.territories.map((territory) => territory.id === defender.id
+      ? { ...territory, ownerId: defenderPlayer.id, ...(kind === "WAR_WEAK" ? { weakened: true } : {}) } : territory),
+    ...(kind === "WAR_DIAMOND" || kind === "WAR_DIAMOND_CUT" ? { borderMarks: [{ id: `debug-mark:${attacker.id}:${defender.id}`,
+      territoryIds: [attacker.id, defender.id], playerId: base.activePlayerId }] } : {}),
+    ...(kind === "WAR_SPADE_FORTRESS" ? {
+      spadeActivations: [{ id: "debug-spade", playerId: base.activePlayerId,
+        sourceTerritoryId: attacker.id, status: "AVAILABLE" as const }],
+      pointsOfInterest: [...base.pointsOfInterest, { id: "debug-fortress", type: PointOfInterestType.Fortress,
+        position: defenderCells[0]! }],
+    } : {}),
+  };
+  const dice = kind === "WAR_TIE" ? [3, 3] : kind === "WAR_WEAK" ? [5, 4]
+    : kind === "WAR_NORMAL" || kind === "WAR_DIAMOND" ? [5, 3]
+      : kind === "WAR_SPADE_FORTRESS" ? [4, 4] : [6, 1];
+  const randomSource = new CombatRandomSource(dice, scenario.randomSource);
+  return { state: dispatch(state, { type: GameActionType.StartWar, playerId: base.activePlayerId,
+    attackerTerritoryId: attacker.id, defenderTerritoryId: defender.id }, randomSource, scenario.cardSource),
+    randomSource, cardSource: scenario.cardSource };
+}
+
+function neutralDiamondScenario(scenario: DemoScenario): DemoScenario {
+  const base = scenario.state;
+  const source = base.territories.find((territory) => territory.ownerId !== null &&
+    base.territories.some((target) => target.ownerId === null && getStateAdjacentTerritoryIds(base, territory.id).includes(target.id)));
+  if (!source || !source.ownerId || !source.card) throw new Error("Kein neutrales ♦-Ziel.");
+  const target = base.territories.find((territory) => territory.ownerId === null &&
+    getStateAdjacentTerritoryIds(base, source.id).includes(territory.id))!;
+  const state: GameState = { ...base, phase: GamePhase.ActivationPhase, activePlayerId: source.ownerId,
+    activation: { pendingTerritoryIds: [source.id], resolvedTerritoryIds: [] },
+    territories: base.territories.map((territory) => territory.id === source.id
+      ? { ...territory, card: { ...source.card!, suit: Suit.Diamonds } } : territory) };
+  return { ...scenario, state: dispatch(state, { type: GameActionType.ActivateTerritory,
+    playerId: source.ownerId, territoryId: source.id,
+    choice: { type: "DIAMOND_NEUTRAL_BORDER", targetTerritoryId: target.id } },
+  scenario.randomSource, scenario.cardSource) };
 }
 
 function openDemonstrationAuction(scenario: DemoScenario): DemoScenario {
@@ -191,5 +279,7 @@ export function createScenario(kind: ScenarioKind, seed = 12_345): DemoScenario 
   const action = completeActivations(activation);
   if (kind === "ACTION_PHASE") return action;
   if (kind === "NORMAL_AUCTION") return openDemonstrationAuction(action);
-  throw new Error(`Unbekanntes Debug-Szenario: ${kind satisfies never}`);
+  if (kind === "DIAMOND_NEUTRAL") return neutralDiamondScenario(action);
+  if (kind.startsWith("WAR_")) return warScenario(action, kind);
+  throw new Error(`Unbekanntes Debug-Szenario: ${kind}`);
 }

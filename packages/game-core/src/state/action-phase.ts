@@ -8,6 +8,7 @@ import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import { GamePhase } from "./game-phase.js";
 import type { GameState } from "./game-state.js";
 import { areStateTerritoriesAdjacent } from "./geometry-selectors.js";
+import { getSharedBorder, getTerritoryArea } from "../map/grid-map.js";
 
 export interface PotentialBasicActions {
   readonly canOpenAuction: boolean;
@@ -28,16 +29,15 @@ export interface PotentialWarTarget {
   readonly defenderTerritoryId: TerritoryId;
 }
 
-/** Returns war candidates; combat resolution remains in AP5. */
+/** Returns only pairs that may still fight this round. */
 export function getPotentialWarTargets(state: GameState, playerId: PlayerId): PotentialWarTarget[] {
-  const own = state.territories.filter((territory) => territory.ownerId === playerId);
-  const opponents = state.territories.filter((territory) => territory.ownerId !== null && territory.ownerId !== playerId);
+  const own = state.territories.filter((territory) => territory.ownerId === playerId && !territory.participatedInWarThisRound);
+  const opponents = state.territories.filter((territory) => territory.ownerId !== null && territory.ownerId !== playerId && !territory.participatedInWarThisRound);
   return own.flatMap((attacker) => opponents
     .filter((defender) => areStateTerritoriesAdjacent(state, attacker.id, defender.id))
     .map((defender) => ({ attackerTerritoryId: attacker.id, defenderTerritoryId: defender.id })));
 }
 
-/** Raster adjacency is checked here; remaining war rules and combat follow in AP5. */
 export function getPotentialBasicActions(state: GameState, playerId: PlayerId): PotentialBasicActions {
   return {
     canOpenAuction: getPotentialAuctionTerritoryIds(state, playerId).length > 0,
@@ -101,7 +101,7 @@ function advancePastUnavailablePlayers(
 /** Called only when all territory activations are resolved. */
 export function beginActionPhase(state: GameState, timestamp: string): ActionResult {
   if (state.phase !== GamePhase.ActivationPhase ||
-      state.activation?.pendingTerritoryIds.length !== 0 ||
+      state.activation?.pendingTerritoryIds.length !== 0 || state.pendingDiamondBorderChanges.length !== 0 ||
       state.auction !== undefined || state.pendingSplit !== undefined) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
@@ -136,7 +136,7 @@ export function finishCurrentBasicAction(state: GameState, timestamp: string): A
   if (state.actionPhase.completedPlayerIds.includes(playerId)) {
     throw new DomainError(DomainErrorCode.ActionAlreadyCompleted);
   }
-  if (state.actionPhase.auctionsOpenedByActivePlayer === 0) {
+  if (state.actionPhase.currentActionKind === undefined && state.actionPhase.auctionsOpenedByActivePlayer === 0) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
   const descriptions: EventDescription[] = [
@@ -181,14 +181,13 @@ export function forfeitCurrentBasicAction(state: GameState, timestamp: string): 
   return { state: { ...advanced, events: [...state.events, ...events] }, events };
 }
 
-/** Slim handoff until AP5; no combat result is computed here. */
 export function startPendingWar(state: GameState, action: StartWarAction, timestamp: string): ActionResult {
   if (state.phase !== GamePhase.ActionPhase || state.actionPhase === undefined ||
       state.activePlayerId !== action.playerId) {
     throw new DomainError(DomainErrorCode.NotActivePlayer);
   }
   if (state.auction !== undefined || state.pendingSplit !== undefined || state.pendingWar !== undefined ||
-      state.actionPhase.auctionsOpenedByActivePlayer !== 0) {
+      state.actionPhase.auctionsOpenedByActivePlayer !== 0 || state.actionPhase.currentActionKind !== undefined) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
   const attacker = state.territories.find((territory) => territory.id === action.attackerTerritoryId);
@@ -196,8 +195,14 @@ export function startPendingWar(state: GameState, action: StartWarAction, timest
   if (attacker?.ownerId !== action.playerId || defender?.ownerId === null ||
       defender?.ownerId === undefined || defender.ownerId === action.playerId ||
       !areStateTerritoriesAdjacent(state, attacker.id, defender.id)) {
-    throw new DomainError(DomainErrorCode.InvalidBorderTarget);
+    throw new DomainError(DomainErrorCode.InvalidWarTarget);
   }
+  if (attacker.participatedInWarThisRound || defender.participatedInWarThisRound) {
+    throw new DomainError(DomainErrorCode.TerritoryAlreadyInWar);
+  }
+  if (state.map === undefined) throw new DomainError(DomainErrorCode.InvalidWarTarget);
+  const mark = state.borderMarks.find((item) => item.territoryIds.includes(attacker.id) && item.territoryIds.includes(defender.id));
+  const warId = `${state.gameId}:war:${state.events.length + 1}`;
   const events = createEvents(state, timestamp, [{
     type: GameEventType.WarStarted,
     actorId: action.playerId,
@@ -205,17 +210,29 @@ export function startPendingWar(state: GameState, action: StartWarAction, timest
       playerId: action.playerId,
       attackerTerritoryId: attacker.id,
       defenderTerritoryId: defender.id,
-      status: "PENDING_AP4",
+      warId,
     },
   }]);
   return {
     state: {
       ...state,
       pendingWar: {
-        playerId: action.playerId,
+        id: warId,
+        attackerPlayerId: action.playerId,
+        defenderPlayerId: defender.ownerId,
         attackerTerritoryId: attacker.id,
         defenderTerritoryId: defender.id,
+        stage: "AWAITING_COMBAT_CHOICES",
+        attackerArea: getTerritoryArea(state.map, attacker.id),
+        defenderArea: getTerritoryArea(state.map, defender.id),
+        originalSharedBorder: getSharedBorder(state.map, attacker.id, defender.id),
+        ...(mark === undefined ? {} : { borderMark: { id: mark.id, playerId: mark.playerId } }),
+        spadeChoices: {},
       },
+      borderMarks: mark === undefined ? state.borderMarks : state.borderMarks.filter((item) => item.id !== mark.id),
+      territories: state.territories.map((territory) => territory.id === attacker.id || territory.id === defender.id
+        ? { ...territory, participatedInWarThisRound: true } : territory),
+      actionPhase: { ...state.actionPhase, currentActionKind: "WAR" },
       events: [...state.events, ...events],
     },
     events,

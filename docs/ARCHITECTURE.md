@@ -26,17 +26,17 @@ Der Debug Client besitzt einen reproduzierbaren Seed, Testkarte, Kartenziehquell
 
 `GameState.map` ist nach dem Kartenaufbau die autoritative Geometrie. Jede belegte Rasterzelle verweist auf eine `TerritoryId` oder ist `null`. Fläche, orthogonaler Zusammenhang, Nachbarschaften und gemeinsame Grenzen werden aus diesen Zellen berechnet. Diagonaler Eckkontakt ist keine Nachbarschaft. Die SVG-Karte im Browser ist eine Darstellung dieser Daten und keine eigene Regelquelle.
 
-POIs und positionierte Siedlungen/Städte speichern eine konkrete `GridCell`. Ihre territoriale Zugehörigkeit wird über die Zelle selektiert und folgt dadurch späteren Grenzmutationen automatisch. Die Kartenabmessungen bleiben über `GridMapConfig` konfigurierbar; A4 und A5 liefern nur Mindestflächen von 20 beziehungsweise 10 Kästchen.
+POIs und positionierte Siedlungen/Städte speichern eine konkrete `GridCell`. POI-Zugehörigkeit wird stets aus der Zelle selektiert. `reconcileMapBoundFeatures` ordnet Siedlungen und Städte nach jeder AP5-Kartenänderung ihrer neuen TerritoryId zu, auch wenn mehrere Features in einem Gebiet landen. Die Kartenabmessungen bleiben über `GridMapConfig` konfigurierbar; A4 und A5 liefern Mindestflächen von 20 beziehungsweise 10 Kästchen.
 
 ## Geometrischer Cut-and-Choose-Ablauf
 
 Eine Zweiwege-Auktionsteilung durchläuft `AWAITING_DIVISION` und `AWAITING_CHOICE`. Der Divider liefert ausschließlich `partACells` und die Entscheidung, welcher Teil die ursprüngliche Karte behält. Teil B ist das exakte Komplement des ursprünglichen Gebiets. Der Core prüft Besitz der Zellen, Nichtleere, Mindestflächen und orthogonalen Zusammenhang. Erst danach wählt der festgelegte First Chooser einen Teil; Besitzer, neue Karte, Karte und lokale Einflüsse werden atomar aktualisiert. Nachbarschaften werden anschließend erneut aus der Karte selektiert. Die öffentliche Aktion `ResolveTerritorySplit` akzeptiert nur die anhand einer zu kleinen Rasterfläche nachweisbare Unmöglichkeit; fertige `Territory`-Objekte sind kein legaler Auflösungsweg mehr. Für verwinkelte Flächen mit rechnerisch genügend Zellen sucht der Core nicht erschöpfend nach einer möglichen Aufteilung. Solche Fälle bleiben offen, statt eine mögliche legale Teilung fälschlich auszuschließen.
 
-Für echte Replays muss jede Kartenmutation rekonstruierbar sein oder periodisch mit einem Map-Snapshot gespeichert werden. Ein Persistenzsystem ist noch nicht Teil dieses Arbeitspakets.
+Für echte Replays muss jede Kartenmutation rekonstruierbar sein oder periodisch mit einem Map-Snapshot gespeichert werden. Ein Persistenzsystem ist noch nicht Teil dieser Arbeitspakete.
 
-## Spieleransichten und verdeckte Gebote
+## Spieleransichten und verdeckte Entscheidungen
 
-Ein späterer Multiplayer-Server darf keine vollständige `GameState` an Clients senden. `createGameViewForPlayer` liefert eine serverseitig redigierte `PlayerGameView`: Das eigene Gebot bleibt sichtbar, gegnerische laufende Gebote werden durch ein reines `submitted`-Merkmal ersetzt. Aufdeckung erfolgt durch den regulären Domain-Ablauf; CSS-Ausblenden ist keine Sicherheitsgrenze.
+Ein späterer Multiplayer-Server darf keine vollständige `GameState` an Clients senden. `createGameViewForPlayer` liefert eine serverseitig redigierte `PlayerGameView`: Das eigene Gebot bleibt sichtbar, gegnerische laufende Gebote werden durch ein reines `submitted`-Merkmal ersetzt. Während der Kriegswahl zeigt sie vom Gegner nur `LOCKED` statt der gewählten ♠-ID. Aufdeckung erfolgt durch den regulären Domain-Ablauf; CSS-Ausblenden ist keine Sicherheitsgrenze.
 
 ## Aktionen, Fehler und Ereignisse
 
@@ -105,7 +105,7 @@ aktueller Spieler
   → nach der letzten Grundaktion: Runde beenden
 ```
 
-Krieg ist als alternative Grundaktion für ein eigenes Gebiet und einen angrenzenden gegnerischen Nachbarn vorgesehen. Seine Auswertung folgt in Arbeitspaket 5. Ein Spieler ohne angrenzendes neutrales Gebiet darf deshalb nicht allein deswegen übersprungen werden; auch ein möglicher Krieg zählt als legale Option. Erst wenn beides fehlt, verfällt die Grundaktion.
+Krieg ist die alternative Grundaktion für ein eigenes Gebiet und einen angrenzenden gegnerischen Nachbarn. `currentActionKind` trennt den begonnenen Auktions- und Kriegsweg. Ein `PendingWar` blockiert alle anderen Grundaktionen und den Rundenwechsel. Ein Spieler ohne angrenzendes neutrales Gebiet darf nicht allein deswegen übersprungen werden; auch ein möglicher Krieg zählt als legale Option. Erst wenn beides fehlt, verfällt die Grundaktion.
 
 ## Aktivierungsphase
 
@@ -115,13 +115,13 @@ Die Liste wird zu Phasenbeginn festgelegt. Eine während der Phase durch ♣ neu
 
 Die Bearbeitungsreihenfolge beginnt beim Startspieler und läuft im Uhrzeigersinn. Der Aktivierungszustand zeigt den aktuellen Spieler und dessen offene Gebiete. Bei mehreren offenen Gebieten trifft der Spieler die Auswahl; die Engine legt ihre Reihenfolge nicht fest. Erst nach gültiger Symbol- und Zielwahl sowie ausgeführter oder ausdrücklich vorgemerkter Wirkung gilt ein Gebiet als abgehandelt. Danach bleibt derselbe Spieler für seine übrigen Gebiete aktiv. Spieler ohne offene Aktivierungen werden übersprungen. Sind keine mehr offen, erzeugt der Core den Phasenwechsel zur Aktionsphase.
 
-Die Symbolwahl berücksichtigt ein mögliches zweites Symbol. Eine Aktivierung löst genau eine der vorhandenen Fähigkeiten aus. ♣ kann zusätzlich eine zweite Aktivierungszahl oder ein zweites Symbol erzeugen; diese Spezialisierungen schließen sich gegenseitig aus, während eine Siedlung oder Stadt daneben bestehen kann. ♥ verändert globalen oder lokalen Einfluss. ♦ markiert eine gegnerische Grenze oder hält eine noch geometrisch auszuführende Verschiebung zu einem neutralen Gebiet fest. ♠ speichert Spieler, Herkunftsgebiet und Verfügbarkeit eines später einmal verwendbaren Kampfbonus.
+Die Symbolwahl berücksichtigt ein mögliches zweites Symbol. Eine Aktivierung löst genau eine der vorhandenen Fähigkeiten aus. ♣ kann zusätzlich eine zweite Aktivierungszahl oder ein zweites Symbol erzeugen; diese Spezialisierungen schließen sich gegenseitig aus, während eine Siedlung oder Stadt daneben bestehen kann. ♥ verändert globalen oder lokalen Einfluss. ♦ markiert eine gegnerische Grenze oder pausiert die Aktivierung für eine geometrische Verschiebung zu einem neutralen Gebiet. ♠ speichert Spieler, Herkunftsgebiet und Verfügbarkeit eines später einmal verwendbaren Kampfbonus.
 
 Für die zweite ♣-Aktivierungszahl bezieht der Core die zufällig gezogene Gebietskarte aus einer eingespeisten `CardSource`. Deren Vertrag umfasst das Zurücklegen und erneute Mischen der Karte. Dieselbe Zahl wie auf der ursprünglichen Gebietskarte führt zu einem weiteren Zug.
 
 ## Rundenbezogene Effekte
 
-Gespeicherte ♠-Aktivierungen bleiben für die laufende Runde verfügbar und können später im Krieg genau einmal verbraucht werden. Nicht genutzte Aktivierungen verfallen am Rundenende. Auch der Aktivierungsfortschritt und die drei Würfelzahlen gehören zur laufenden Runde. Der Core setzt beim Rundenwechsel nur diese eindeutig temporären Daten zurück; dauerhafte Gebiete, Entwicklungen, Einflusswerte und Grenzmarkierungen bleiben nach ihren jeweiligen Regeln erhalten. Insbesondere bleibt eine gegnerische ♦-Grenzmarkierung bis zum nächsten Krieg an dieser Grenze bestehen.
+Gespeicherte ♠-Aktivierungen bleiben für die laufende Runde verfügbar und können später im Krieg genau einmal verbraucht werden. Nicht genutzte Aktivierungen verfallen am Rundenende. Die Kriegsteilnahme-Sperre je Gebiet wird bei Rundenbeginn zurückgesetzt; Schwächung bleibt bestehen. Auch der Aktivierungsfortschritt und die drei Würfelzahlen gehören zur laufenden Runde. Grenzmarkierungen bleiben bis zum nächsten Krieg an ihrer Grenze bestehen und werden bei dessen Beginn entfernt.
 
 ## Determinismus und Replay
 
@@ -129,8 +129,33 @@ Alle Zufallswerte stammen aus einer austauschbaren `RandomSource`; im Regelcode 
 
 ## Nachbarschaft und Grenzmarkierung
 
-♣-Entwicklungsziele, ♥-Einflussziele, ♦-Nachbarn und Auktionsziele verwenden die aus gemeinsamen Rasterkanten berechnete Nachbarschaft. Eine gegnerische markierte Grenze wird über ein stabiles, reihenfolgeunabhängiges Paar von Gebiets-IDs identifiziert; `A–B` und `B–A` bezeichnen dieselbe Grenze. Die ♦-Verschiebung bis zu zwei Kästchen bleibt bis AP5 als ausstehender Effekt modelliert. Grenzmarkierungen und Grenzverschiebungen sind unterschiedliche Vorgänge.
+♣-Entwicklungsziele, ♥-Einflussziele, ♦-Nachbarn, Auktions- und Kriegsziele verwenden die aus gemeinsamen Rasterkanten berechnete Nachbarschaft. Eine gegnerische markierte Grenze wird über ein stabiles, reihenfolgeunabhängiges Paar von Gebiets-IDs identifiziert; `A–B` und `B–A` bezeichnen dieselbe Grenze. Neutrale ♦-Grenzverschiebungen verwenden denselben Korridorvalidator wie Kriegsgrenzgewinne mit Tiefe 2. Die Aktivierung bleibt bis zur bestätigten Geometrieänderung offen; eine leere Auswahl ist zulässig.
+
+## Kriegsablauf
+
+`StartWar` prüft Spieler, Besitzer, Raster-Nachbarschaft, freie Grundaktion und beide Kriegsteilnahme-Sperren. Der `WarSnapshot` hält die beiden ursprünglichen Flächen, die gemeinsame Rastergrenze und eine mögliche ♦-Markierung fest. Beide Gebiete werden sofort für den Rest der Runde gesperrt. Der Ablauf ist:
+
+```text
+AWAITING_COMBAT_CHOICES
+  → beide ♠-Entscheidungen bestätigt
+  → 1W6 pro Seite + ♠ + Festungen des Verteidigers
+  → Gleichstand: Krieg und Grundaktion beenden
+  → Grenzgewinn/starker Vorstoß: AWAITING_BORDER_ADVANCE
+  → Durchbruch bei großer Verliererfläche: AWAITING_CUT_DIVISION
+      → AWAITING_CUT_CHOICE
+      → optional AWAITING_DIAMOND_CORRECTION
+  → sonst vollständige Eroberung
+  → Krieg und Grundaktion beenden
+```
+
+Die Zufallsquelle wird nur nach beiden bestätigten Entscheidungen angesprochen. Der Angreifer erhält keinen automatischen Bonus. Eine ♠-Aktivierung an der gegnerischen Kampfgrenze gibt +2, eine entfernte +1; höchstens eine je Spieler und Krieg. Festungen werden anhand ihrer aktuellen Kartenposition im Verteidigungsgebiet gezählt und geben je +1. `CombatResult` speichert Einzelwürfe, Boni, Gesamtsummen, absolute Differenz und Ergebnis.
+
+Bei Differenz 1–2 ist die maximale Tiefe 2. Bei Differenz ab 3 entscheidet das Verhältnis der vor dem Kampf gespeicherten Flächen: Ist die Siegerfläche kleiner als die halbe Verliererfläche, beträgt die Vorstoßtiefe 4. Andernfalls wird ab doppelter Mindestfläche des Verlierers geteilt, darunter vollständig erobert. Eine Niederlage eines bereits geschwächten Gebiets führt unabhängig davon zur Eroberung. Ein geschwächter Sieger verliert die Schwächung, bei Gleichstand bleibt sie. Eroberung wechselt nur `ownerId`; Gebiet, Karte und Geometrie bleiben eigenständig.
+
+`getCellsWithinBorderDepth` führt eine Breitensuche ausschließlich innerhalb des ursprünglichen Verlierergebiets von der ursprünglichen gemeinsamen Grenze aus. `validateBorderAdvance` prüft die übermittelten Zellen, den Korridor, Mindestfläche und Zusammenhang beider Gebiete; eine leere Auswahl ist gültig. ♦ verändert Grenzgewinn und starken Vorstoß um +1 oder −1 Tiefe. Beim Kriegs-Cut teilt der Sieger das unterlegene Gebiet mit der vorhandenen AP4-Splitprüfung, der Verlierer behält seinen gewählten Teil samt Originalkarte und ID. Nur hier entsteht ein neuer Gebietsteil mit neuer Karte. Eine ♦-Markierung erlaubt danach eine weitere validierte 1-Zellen-Korrektur zugunsten ihres Besitzers.
+
+Die Anleitungsformulierung zur durch Mindestfläche eingeschränkten „vollständigen Front“ bestimmt keine eindeutige Rasterlinie. `assessBorderAdvanceLimitation` isoliert diesen einzigen offenen Punkt und gibt bis zu einer präzisen Regelentscheidung `determinate: false` zurück. Grenzgewinne setzen deshalb derzeit keine neue Schwächung; bestehende Schwächung wirkt im Kampf vollständig. Siehe [OPEN_QUESTIONS.md](../OPEN_QUESTIONS.md).
 
 ## Stand und weitere Arbeitspakete
 
-Arbeitspaket 4 ergänzt Rastergeometrie, positionierte Kartenmerkmale und tatsächliche Gebietsteilung zur bestehenden Runden- und Auktionssteuerung. Kriegsauswertung, Grenzverschiebung durch Krieg, Punktewertung und Multiplayer-Server sind noch ausstehend. Tatsächlich offene Regelfragen stehen in [OPEN_QUESTIONS.md](../OPEN_QUESTIONS.md).
+Arbeitspaket 5 ergänzt Kriegsauswertung und geometrische Grenzverschiebungen. Punktewertung, Savegame und Multiplayer-Server sind noch ausstehend. Die verbleibende Schwächungs-Formalisierung steht in [OPEN_QUESTIONS.md](../OPEN_QUESTIONS.md).

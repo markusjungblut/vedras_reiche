@@ -25,6 +25,8 @@ export interface Territory {
   readonly settlement?: SettlementKind;
   /** Position-aware development; territory ownership is derived from the map. */
   readonly settlementFeature?: SettlementFeature;
+  /** All cell-bound developments, including several moved into one territory by a border change. */
+  readonly settlementFeatures?: readonly SettlementFeature[];
   readonly weakened?: boolean;
   readonly participatedInWarThisRound?: boolean;
   readonly localInfluenceByPlayerId?: Readonly<Record<PlayerId, number>>;

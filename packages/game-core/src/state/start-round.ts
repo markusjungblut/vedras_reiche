@@ -89,6 +89,7 @@ export function startRound(
     activationNumbers,
     activation: { pendingTerritoryIds, resolvedTerritoryIds: [] },
     spadeActivations: [],
+    lastWarResult: undefined,
     events: [...state.events, ...newEvents],
     ...(activePlayerId === undefined ? { activePlayerId: undefined } : { activePlayerId }),
   };

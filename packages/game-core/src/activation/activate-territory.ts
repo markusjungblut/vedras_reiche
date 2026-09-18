@@ -15,6 +15,9 @@ import type { CardSource } from "../utils/card-source.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
 import { applySymbolAbility } from "./apply-symbol-ability.js";
+import { getSharedBorder, reconcileMapBoundFeatures, validateBorderAdvance } from "../map/index.js";
+import type { ResolveNeutralDiamondAction } from "../actions/game-action.js";
+import { resolveDiamondCorrection, setWarSpadeChoice, proposeBorderAdvance, proposeWarCut, chooseWarCut } from "../war/war.js";
 
 export interface ActivationContext {
   readonly randomSource: RandomSource;
@@ -45,6 +48,7 @@ export function activateTerritory(
   if (state.phase !== GamePhase.ActivationPhase || state.activation === undefined) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
+  if (state.pendingDiamondBorderChanges.length > 0) throw new DomainError(DomainErrorCode.InvalidPhase);
   if (state.activePlayerId !== action.playerId) {
     throw new DomainError(DomainErrorCode.NotActivePlayer);
   }
@@ -78,6 +82,15 @@ export function activateTerritory(
     ...(context.cardSource === undefined ? {} : { cardSource: context.cardSource }),
     effectId,
   });
+  if (action.choice.type === "DIAMOND_NEUTRAL_BORDER") {
+    const descriptions: EventDescription[] = [
+      { type: GameEventType.TerritoryActivationStarted, actorId: action.playerId,
+        payload: { playerId: action.playerId, territoryId: action.territoryId, selectedSuit } },
+      effect.event,
+    ];
+    const events = createEvents(state, context.timestamp, descriptions);
+    return { state: { ...effect.state, events: [...state.events, ...events] }, events };
+  }
   const pendingTerritoryIds = state.activation.pendingTerritoryIds.filter((id) => id !== action.territoryId);
   const resolvedTerritoryIds = [...state.activation.resolvedTerritoryIds, action.territoryId];
   const activePlayerId = nextPlayerWithPending(effect.state, pendingTerritoryIds);
@@ -111,6 +124,48 @@ export function activateTerritory(
     return { state: actionPhase.state, events: [...newEvents, ...actionPhase.events] };
   }
   return { state: nextState, events: newEvents };
+}
+
+export function resolveNeutralDiamond(
+  state: GameState, action: ResolveNeutralDiamondAction, timestamp: string,
+): ActionResult {
+  const effect = state.pendingDiamondBorderChanges[0];
+  if (state.phase !== GamePhase.ActivationPhase || state.activation === undefined || effect === undefined ||
+      effect.id !== action.effectId || effect.playerId !== action.playerId || state.map === undefined) {
+    throw new DomainError(DomainErrorCode.InvalidDiamondNeutralChange);
+  }
+  const source = state.territories.find((territory) => territory.id === effect.sourceTerritoryId);
+  const target = state.territories.find((territory) => territory.id === effect.neutralTerritoryId);
+  if (source?.ownerId !== action.playerId || target?.ownerId !== null) {
+    throw new DomainError(DomainErrorCode.InvalidDiamondNeutralChange);
+  }
+  const border = getSharedBorder(state.map, source.id, target.id);
+  const validation = validateBorderAdvance(state.map, source.id, target.id, border, 2, action.claimedCells);
+  if (!validation.valid || validation.map === undefined) {
+    throw new DomainError(DomainErrorCode.InvalidDiamondNeutralChange, validation.reason);
+  }
+  const pendingTerritoryIds = state.activation.pendingTerritoryIds.filter((id) => id !== source.id);
+  const resolvedTerritoryIds = [...state.activation.resolvedTerritoryIds, source.id];
+  const base = reconcileMapBoundFeatures({ ...state, map: validation.map,
+    pendingDiamondBorderChanges: state.pendingDiamondBorderChanges.filter((item) => item.id !== effect.id),
+  });
+  const nextPlayer = nextPlayerWithPending(base, pendingTerritoryIds);
+  const finished = nextPlayer === undefined;
+  const descriptions: EventDescription[] = [
+    { type: GameEventType.DiamondNeutralBorderChanged, actorId: action.playerId,
+      payload: { effectId: effect.id, sourceTerritoryId: source.id, neutralTerritoryId: target.id, claimedCells: action.claimedCells } },
+    { type: GameEventType.TerritoryActivated, actorId: action.playerId,
+      payload: { playerId: action.playerId, territoryId: source.id, selectedSuit: effect.selectedSuit } },
+  ];
+  if (finished) descriptions.push({ type: GameEventType.ActivationPhaseFinished, payload: { round: state.round } });
+  const events = createEvents(state, timestamp, descriptions);
+  const nextState: GameState = { ...base, activation: { pendingTerritoryIds, resolvedTerritoryIds },
+    activePlayerId: nextPlayer, events: [...state.events, ...events] };
+  if (finished) {
+    const nextPhase = beginActionPhase(nextState, timestamp);
+    return { state: nextPhase.state, events: [...events, ...nextPhase.events] };
+  }
+  return { state: nextState, events };
 }
 
 /** Routes game actions through the headless domain workflows. */
@@ -171,5 +226,17 @@ export function applyAction(
       return forfeitCurrentBasicAction(state, context.timestamp);
     case GameActionType.StartWar:
       return startPendingWar(state, action, context.timestamp);
+    case GameActionType.SetWarSpadeChoice:
+      return setWarSpadeChoice(state, action, context.randomSource, context.timestamp);
+    case GameActionType.ProposeBorderAdvance:
+      return proposeBorderAdvance(state, action, context.timestamp);
+    case GameActionType.ProposeWarCut:
+      return proposeWarCut(state, action, context.timestamp);
+    case GameActionType.ChooseWarCut:
+      return chooseWarCut(state, action, context.randomSource, context.timestamp, context.cardSource);
+    case GameActionType.ResolveDiamondCorrection:
+      return resolveDiamondCorrection(state, action, context.timestamp);
+    case GameActionType.ResolveNeutralDiamond:
+      return resolveNeutralDiamond(state, action, context.timestamp);
   }
 }

@@ -60,6 +60,7 @@ export function openNormalAuction(
     throw new DomainError(DomainErrorCode.PendingWarRequired);
   }
   const { auctionsOpenedByActivePlayer, secondAuctionAvailable } = state.actionPhase;
+  if (state.actionPhase.currentActionKind === "WAR") throw new DomainError(DomainErrorCode.InvalidPhase);
   if (auctionsOpenedByActivePlayer !== 0 &&
       !(auctionsOpenedByActivePlayer === 1 && secondAuctionAvailable)) {
     throw new DomainError(DomainErrorCode.SecondAuctionUnavailable);
@@ -87,6 +88,7 @@ export function openNormalAuction(
     auction,
     actionPhase: {
       ...state.actionPhase,
+      currentActionKind: "AUCTION",
       auctionsOpenedByActivePlayer: auctionsOpenedByActivePlayer === 0 ? 1 : 2,
       secondAuctionAvailable: false,
     },

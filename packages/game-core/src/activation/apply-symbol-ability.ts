@@ -158,6 +158,7 @@ export function applySymbolAbility(
                 playerId: action.playerId,
                 sourceTerritoryId: source.id,
                 neutralTerritoryId: target.id,
+                selectedSuit,
               },
             ],
           },
@@ -229,6 +230,7 @@ export function applySymbolAbility(
             settlement: SettlementKind.Settlement,
             ...(position === undefined ? {} : {
               settlementFeature: { id: `settlement:${target.id}`, kind: SettlementKind.Settlement, position },
+              settlementFeatures: [{ id: `settlement:${target.id}`, kind: SettlementKind.Settlement, position }],
             }),
           }),
           event: describe(GameEventType.ClubSettlementCreated, action, {
@@ -246,6 +248,8 @@ export function applySymbolAbility(
             settlement: SettlementKind.City,
             ...(target.settlementFeature === undefined ? {} : {
               settlementFeature: { ...target.settlementFeature, kind: SettlementKind.City },
+              settlementFeatures: (target.settlementFeatures ?? [target.settlementFeature]).map((feature) => feature.id === target.settlementFeature?.id
+                ? { ...feature, kind: SettlementKind.City } : feature),
             }),
           }),
           event: describe(GameEventType.ClubCityCreated, action, {

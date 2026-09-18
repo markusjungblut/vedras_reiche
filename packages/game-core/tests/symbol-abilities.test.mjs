@@ -84,6 +84,7 @@ test("diamond stores a neutral border change without changing abstract area", ()
     playerId: "A",
     sourceTerritoryId: "source",
     neutralTerritoryId: "neutral",
+    selectedSuit: Suit.Diamonds,
   }]);
   assert.deepEqual(state.territories, original.territories);
   assert.deepEqual(original.pendingDiamondBorderChanges, []);

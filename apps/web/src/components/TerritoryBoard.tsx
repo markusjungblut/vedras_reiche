@@ -10,6 +10,7 @@ import {
   type GridCell,
 } from "@vedras/game-core";
 import { suitClass, suitName, suitSymbol } from "../formatters/suit-label";
+import type { MapEditor } from "./WarControls";
 
 interface TerritoryBoardProps {
   state: GameState;
@@ -19,6 +20,8 @@ interface TerritoryBoardProps {
   playerName: (id: string) => string;
   splitDraft?: { readonly splitId: string; readonly partAKeys: readonly string[] } | undefined;
   onToggleSplitCell: (cell: GridCell) => void;
+  editor?: MapEditor | undefined;
+  onToggleMapCell: (cell: GridCell) => void;
 }
 
 interface TerritoryCardProps {
@@ -43,6 +46,7 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
     selected && "is-selected",
     highlighted && "is-neighbor",
     activated && "is-activated",
+    territory.participatedInWarThisRound && "is-war-locked",
   ].filter(Boolean).join(" ");
 
   return (
@@ -59,9 +63,10 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
       <span className="territory-card-foot">
         <span>Fläche {area}</span>
         <span className="territory-badges">
-          {territory.settlement && <span title={territory.settlement === "CITY" ? "Stadt" : "Siedlung"}>{territory.settlement === "CITY" ? "Stadt" : "Siedlung"}</span>}
+          {territory.settlement && <span title={territory.settlement === "CITY" ? "Stadt" : "Siedlung"}>{territory.settlement === "CITY" ? "Stadt" : "Siedlung"}{(territory.settlementFeatures?.length ?? 0) > 1 ? ` ×${territory.settlementFeatures!.length}` : ""}</span>}
           {borderMarked && <span title="Markierte Grenze">♦</span>}
           {territory.weakened && <span title="Geschwächt">Geschwächt</span>}
+          {territory.participatedInWarThisRound && <span title="Krieg diese Runde bereits ausgeführt">Kriegssperre</span>}
         </span>
       </span>
       {localInfluence.length > 0 && <span className="territory-influence">Einfluss: {localInfluence.map(([id, amount]) => `${playerName(id)} ${amount}`).join(" · ")}</span>}
@@ -69,7 +74,7 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
   );
 }
 
-export function TerritoryBoard({ state, selectedId, onSelect, highlightedIds, playerName, splitDraft, onToggleSplitCell }: TerritoryBoardProps) {
+export function TerritoryBoard({ state, selectedId, onSelect, highlightedIds, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell }: TerritoryBoardProps) {
   const highlighted = new Set(highlightedIds);
   const activated = new Set(state.activation?.pendingTerritoryIds ?? []);
   const marked = new Set(state.borderMarks.flatMap((mark) => mark.territoryIds));
@@ -83,8 +88,12 @@ export function TerritoryBoard({ state, selectedId, onSelect, highlightedIds, pl
     <section className="panel board-panel" aria-labelledby="board-title">
       <div className="panel-heading"><div><p className="eyebrow">Rasterkarte · 32 × 20</p><h2 id="board-title">Gebietsübersicht</h2></div><span className="panel-count">{state.territories.length} Gebiete</span></div>
       {map ? <RasterMap state={state} selectedId={selectedId} onSelect={onSelect} neighborIds={neighborIds} playerName={playerName}
-        splitDraft={splitDraft} onToggleSplitCell={onToggleSplitCell} /> : <p className="panel-hint">Keine Karte im Setup.</p>}
-      <p className="panel-hint">{state.pendingSplit ? state.pendingSplit.stage === "AWAITING_CHOICE"
+        splitDraft={splitDraft} onToggleSplitCell={onToggleSplitCell} editor={editor} onToggleMapCell={onToggleMapCell} /> : <p className="panel-hint">Keine Karte im Setup.</p>}
+      <p className="panel-hint">{editor ? editor.mode === "CUT"
+        ? editor.selectable.length > 0 ? "Teilung: Klicke Zellen des Verlierergebiets, um Teil A zu formen."
+          : "Die vorgeschlagenen Teile A und B sind auf der Karte markiert. Der Verlierer wählt im Aktionsbereich."
+        : "Grenzeditor: Klicke markierte Korridorzellen, um sie zu übertragen."
+        : state.pendingSplit ? state.pendingSplit.stage === "AWAITING_CHOICE"
         ? "Teil A (ocker) und Teil B (blau) sind bestätigt. Die zuerst wählende Person entscheidet im Aktionsbereich."
         : "Teilungsmodus: Klicke die Kästchen des umkämpften Gebiets direkt auf der Karte an, um zwischen A und B zu wechseln."
         : "Klicke auf ein Kästchen, um sein Gebiet auszuwählen. Gebietsgrenzen entstehen aus gemeinsamen Rasterkanten."}</p>
@@ -117,9 +126,11 @@ interface RasterMapProps {
   readonly playerName: (id: string) => string;
   readonly splitDraft?: { readonly splitId: string; readonly partAKeys: readonly string[] } | undefined;
   readonly onToggleSplitCell: (cell: GridCell) => void;
+  readonly editor?: MapEditor | undefined;
+  readonly onToggleMapCell: (cell: GridCell) => void;
 }
 
-function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, splitDraft, onToggleSplitCell }: RasterMapProps) {
+function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell }: RasterMapProps) {
   const map = state.map!;
   const [zoom, setZoom] = useState(1);
   const [hovered, setHovered] = useState<string>();
@@ -157,6 +168,8 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
     if (map.cells[above] === splitId && !splitA.has(above)) lines.push({ x: cell.x, y: cell.y, dx: 1, dy: 0 });
     return lines;
   }) : [];
+  const editorAllowed = new Set(editor?.selectable.map((cell) => `${cell.x},${cell.y}`) ?? []);
+  const editorSelected = new Set(editor?.selected.map((cell) => `${cell.x},${cell.y}`) ?? []);
   const poiEntries = state.pointsOfInterest.map((poi) => ({ poi, territoryId: getPointOfInterestTerritory(state, poi) }));
   return <div className="raster-map-wrap">
     <div className="map-controls" aria-label="Kartensteuerung">
@@ -165,7 +178,7 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
       <button type="button" className="secondary-button" onClick={() => setZoom(1)}>Auf Karte einpassen</button>
       <span className="map-legend">{activeId ? `${activeId}${hovered ? " · Hover" : " · ausgewählt"}` : "Karte"}</span>
     </div>
-    <svg className={`raster-map ${split ? "is-splitting" : ""}`}
+    <svg className={`raster-map ${split || editor ? "is-splitting" : ""}`}
       viewBox={`${(width - width / zoom) / 2} ${(height - height / zoom) / 2} ${width / zoom} ${height / zoom}`}
       role="img" aria-label="Vedras Rasterkarte">
       <rect x="0" y="0" width={width} height={height} className="map-background" />
@@ -177,9 +190,11 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
           ? "map-cell-neutral" : `owner-map-${Math.max(0, state.players.findIndex((player) => player.id === territory.ownerId))}`;
         const splitPart = hasSplitOverlay && territoryId === splitId
           ? splitA.has(key) ? "map-cell-part-a" : "map-cell-part-b" : "";
+        const editPart = editor && territoryId === editor.targetId
+          ? editorSelected.has(key) ? "map-cell-part-a" : editorAllowed.has(key) ? "map-cell-corridor" : editor.mode === "CUT" ? "map-cell-part-b" : "" : "";
         return <rect key={key} x={cell.x} y={cell.y} width="1" height="1"
-          className={`map-cell ${ownerClass} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${splitPart}`}
-          onClick={() => territoryId === splitId && split?.stage !== "AWAITING_CHOICE"
+          className={`map-cell ${ownerClass} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${splitPart} ${editPart} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""}`}
+          onClick={() => editorAllowed.has(key) ? onToggleMapCell(cell) : territoryId === splitId && split?.stage !== "AWAITING_CHOICE"
             ? onToggleSplitCell(cell) : territoryId !== null && onSelect(territoryId)}
           onMouseEnter={() => setHovered(territoryId ?? undefined)} onMouseLeave={() => setHovered(undefined)}
           aria-label={territory ? `${territory.id}, ${territory.ownerId ? playerName(territory.ownerId) : "neutral"}${splitPart ? `, Teil ${splitPart.endsWith("-a") ? "A" : "B"}` : ""}` : "unbelegte Fläche"} />;
@@ -197,9 +212,9 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
         return <line key={`border-${index}`} x1={edgeX} y1={edgeY} x2={edgeX + (vertical ? 0 : 1)} y2={edgeY + (vertical ? 1 : 0)} className="map-shared-border" />;
       })}
       {poiEntries.map(({ poi, territoryId }) => <text key={poi.id} x={poi.position.x + .5} y={poi.position.y + .72} className={`map-poi ${territoryId === selectedId ? "map-poi-selected" : ""}`}>◆</text>)}
-      {state.territories.filter((territory) => territory.settlementFeature).map((territory) => <text key={`settlement-${territory.id}`}
-        x={territory.settlementFeature!.position.x + .5} y={territory.settlementFeature!.position.y + .75}
-        className="map-settlement">{territory.settlementFeature!.kind === "CITY" ? "♜" : "⌂"}</text>)}
+      {state.territories.flatMap((territory) => territory.settlementFeatures ?? (territory.settlementFeature ? [territory.settlementFeature] : [])).map((feature) => <text key={`settlement-${feature.id}`}
+        x={feature.position.x + .5} y={feature.position.y + .75}
+        className="map-settlement">{feature.kind === "CITY" ? "♜" : "⌂"}</text>)}
       {state.borderMarks.flatMap((mark, index) => {
         const segments = getSharedBorder(map, mark.territoryIds[0]!, mark.territoryIds[1]!).segments;
         const edge = segments[Math.floor(segments.length / 2)];

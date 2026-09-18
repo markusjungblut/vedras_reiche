@@ -36,6 +36,19 @@ export enum DomainErrorCode {
   ActionAlreadyCompleted = "ACTION_ALREADY_COMPLETED",
   LegalActionAvailable = "LEGAL_ACTION_AVAILABLE",
   PendingWarRequired = "PENDING_WAR_REQUIRED",
+  TerritoryAlreadyInWar = "TERRITORY_ALREADY_IN_WAR",
+  InvalidWarTarget = "INVALID_WAR_TARGET",
+  InvalidSpadeActivation = "INVALID_SPADE_ACTIVATION",
+  SpadeChoiceAlreadyLocked = "SPADE_CHOICE_ALREADY_LOCKED",
+  InvalidBorderAdvance = "INVALID_BORDER_ADVANCE",
+  CellOutsideWarCorridor = "CELL_OUTSIDE_WAR_CORRIDOR",
+  MinimumTerritorySizeViolated = "MINIMUM_TERRITORY_SIZE_VIOLATED",
+  TerritoryDisconnected = "TERRITORY_DISCONNECTED",
+  NotWarWinner = "NOT_WAR_WINNER",
+  InvalidWarSplit = "INVALID_WAR_SPLIT",
+  NotFirstChooser = "NOT_FIRST_CHOOSER",
+  DiamondCorrectionUnavailable = "DIAMOND_CORRECTION_UNAVAILABLE",
+  InvalidDiamondNeutralChange = "INVALID_DIAMOND_NEUTRAL_CHANGE",
 }
 
 export class DomainError extends Error {

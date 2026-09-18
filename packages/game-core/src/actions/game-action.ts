@@ -16,6 +16,12 @@ export enum GameActionType {
   ActivateTerritory = "ACTIVATE_TERRITORY",
   ProposeTerritorySplit = "PROPOSE_TERRITORY_SPLIT",
   ChooseSplitPart = "CHOOSE_SPLIT_PART",
+  SetWarSpadeChoice = "SET_WAR_SPADE_CHOICE",
+  ProposeBorderAdvance = "PROPOSE_BORDER_ADVANCE",
+  ProposeWarCut = "PROPOSE_WAR_CUT",
+  ChooseWarCut = "CHOOSE_WAR_CUT",
+  ResolveDiamondCorrection = "RESOLVE_DIAMOND_CORRECTION",
+  ResolveNeutralDiamond = "RESOLVE_NEUTRAL_DIAMOND",
 }
 
 export type ActivationChoice =
@@ -100,6 +106,48 @@ export interface StartWarAction {
   readonly defenderTerritoryId: TerritoryId;
 }
 
+export interface SetWarSpadeChoiceAction {
+  readonly type: GameActionType.SetWarSpadeChoice;
+  readonly warId: string;
+  readonly playerId: PlayerId;
+  readonly spadeActivationId: string | null;
+}
+
+export interface ProposeBorderAdvanceAction {
+  readonly type: GameActionType.ProposeBorderAdvance;
+  readonly warId: string;
+  readonly playerId: PlayerId;
+  readonly claimedCells: readonly GridCell[];
+}
+
+export interface ProposeWarCutAction {
+  readonly type: GameActionType.ProposeWarCut;
+  readonly warId: string;
+  readonly playerId: PlayerId;
+  readonly partACells: readonly GridCell[];
+}
+
+export interface ChooseWarCutAction {
+  readonly type: GameActionType.ChooseWarCut;
+  readonly warId: string;
+  readonly playerId: PlayerId;
+  readonly chosenPart: "A" | "B";
+}
+
+export interface ResolveDiamondCorrectionAction {
+  readonly type: GameActionType.ResolveDiamondCorrection;
+  readonly warId: string;
+  readonly playerId: PlayerId;
+  readonly claimedCells: readonly GridCell[];
+}
+
+export interface ResolveNeutralDiamondAction {
+  readonly type: GameActionType.ResolveNeutralDiamond;
+  readonly effectId: string;
+  readonly playerId: PlayerId;
+  readonly claimedCells: readonly GridCell[];
+}
+
 export type GameAction =
   | BeginStartAuctionsAction
   | OpenNextStartAuctionAction
@@ -111,4 +159,10 @@ export type GameAction =
   | EndActionTurnAction
   | ForfeitAction
   | StartWarAction
+  | SetWarSpadeChoiceAction
+  | ProposeBorderAdvanceAction
+  | ProposeWarCutAction
+  | ChooseWarCutAction
+  | ResolveDiamondCorrectionAction
+  | ResolveNeutralDiamondAction
   | ActivateTerritoryAction;

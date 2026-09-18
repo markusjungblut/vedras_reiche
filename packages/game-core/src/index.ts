@@ -34,3 +34,4 @@ export * from "./views/player-game-view.js";
 export * from "./utils/random-source.js";
 export * from "./utils/card-source.js";
 export * from "./utils/domain-error.js";
+export * from "./war/war.js";

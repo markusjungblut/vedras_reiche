@@ -44,7 +44,7 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
     case GameEventType.TerritoryActivationStarted: return `${named(event, "playerId", playerName)} aktiviert ${field(event, "territoryId")}.`;
     case GameEventType.TerritoryActivated: return `${field(event, "territoryId")} wurde aktiviert.`;
     case GameEventType.DiamondBorderMarked: return `♦ Grenze bei ${field(event, "territoryId")} und ${field(event, "targetTerritoryId")} markiert.`;
-    case GameEventType.DiamondNeutralBorderChangePending: return `♦ Grenzänderung von ${field(event, "territoryId")} zu ${field(event, "targetTerritoryId")} wartet auf die Karte.`;
+    case GameEventType.DiamondNeutralBorderChangePending: return `♦ Grenze von ${field(event, "territoryId")} zu ${field(event, "targetTerritoryId")} wird gezeichnet.`;
     case GameEventType.ClubSettlementCreated: return `♣ Siedlung auf ${field(event, "targetTerritoryId")} errichtet.`;
     case GameEventType.ClubCityCreated: return `♣ ${field(event, "targetTerritoryId")} zur Stadt ausgebaut.`;
     case GameEventType.ClubActivationNumberAdded: return `♣ ${field(event, "targetTerritoryId")} erhält Aktivierungszahl ${field(event, "activationNumber")}.`;
@@ -83,8 +83,28 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
     case GameEventType.ActionPhaseFinished: return "Aktionsphase beendet.";
     case GameEventType.RoundFinished: return `Runde ${field(event, "round")} beendet.`;
     case GameEventType.ScoringStarted: return "Wertung beginnt.";
-    case GameEventType.WarStarted: return `Krieg zwischen ${field(event, "attackerTerritoryId")} und ${field(event, "defenderTerritoryId")} ausstehend.`;
-    case GameEventType.WarResolved: return "Krieg abgeschlossen.";
+    case GameEventType.WarStarted: return `Krieg zwischen ${field(event, "attackerTerritoryId")} und ${field(event, "defenderTerritoryId")} begonnen.`;
+    case GameEventType.WarSpadeChoiceLocked: return `${named(event, "playerId", playerName)} hat die ♠-Wahl bestätigt.`;
+    case GameEventType.CombatRolled: return `Kampf: Angreifer ${field(event, "attackerRoll")} + ♠ ${field(event, "attackerSpadeBonus")} = ${field(event, "attackerTotal")}; Verteidiger ${field(event, "defenderRoll")} + ♠ ${field(event, "defenderSpadeBonus")} + Festungen ${field(event, "defenderFortressBonus")} = ${field(event, "defenderTotal")}. Differenz ${field(event, "difference")}.`;
+    case GameEventType.SpadeActivationUsed: return "♠-Aktivierung eingesetzt.";
+    case GameEventType.BorderAdvanceRequired: return `Grenzgewinn bis ${field(event, "maximumDepth")} Kästchen Tiefe möglich.`;
+    case GameEventType.BorderAdvanceResolved: return "Grenzverschiebung bestätigt.";
+    case GameEventType.TerritoryWeakened: return `${field(event, "territoryId")} wurde geschwächt.`;
+    case GameEventType.TerritoryWeakeningRemoved: return `Schwächung von ${field(event, "territoryId")} entfernt.`;
+    case GameEventType.TerritoryConquered: return `${field(event, "territoryId")} wurde vollständig von ${named(event, "ownerId", playerName)} erobert.`;
+    case GameEventType.WarCutRequired: return "Durchbruch: Gewinner zieht eine Teilungsgrenze.";
+    case GameEventType.WarCutProposed: return "Teilung des besiegten Gebiets vorgeschlagen.";
+    case GameEventType.WarCutChoiceMade: return "Verlierer hat seinen Gebietsteil gewählt.";
+    case GameEventType.DiamondBorderMarkConsumed: return "♦-Grenzmarkierung verbraucht.";
+    case GameEventType.DiamondCutCorrectionRequired: return "♦-Korrektur der Teilungsgrenze möglich.";
+    case GameEventType.DiamondCutCorrectionResolved: return "♦-Korrektur abgeschlossen.";
+    case GameEventType.DiamondNeutralBorderChanged: return "♦-Grenzverschiebung zum neutralen Gebiet abgeschlossen.";
+    case GameEventType.WarResolved: {
+      const outcome = field(event, "outcome");
+      const labels: Record<string, string> = { TIE: "Gleichstand", BORDER_ADVANCE: "Grenzgewinn",
+        STRONG_ADVANCE: "starker Vorstoß", CONQUEST: "Eroberung", CUT_AND_CHOOSE: "Gebietsteilung" };
+      return `Krieg abgeschlossen: ${labels[outcome] ?? outcome}.`;
+    }
     case GameEventType.TerritorySplit: return "Gebiet geteilt.";
     case GameEventType.BorderChanged: return "Grenze geändert.";
     case GameEventType.GameFinished: return "Spiel beendet.";

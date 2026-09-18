@@ -104,3 +104,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media (max-width: 1250px) { .dashboard { width: min(1100px, calc(100vw - 32px)); }.main-grid { grid-template-columns: minmax(0, 1fr) 320px; }.territory-grid { grid-template-columns: repeat(4, minmax(125px, 1fr)); } }
 @media (max-width: 1000px) { .main-grid { grid-template-columns: minmax(0, 1fr); }.sidebar-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }.toolbar { flex-wrap: wrap; }.toolbar .field { margin-left: 0; }.territory-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 650px) { .game-header { padding: 18px; }.dashboard { width: calc(100vw - 20px); }.board-column, .action-panel, .event-panel, .details-panel, .player-panel { padding: 14px; }.territory-grid, .sidebar-column, .lower-grid, .scenario-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.sidebar-column, .lower-grid { grid-template-columns: minmax(0, 1fr); }.territory-card { min-height: 130px; }.territory-number { font-size: 23px; }.split-cell { min-width: 0; }.number-fields { grid-template-columns: minmax(0, 1fr); } }
+.map-cell-corridor { fill: #eac78d !important; cursor: pointer; }
+.map-cell-war-attacker { stroke: #f8d88e; stroke-width: .06; }
+.map-cell-war-defender { stroke: #f18a85; stroke-width: .06; }
+.territory-card.is-war-locked { outline: 1px solid #e6a978; }
+.war-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.war-sides p, .war-result { border: 1px solid #53648a; border-radius: 10px; padding: 12px; background: #1b2945; }
+.war-choice { border-top: 1px solid #334466; padding-top: 10px; }

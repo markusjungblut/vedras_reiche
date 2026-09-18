@@ -14,7 +14,9 @@ export function TerritoryDetails({ state, territoryId, playerName }: TerritoryDe
   }
   const marks = state.borderMarks.filter((mark) => mark.territoryIds.includes(territory.id));
   const pendingBorders = state.pendingDiamondBorderChanges.filter((change) => change.sourceTerritoryId === territory.id || change.neutralTerritoryId === territory.id);
-  const pois = state.pointsOfInterest.filter((poi) => territory.pointOfInterestIds?.includes(poi.id) || getPointOfInterestTerritory(state, poi) === territory.id);
+  const pois = state.pointsOfInterest.filter((poi) => state.map
+    ? getPointOfInterestTerritory(state, poi) === territory.id
+    : territory.pointOfInterestIds?.includes(poi.id));
   const localInfluence = Object.entries(territory.localInfluenceByPlayerId ?? {}).filter(([, amount]) => amount > 0);
   const card = territory.card;
   return (
@@ -32,6 +34,7 @@ export function TerritoryDetails({ state, territoryId, playerName }: TerritoryDe
           <div><dt>Fläche</dt><dd>{getStateTerritoryArea(state, territory.id)}</dd></div>
           <div><dt>Nachbarn</dt><dd>{getStateAdjacentTerritoryIds(state, territory.id).join(", ") || "Keine"}</dd></div>
           {territory.settlement && <div><dt>Entwicklung</dt><dd>{territory.settlement === "CITY" ? "Stadt" : "Siedlung"}</dd></div>}
+          {(territory.settlementFeatures?.length ?? 0) > 1 && <div><dt>Entwicklungen auf Zellen</dt><dd>{territory.settlementFeatures!.map((feature) => `${feature.kind === "CITY" ? "Stadt" : "Siedlung"} (${feature.position.x},${feature.position.y})`).join(", ")}</dd></div>}
           {territory.weakened !== undefined && <div><dt>Schwächung</dt><dd>{territory.weakened ? "Ja" : "Nein"}</dd></div>}
           {territory.participatedInWarThisRound !== undefined && <div><dt>Krieg diese Runde</dt><dd>{territory.participatedInWarThisRound ? "Ja" : "Nein"}</dd></div>}
           {card?.additionalActivationNumber !== undefined && <div><dt>Zusätzliche Zahl</dt><dd>{card.additionalActivationNumber}</dd></div>}

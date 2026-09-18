@@ -6,6 +6,7 @@ import {
   beginActionPhase,
   createGameState,
   createTerritoryCard,
+  createGridMap,
   DomainErrorCode,
   GameActionType,
   GameEventType,
@@ -155,7 +156,9 @@ test("the first three-way tie allows ending the turn; a second tie ends it autom
     (error) => error.code === DomainErrorCode.NotActivePlayer);
 });
 
-test("a potential war keeps the player active and opens only an AP4 pending handoff", () => {
+test("a legal war snapshots geometry and locks both territories for the round", () => {
+  const cells = {};
+  for (let y = 0; y < 5; y++) for (let x = 0; x < 16; x++) cells[`${x},${y}`] = x < 8 ? "A1" : "B1";
   const base = {
     ...readyGame(),
     phase: GamePhase.ActivationPhase,
@@ -166,6 +169,7 @@ test("a potential war keeps the player active and opens only an AP4 pending hand
       territory("A1", "A", ["B1"]),
       territory("B1", "B", ["A1"]),
     ],
+    map: createGridMap({ width: 16, height: 5, format: "A4" }, cells),
   };
   const phase = beginActionPhase(base, timestamp);
   assert.equal(phase.state.phase, GamePhase.ActionPhase);
@@ -176,9 +180,13 @@ test("a potential war keeps the player active and opens only an AP4 pending hand
     attackerTerritoryId: "A1",
     defenderTerritoryId: "B1",
   });
-  assert.deepEqual(started.state.pendingWar, {
-    playerId: "A", attackerTerritoryId: "A1", defenderTerritoryId: "B1",
-  });
+  assert.equal(started.state.pendingWar.attackerPlayerId, "A");
+  assert.equal(started.state.pendingWar.defenderPlayerId, "B");
+  assert.equal(started.state.pendingWar.stage, "AWAITING_COMBAT_CHOICES");
+  assert.equal(started.state.pendingWar.attackerArea, 40);
+  assert.equal(started.state.pendingWar.defenderArea, 40);
+  assert.ok(started.state.pendingWar.originalSharedBorder.segments.length > 0);
+  assert.ok(started.state.territories.every((item) => item.participatedInWarThisRound));
   assert.equal(started.state.territories.find((item) => item.id === "B1").ownerId, "B");
   assert.throws(() => startRound(started.state, new SequenceRandomSource([]), timestamp),
     (error) => error.code === DomainErrorCode.InvalidPhase);

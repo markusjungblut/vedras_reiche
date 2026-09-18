@@ -2,6 +2,7 @@ import type { AuctionBid, AuctionState } from "../auctions/auction-state.js";
 import type { GameState } from "../state/game-state.js";
 import type { PlayerId } from "../model/ids.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
+import type { PendingWar } from "../state/action-phase-state.js";
 
 export type VisibleAuctionBid = AuctionBid | { readonly submitted: true };
 
@@ -9,9 +10,12 @@ export interface PlayerAuctionView extends Omit<AuctionState, "submittedBids"> {
   readonly submittedBids: Readonly<Partial<Record<PlayerId, VisibleAuctionBid>>>;
 }
 
-export interface PlayerGameView extends Omit<GameState, "auction" | "players"> {
+export interface PlayerGameView extends Omit<GameState, "auction" | "players" | "pendingWar"> {
   readonly players: GameState["players"];
   readonly auction?: PlayerAuctionView;
+  readonly pendingWar?: Omit<PendingWar, "spadeChoices"> & {
+    readonly spadeChoices: Readonly<Partial<Record<PlayerId, string | null | "LOCKED">>>;
+  };
 }
 
 /**
@@ -30,10 +34,17 @@ export function createGameViewForPlayer(
     const { secretFactionSuit: _secretFactionSuit, ...publicPlayer } = player;
     return publicPlayer;
   });
+  const war = state.pendingWar;
+  const pendingWar = war === undefined ? undefined : war.stage !== "AWAITING_COMBAT_CHOICES" ? war : {
+    ...war,
+    spadeChoices: Object.fromEntries(Object.entries(war.spadeChoices).map(([id, choice]) =>
+      [id, id === viewerPlayerId ? choice : "LOCKED"])),
+  };
   const auction = state.auction;
+  const { pendingWar: _pendingWar, ...withoutWar } = state;
   if (auction === undefined) {
-    const { auction: _auction, ...withoutAuction } = state;
-    return { ...withoutAuction, players };
+    const { auction: _auction, ...withoutAuction } = withoutWar;
+    return { ...withoutAuction, players, ...(pendingWar === undefined ? {} : { pendingWar }) };
   }
   const submittedBids: Partial<Record<PlayerId, VisibleAuctionBid>> = {};
   for (const [playerId, bid] of Object.entries(auction.submittedBids)) {
@@ -41,8 +52,9 @@ export function createGameViewForPlayer(
     else if (bid !== undefined) submittedBids[playerId] = { submitted: true };
   }
   return {
-    ...state,
+    ...withoutWar,
     players,
+    ...(pendingWar === undefined ? {} : { pendingWar }),
     auction: { ...auction, submittedBids },
   };
 }

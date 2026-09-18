@@ -353,7 +353,7 @@ function printedKey(card: TerritoryCard): string {
   return `${card.suit}:${card.activationNumber}`;
 }
 
-function drawNewCard(
+export function drawNewCard(
   state: GameState,
   originalCard: TerritoryCard,
   random: RandomSource,
@@ -365,7 +365,10 @@ function drawNewCard(
   if (cardSource !== undefined) {
     for (let attempt = 0; attempt < 64; attempt += 1) {
       const candidate = cardSource.drawAndReplace(random);
-      if (!used.has(printedKey(candidate))) return candidate;
+      if (Object.values(Suit).includes(candidate.suit) && Number.isInteger(candidate.activationNumber) &&
+          candidate.activationNumber >= 1 && candidate.activationNumber <= 12 && !used.has(printedKey(candidate))) {
+        return { suit: candidate.suit, activationNumber: candidate.activationNumber };
+      }
     }
   }
   for (const suit of Object.values(Suit)) {
@@ -432,7 +435,7 @@ export function chooseSplitPart(
   const developmentOnNewPart = development !== undefined && mapResult.newCells.some((cell) =>
     cell.x === development.position.x && cell.y === development.position.y);
   const originalWithoutMovedDevelopment = developmentOnNewPart
-    ? (() => { const { settlement: _settlement, settlementFeature: _feature, ...rest } = original; return rest; })()
+    ? (() => { const { settlement: _settlement, settlementFeature: _feature, settlementFeatures: _features, ...rest } = original; return rest; })()
     : original;
   const { area: _area, adjacentTerritoryIds: _adjacency, ...originalWithoutCachedGeometry } = originalWithoutMovedDevelopment;
   const originalPart: Territory = {
@@ -446,7 +449,7 @@ export function chooseSplitPart(
     card: newCard,
     localInfluenceByPlayerId: {},
     ...(developmentOnNewPart && development !== undefined
-      ? { settlement: development.kind, settlementFeature: development } : {}),
+      ? { settlement: development.kind, settlementFeature: development, settlementFeatures: [development] } : {}),
   };
   // Only this internally validated path may supply parts to the shared auction bookkeeping.
   const resolved = resolveTerritorySplitInternal(state, {

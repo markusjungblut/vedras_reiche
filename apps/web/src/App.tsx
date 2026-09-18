@@ -28,6 +28,7 @@ import { PlayerPanel } from "./components/PlayerPanel";
 import { StateInspector } from "./components/StateInspector";
 import { TerritoryBoard } from "./components/TerritoryBoard";
 import { TerritoryDetails } from "./components/TerritoryDetails";
+import { getMapEditor, NeutralDiamondControls, RecentWarResult, WarControls, type MapEditor } from "./components/WarControls";
 import { createScenario, type ScenarioKind } from "./debug/scenarios";
 import type { CardSource, RandomSource } from "@vedras/game-core";
 import { suitName } from "./formatters/suit-label";
@@ -38,6 +39,16 @@ const SCENARIOS: readonly { kind: ScenarioKind; label: string; detail: string }[
   { kind: "ACTIVATION_PHASE", label: "Aktivierungsphase", detail: "Symbole und Gebietsreihenfolge ausprobieren" },
   { kind: "ACTION_PHASE", label: "Aktionsphase", detail: "Grundaktionen und Spielerwechsel" },
   { kind: "NORMAL_AUCTION", label: "Normale Auktion", detail: "Alle Spieler geben verdeckt Gebote ab" },
+  { kind: "WAR_NORMAL", label: "Krieg · Grenzgewinn", detail: "Kampf und Grenzverschiebung" },
+  { kind: "WAR_STRONG", label: "Krieg · Vorstoß", detail: "Starker Vorstoß" },
+  { kind: "WAR_TIE", label: "Krieg · Gleichstand", detail: "Keine Gebietsänderung" },
+  { kind: "WAR_WEAK", label: "Krieg · geschwächt", detail: "Volleroberung nach Niederlage" },
+  { kind: "WAR_CONQUEST", label: "Krieg · Eroberung", detail: "Gebiet wechselt den Besitzer" },
+  { kind: "WAR_CUT", label: "Krieg · Teilung", detail: "Durchbruch und Cut and Choose" },
+  { kind: "WAR_DIAMOND", label: "Krieg · ♦", detail: "Markierte Grenze" },
+  { kind: "WAR_DIAMOND_CUT", label: "Krieg · ♦ Teilung", detail: "Teilung mit 1-Zellen-Korrektur" },
+  { kind: "WAR_SPADE_FORTRESS", label: "Krieg · ♠ + Festung", detail: "Beide Boni sehen" },
+  { kind: "DIAMOND_NEUTRAL", label: "♦ gegen neutral", detail: "Grenze zum neutralen Gebiet" },
 ];
 
 interface Runtime {
@@ -77,6 +88,7 @@ interface ControlProps {
   readonly splitDraft?: SplitDraft | undefined;
   readonly onToggleSplitCell: (cell: GridCell) => void;
   readonly onSetOriginalCardPart: (part: "A" | "B") => void;
+  readonly editor?: MapEditor | undefined;
 }
 
 function AuctionBidControls({ state, onAction }: Pick<ControlProps, "state" | "onAction">) {
@@ -319,11 +331,15 @@ function ActivationControls({ state, selectedTerritoryId, onSelectTerritory, onA
   </section>;
 }
 
-function ActionControls({ state, selectedTerritoryId, onAction }: ControlProps) {
+function ActionControls({ state, selectedTerritoryId, onSelectTerritory, onAction }: ControlProps) {
   const activePlayerId = state.activePlayerId;
   const targetIds = activePlayerId === undefined ? [] : getPotentialAuctionTerritoryIds(state, activePlayerId);
   const targets = targetIds.map((id) => state.territories.find((territory) => territory.id === id)).filter((territory): territory is Territory => territory !== undefined);
   const wars = activePlayerId === undefined ? [] : getPotentialWarTargets(state, activePlayerId);
+  const attackerIds = [...new Set(wars.map((war) => war.attackerTerritoryId))];
+  const selectedAttacker = selectedTerritoryId && attackerIds.includes(selectedTerritoryId)
+    ? selectedTerritoryId : attackerIds[0];
+  const defenderIds = wars.filter((war) => war.attackerTerritoryId === selectedAttacker).map((war) => war.defenderTerritoryId);
   const selectedTargetId = targets.some((item) => item.id === selectedTerritoryId)
     ? selectedTerritoryId : targets[0]?.id;
   return <section className="control-section" aria-label="Grundaktion">
@@ -339,16 +355,20 @@ function ActionControls({ state, selectedTerritoryId, onAction }: ControlProps) 
             playerId: activePlayerId, territoryId: item.id })}>Auktion um {item.id} eröffnen</button>)}</div>
       </> : <p>Kein angrenzendes neutrales Gebiet verfügbar.</p>}
       {wars.length > 0 ? <>
-        <p>Alternativ einen Krieg für die spätere AP5-Auswertung vormerken:</p>
-        <div className="button-row">{wars.map(({ attackerTerritoryId, defenderTerritoryId }) => <button key={`${attackerTerritoryId}:${defenderTerritoryId}`} type="button"
-          className="secondary-button" onClick={() => onAction({ type: GameActionType.StartWar,
-            playerId: activePlayerId, attackerTerritoryId, defenderTerritoryId })}>
-          Mit {attackerTerritoryId} gegen {defenderTerritoryId} beginnen
+        <p>Oder einen Krieg beginnen:</p>
+        <p>1. Eigenes Angriffsgebiet wählen:</p>
+        <div className="button-row">{attackerIds.map((id) => <button key={id} type="button"
+          className={id === selectedAttacker ? "selected-button" : "secondary-button"}
+          onClick={() => onSelectTerritory(id)}>{id}</button>)}</div>
+        <p>2. Angrenzendes gegnerisches Gebiet wählen und Krieg bestätigen:</p>
+        <div className="button-row">{defenderIds.map((id) => <button key={id} type="button"
+          className="secondary-button" onClick={() => selectedAttacker && onAction({ type: GameActionType.StartWar,
+            playerId: activePlayerId, attackerTerritoryId: selectedAttacker, defenderTerritoryId: id })}>
+          Krieg gegen {id} beginnen
         </button>)}</div>
       </> : <p className="muted">Kein angrenzendes gegnerisches Gebiet verfügbar.</p>}
       {state.actionPhase?.secondAuctionAvailable && <button type="button" className="secondary-button"
         onClick={() => onAction({ type: GameActionType.EndActionTurn, playerId: activePlayerId })}>Zug beenden</button>}
-      {!state.actionPhase?.secondAuctionAvailable && wars.length === 0 && <p className="muted">Kriegsauswertung folgt in AP5.</p>}
     </>}
   </section>;
 }
@@ -357,11 +377,8 @@ function PhaseControls(props: ControlProps) {
   const { state, onAction, onStartRound } = props;
   if (state.pendingSplit) return <SplitEditor {...props} />;
   if (state.auction) return <AuctionBidControls state={state} onAction={onAction} />;
-  if (state.pendingWar) return <section className="control-section">
-    <div className="section-kicker">Krieg ausstehend</div>
-    <h3>{state.pendingWar.attackerTerritoryId} gegen {state.pendingWar.defenderTerritoryId}</h3>
-    <p>Der Kampf wird erst in AP5 aufgelöst.</p>
-  </section>;
+  if (state.pendingWar) return <WarControls state={state} editor={props.editor} onAction={onAction} />;
+  if (state.pendingDiamondBorderChanges.length > 0) return <NeutralDiamondControls state={state} editor={props.editor} onAction={onAction} />;
   switch (state.phase) {
     case GamePhase.Setup:
       return <p>Die Demo-Karte ist bereit.</p>;
@@ -399,6 +416,7 @@ export default function App() {
   const [showHidden, setShowHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [splitDraft, setSplitDraft] = useState<SplitDraft | null>(null);
+  const [mapDraft, setMapDraft] = useState<{ key: string; keys: readonly string[] } | null>(null);
   const runtime = useRef<Runtime | null>(null);
 
   const loadScenario = (kind: ScenarioKind, chosenSeed: number) => {
@@ -407,6 +425,7 @@ export default function App() {
       runtime.current = { randomSource: demo.randomSource, cardSource: demo.cardSource };
       setState(demo.state);
       setSplitDraft(null);
+      setMapDraft(null);
       setSelectedTerritoryId(undefined);
       setScenario(kind);
       setSeed(chosenSeed);
@@ -458,6 +477,15 @@ export default function App() {
   const highlightedIds = state?.phase === GamePhase.ActivationPhase
     ? getAvailableActivationTerritoryIds(state) : [];
   const split = state?.pendingSplit;
+  const editorBase = state ? getMapEditor(state, []) : undefined;
+  const editor = state ? getMapEditor(state, mapDraft && mapDraft.key === editorBase?.key ? mapDraft.keys : []) : undefined;
+  const toggleMapCell = (cell: GridCell) => {
+    if (!editor) return;
+    if (!editor.selectable.some((candidate) => candidate.x === cell.x && candidate.y === cell.y)) return;
+    const key = `${cell.x},${cell.y}`;
+    const current = editor.selected.map((item) => `${item.x},${item.y}`);
+    setMapDraft({ key: editor.key, keys: current.includes(key) ? current.filter((item) => item !== key) : [...current, key] });
+  };
   const initialSplitCells = split && state?.map
     ? getTerritoryCells(state.map, split.originalTerritoryId) : [];
   const currentSplitDraft: SplitDraft | undefined = split ? splitDraft?.splitId === split.id
@@ -519,7 +547,8 @@ export default function App() {
             <div className="panel-heading"><span className="section-kicker">Spielbrett</span><h2>Gebietsübersicht</h2></div>
             <TerritoryBoard state={state} selectedId={selectedTerritoryId}
               onSelect={setSelectedTerritoryId} highlightedIds={highlightedIds} playerName={name}
-              splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell} />
+              splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
+              editor={editor} onToggleMapCell={toggleMapCell} />
           </div>
           <div className="sidebar-column">
             <div className="panel"><PlayerPanel state={state} playerName={name} /></div>
@@ -530,7 +559,8 @@ export default function App() {
           <ActionPanel><PhaseControls state={state} selectedTerritoryId={selectedTerritoryId}
             onSelectTerritory={setSelectedTerritoryId} onAction={dispatch} onStartRound={beginRound}
             splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
-            onSetOriginalCardPart={setOriginalCardPart} /></ActionPanel>
+            onSetOriginalCardPart={setOriginalCardPart} editor={editor} />
+            <RecentWarResult state={state} /></ActionPanel>
           <div className="panel"><EventLog events={state.events} playerName={name} /></div>
         </div>
         <div className="inspector-row panel">

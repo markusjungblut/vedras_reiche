@@ -1,6 +1,6 @@
 # Vedras Reiche
 
-Dieses Repository enthält den Game Core und einen lokalen Visual Debug Client für eine digitale Version von **Vedras Reiche**. Arbeitspaket 1 legte Modelle und Regelwerte an, Arbeitspaket 2 die Rundensteuerung und Aktivierungsphase, Arbeitspaket 3 Startauktionen, normale Auktionen und den Ablauf der Aktionsphase. Arbeitspaket 3.5 macht diese Mechaniken im Browser bedienbar. Ein Multiplayer-Server folgt später.
+Dieses Repository enthält den Game Core und einen lokalen Visual Debug Client für eine digitale Version von **Vedras Reiche**. Arbeitspakete 1–5 decken Modelle, Runden, Aktivierungen, Auktionen, Rastergeometrie und den vollständigen Kriegsablauf ab. Ein Multiplayer-Server folgt später.
 
 Die [ausführliche Spielanleitung](docs/rules/Vedras%20Reiche.docx) ist die maßgebliche Regelquelle. Nicht eindeutig belegte Regeln werden nicht ergänzt; tatsächlich offene Punkte stehen in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
 
@@ -47,32 +47,42 @@ Die offenen Aktivierungen werden zu Beginn der Phase ermittelt. Erhält ein Gebi
 
 | Symbol | Wirkung in Arbeitspaket 2 |
 | --- | --- |
-| ♦ Karo | Eine Grenze zu einem angrenzenden gegnerischen Gebiet kann einmal markiert werden. Eine Grenzverschiebung zu einem neutralen Nachbarn wird nur als ausstehender geometrischer Effekt erfasst. |
+| ♦ Karo | Eine Grenze zu einem angrenzenden gegnerischen Gebiet kann für den nächsten Krieg markiert werden. Eine Grenze zu einem neutralen Nachbarn kann bis zu zwei Kästchen tief geometrisch verschoben werden. Die Aktivierung wartet auf diese Entscheidung. |
 | ♣ Kreuz | Eigenes Gebiet oder eigener Nachbar erhält bei einer Aktivierung eine Siedlung, wird zur Stadt entwickelt oder erhält eine Spezialisierung. Zweite Aktivierungszahl und zweites Symbol schließen sich gegenseitig aus; Siedlung oder Stadt kann daneben bestehen. |
 | ♥ Herz | Wahl zwischen genau einem globalen Einfluss oder zwei lokalen Einflusspunkten auf einem angrenzenden neutralen Gebiet. |
-| ♠ Pik | Ein einmal verwendbarer Bonus mit Spieler und Herkunftsgebiet wird für die laufende Runde vorgemerkt und verfällt am Rundenende, wenn er ungenutzt bleibt. Die Bonusberechnung gehört zum späteren Kriegssystem. |
+| ♠ Pik | Ein einmal verwendbarer Kampfbonus mit Spieler und Herkunftsgebiet wird für die laufende Runde gespeichert und verfällt ungenutzt am Rundenende. |
 
-Nachbarschaften und Flächen werden aus der Rasterkarte berechnet. Die ♦-Verschiebung um bis zu zwei Kästchen und ihre Kriegswirkung folgen weiterhin in AP5.
+Nachbarschaften und Flächen werden aus der Rasterkarte berechnet. ♦-Grenzverschiebungen werden im Rastereditor geprüft und sofort angewendet.
 
 ## Aktionsphase und normale Auktionen
 
-Die Aktionsphase beginnt beim Startspieler und läuft im Uhrzeigersinn. Jeder Spieler führt genau eine Grundaktion aus. Der aktuelle Spieler kann eine Auktion für ein unmittelbar angrenzendes neutrales Gebiet eröffnen; ein Krieg ist als spätere Alternative vorgesehen. Nur wenn weder Auktion noch ein möglicher Krieg existiert, verfällt die Grundaktion. Ein Gebiet, das ein Spieler in der Auktion eines anderen gewinnt, verbraucht seine eigene Grundaktion nicht.
+Die Aktionsphase beginnt beim Startspieler und läuft im Uhrzeigersinn. Jeder Spieler führt genau eine Grundaktion aus: Auktion oder Krieg. Der aktuelle Spieler kann eine Auktion für ein unmittelbar angrenzendes neutrales Gebiet eröffnen oder mit einem eigenen Gebiet einen angrenzenden Gegner angreifen. Nur wenn beides unmöglich ist, verfällt die Grundaktion. Ein Gebiet, das ein Spieler in der Auktion eines anderen gewinnt, verbraucht seine eigene Grundaktion nicht.
 
 Bei einer normalen Auktion müssen alle Spieler verdeckt bieten, auch ohne Nachbarschaft zum Gebiet. Ein Gebot besteht aus einem verfügbaren Grundgebot `1`, `2` oder `3`, ganzzahligem globalem Einfluss und gegebenenfalls eigenem lokalem Einfluss auf dem versteigerten Gebiet. Der Core wertet erst aus, wenn alle Gebote vorliegen. Nur wer tatsächlich ein Gebiet erhält, bezahlt Einfluss und erschöpft das eingesetzte Grundgebot. Nach Erschöpfung aller drei Grundgebote steht sofort ein neuer vollständiger Satz zur Verfügung. Wird das Gebiet vergeben, verfällt sämtlicher dort verbliebener lokaler Einfluss.
 
 Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über eine legale Gebietsteilung offen. Bei mindestens drei Höchstbietenden bleibt das Gebiet neutral und niemand bezahlt. Nach dem ersten solchen Gleichstand darf der aktive Spieler innerhalb derselben Grundaktion eine zweite Auktion eröffnen oder seinen Zug beenden. Eine dritte Auktion ist nicht möglich. Nach vollständig abgewickelter Aktion folgt der nächste Spieler. Erst nach der letzten Aktion ist die Runde abgeschlossen und kann die nächste beginnen; nach der letzten Spielrunde folgt `SCORING`.
 
-Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor der Aufdeckung gegnerische Gebotshöhen und geheime Fraktionssymbole anderer Spieler. Ein späterer Server darf nur diese serverseitig redigierte Spieleransicht an Clients senden.
+Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor der Aufdeckung gegnerische Gebotshöhen, geheime Fraktionssymbole und noch nicht gemeinsam ausgewertete gegnerische ♠-Entscheidungen. Ein späterer Server darf nur diese serverseitig redigierte Spieleransicht an Clients senden.
 
 ## Visual Debug Client
 
 Der Browser-Client zeigt einen vorbereiteten Spielstand mit Anna, Ben und Clara sowie 16 Gebieten auf einer echten 32×20-Debug-Rasterkarte. Rasterzellen, gemeinsame Kanten, Besitzerfarben, Karten-Symbole, Aktivierungszahlen und POIs werden aus `GameState.map` dargestellt. Ein Klick auf ein Kästchen wählt das Gebiet; Zoom- und Einpassen-Steuerungen erleichtern die Ansicht. Startauktionen, Aktivierungen und normale Auktionen lassen sich lokal als Pass-and-play bedienen.
 
-Ein wählbarer Debug-Seed macht den Zufallsablauf bei gleichen Entscheidungen reproduzierbar. Schnellstart-Szenarien führen gültige Core-Aktionen aus, um bestimmte Phasen schneller zu erreichen. Die Demo-Rasterabmessung ist ausschließlich eine Fixture und keine neue Spielregel; ein Multiplayer-Modus ist nicht enthalten.
+Ein wählbarer Debug-Seed macht den Zufallsablauf bei gleichen Entscheidungen reproduzierbar. Schnellstarts für Gleichstand, Grenzgewinn, Vorstoß, Eroberung, Teilung, ♦, ♠ und Festungen führen die betreffenden Core-Aktionen aus. Die Demo-Rasterabmessung ist ausschließlich eine Fixture und keine neue Spielregel; ein Multiplayer-Modus ist nicht enthalten.
 
 ## AP4: Rastergeometrie und Gebietsteilung
 
 Der Game Core verwendet ein orthogonales Raster als einzige Geometriequelle. `getTerritoryArea`, `isTerritoryConnected`, `getAdjacentTerritoryIds` und `getSharedBorder` arbeiten direkt auf `GridMapState`. POIs und Siedlungen/Städte liegen auf konkreten Zellen. Bei einer Zweiwege-Auktion zieht der Divider die Grenze; der First Chooser wählt in einem zweiten, core-validierten Schritt. Der neue Teil erhält eine unbenutzte Gebietskarte; bei vollständig verwendeten 48 Karten wird der gedruckte Wert der ursprünglichen Karte dupliziert. Zusätzliche Aktivierungszahl und Symbol bleiben beim ursprünglichen Kartenteil. Die Normalauktion verwendet dieselbe Rollenregel wie die Startauktion.
+
+## AP5: Krieg und Grenzänderung
+
+Ein Krieg sperrt beide beteiligten Gebiete für weitere Kriege in derselben Runde. Beide Spieler bestätigen verdeckt höchstens eine verfügbare ♠-Aktivierung. Danach würfelt jeder einmal mit der eingespeisten `RandomSource`. Ein ♠ aus einem Gebiet an der gegnerischen Kampfgrenze gibt +2, sonst +1; jede Festung auf einer Zelle im Verteidigungsgebiet gibt +1. Der Angreifer erhält keinen automatischen Bonus. Der `WarSnapshot` hält die Flächen und gemeinsame Grenze vor dem Kampf fest.
+
+Bei Gleichstand endet die Grundaktion ohne Gebietsänderung. Differenz 1–2 eröffnet einen Grenzgewinn bis Tiefe 2, Differenz ab 3 bei einem Siegergebiet kleiner als die halbe Verliererfläche einen starken Vorstoß bis Tiefe 4. Eine ♦-Markierung verändert diese Tiefen um +1 für ihren Besitzer oder −1 für dessen Gegner und verfällt nach dem Krieg. Der Spieler zeichnet die Übernahme im erlaubten Korridor; der Core prüft Zusammenhang, Mindestfläche und Gebietszellen. Der Spieler darf auch keine Zelle übernehmen.
+
+Bei Differenz ab 3 und Siegerfläche mindestens der Hälfte der Verliererfläche erfolgt ein Durchbruch: Ab 40 Verliererzellen auf A4 beziehungsweise 20 auf A5 zeichnet der Gewinner eine Teilung, und der Verlierer wählt zuerst. Sein Teil behält die Originalkarte und ID; der andere erhält eine neue Karte und ID. Eine ursprüngliche ♦-Markierung erlaubt anschließend eine optionale 1-Zellen-Korrektur zugunsten ihres Besitzers. Unterhalb der Schwelle wird das unterlegene Gebiet vollständig erobert, ohne mit einem anderen Gebiet zu verschmelzen. Ein geschwächtes Gebiet wird bei jeder Niederlage mit mindestens einem Punkt vollständig erobert; ein geschwächter Sieger verliert seine Schwächung.
+
+POIs und Siedlungen/Städte bleiben bei jeder Rasteränderung auf ihren Zellen. Die genaue Rasterform der regelsprachlichen „vollständig verschobenen Front“ für die Entstehung einer Schwächung ist noch offen; siehe [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md). Der Core setzt deshalb durch Grenzgewinn derzeit keine neue Schwächung.
 
 ## Installation und Entwicklung
 
@@ -93,8 +103,8 @@ npm run typecheck
 npm test
 ```
 
-Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen Grundmodelle, kontrollierte Zufallsfolgen, Aktivierungen, Auktionsausgänge, ungültige Aktionen und Phasenübergänge.
+Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen außerdem Kampfboni, Gleichstand, Gebietssperre, Grenzkorridore, Durchbruch, Eroberung, Kriegs-Teilung und neutrale ♦-Änderungen.
 
-## Grenze dieses Arbeitspakets
+## Weitere Arbeitspakete
 
-Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Kriegsauswertung, Grenzverschiebung durch Krieg, Wertung und Multiplayer bleiben spätere Arbeitspakete. Die Kartenbasis und der geometrische Auktionssplit sind in AP4 enthalten.
+Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Wertung, Savegame und Multiplayer-Server bleiben spätere Arbeitspakete.
