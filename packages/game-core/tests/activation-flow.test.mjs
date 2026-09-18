@@ -44,6 +44,22 @@ function territory(id, ownerId, suit, activationNumber, adjacentTerritoryIds = [
   };
 }
 
+function readyForFirstRound(state) {
+  return {
+    ...state,
+    phase: GamePhase.RoundReady,
+    startAuctions: {
+      round: 2,
+      displayTerritoryIds: [],
+      firstDisplayTerritoryIds: [],
+      nextDisplayIndex: 0,
+      auctioneerPlayerId: state.players[0].id,
+      awardedPlayerIds: state.players.map((player) => player.id),
+      availableBidsByPlayerId: {},
+    },
+  };
+}
+
 function activate(state, playerId, territoryId, choice) {
   return activateTerritory(
     state,
@@ -73,7 +89,7 @@ test("three players complete an activation phase in player-chosen territory orde
   };
   // Index 1 selects B; the three W6 pairs yield 2, 5, and 9.
   const dice = new SequenceRandomSource([1, 1, 5, 3, 1, 5, 2]);
-  let result = startRound(setup, dice, timestamp);
+  let result = startRound(readyForFirstRound(setup), dice, timestamp);
   dice.assertConsumed();
 
   assert.equal(result.state.round, 1);
@@ -117,7 +133,7 @@ test("three players complete an activation phase in player-chosen territory orde
     targetTerritoryId: "b-club",
   });
   assert.equal(result.state.phase, GamePhase.ActionPhase);
-  assert.equal(result.state.activePlayerId, undefined);
+  assert.equal(result.state.activePlayerId, "B");
   assert.deepEqual(getAvailableActivationTerritoryIds(result.state), []);
   assert.deepEqual(result.state.activation.pendingTerritoryIds, []);
   assert.deepEqual(result.state.activation.resolvedTerritoryIds,
@@ -141,10 +157,13 @@ test("next round rotates the start player, expires spade effects, and skips an e
       players: [{ id: "A" }, { id: "B" }, { id: "C" }],
       startPlayerId: "C",
     }),
-    territories: [territory("spade", "B", Suit.Spades, 2)],
+    territories: [
+      territory("spade", "B", Suit.Spades, 2, ["neutral"]),
+      territory("neutral", null, Suit.Clubs, 8, ["spade"]),
+    ],
   };
   const firstDice = new SequenceRandomSource([1, 1, 5, 3, 1, 5, 2]);
-  const roundOne = startRound(setup, firstDice, timestamp);
+  const roundOne = startRound(readyForFirstRound(setup), firstDice, timestamp);
   firstDice.assertConsumed();
   const afterSpade = activate(roundOne.state, "B", "spade", { type: "SPADE_STORE" }).state;
 
@@ -153,9 +172,19 @@ test("next round rotates the start player, expires spade effects, and skips an e
   assert.equal(afterSpade.spadeActivations.length, 1);
   assert.equal(afterSpade.spadeActivations[0].status, "AVAILABLE");
 
+  // AP3 only permits a new round after the action phase has completed.
+  const completedActionPhase = {
+    ...afterSpade,
+    phase: GamePhase.RoundReady,
+    actionPhase: {
+      completedPlayerIds: ["A", "B", "C"],
+      auctionsOpenedByActivePlayer: 0,
+      secondAuctionAvailable: false,
+    },
+  };
   // Round two rolls 3, 5, 7; no controlled territory matches.
   const secondDice = new SequenceRandomSource([2, 1, 3, 1, 4, 1]);
-  const roundTwo = startRound(afterSpade, secondDice, timestamp);
+  const roundTwo = startRound(completedActionPhase, secondDice, timestamp);
   secondDice.assertConsumed();
   assert.equal(roundTwo.state.round, 2);
   assert.equal(roundTwo.state.startPlayerId, "C");
@@ -163,7 +192,7 @@ test("next round rotates the start player, expires spade effects, and skips an e
   assert.deepEqual(roundTwo.state.spadeActivations, []);
   assert.deepEqual(roundTwo.state.activation.pendingTerritoryIds, []);
   assert.equal(roundTwo.state.phase, GamePhase.ActionPhase);
-  assert.equal(roundTwo.state.activePlayerId, undefined);
+  assert.equal(roundTwo.state.activePlayerId, "B");
   assert.deepEqual(getAvailableActivationTerritoryIds(roundTwo.state), []);
   assert.deepEqual(roundTwo.events.map(({ type }) => type), [
     GameEventType.StartPlayerRotated,
@@ -172,6 +201,8 @@ test("next round rotates the start player, expires spade effects, and skips an e
     GameEventType.ActivationPhaseStarted,
     GameEventType.ActivationPhaseFinished,
     GameEventType.ActionPhaseStarted,
+    GameEventType.ActionForfeited,
+    GameEventType.ActionForfeited,
   ]);
 });
 
@@ -188,7 +219,7 @@ test("a Club number gained during activation can first activate its territory ne
     ],
   };
   const firstDice = new SequenceRandomSource([0, 3, 1, 5, 1, 6, 4]);
-  const firstRound = startRound(setup, firstDice, timestamp);
+  const firstRound = startRound(readyForFirstRound(setup), firstDice, timestamp);
   assert.deepEqual(firstRound.state.activation.pendingTerritoryIds, ["club"]);
 
   const afterClub = activateTerritory(
@@ -206,7 +237,7 @@ test("a Club number gained during activation can first activate its territory ne
     },
   );
   assert.equal(afterClub.state.territories[1].card.additionalActivationNumber, 9);
-  assert.equal(afterClub.state.phase, GamePhase.ActionPhase);
+  assert.equal(afterClub.state.phase, GamePhase.RoundReady);
   assert.deepEqual(afterClub.state.activation.resolvedTerritoryIds, ["club"]);
 
   const secondDice = new SequenceRandomSource([5, 1, 1, 1, 2, 1]);

@@ -1,5 +1,9 @@
 export * from "./actions/action-result.js";
 export * from "./actions/game-action.js";
+export * from "./auctions/auction-state.js";
+export { beginStartAuctions, openNextStartAuction, submitStartAuctionBid } from "./auctions/start-auctions.js";
+export * from "./auctions/normal-auctions.js";
+export * from "./auctions/resolve-split.js";
 export * from "./activation/activate-territory.js";
 export * from "./activation/diamond-targets.js";
 export * from "./events/game-event.js";
@@ -17,6 +21,8 @@ export * from "./rules/player-order.js";
 export * from "./rules/round-count.js";
 export * from "./state/create-game-state.js";
 export * from "./state/activation-phase-state.js";
+export * from "./state/action-phase-state.js";
+export * from "./state/action-phase.js";
 export * from "./state/game-phase.js";
 export * from "./state/game-state.js";
 export * from "./state/start-round.js";

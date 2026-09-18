@@ -25,7 +25,20 @@ function makeState() {
     { id: "b-heart", ownerId: "B", area: 20, adjacentTerritoryIds: [], card: { suit: Suit.Hearts, activationNumber: 5 } },
   ];
   const dice = { values: [0, 3, 1, 5, 1, 6, 4], nextInt() { return this.values.shift(); } };
-  return startRound({ ...setup, territories }, dice, timestamp).state;
+  return startRound({
+    ...setup,
+    territories,
+    phase: "ROUND_READY",
+    startAuctions: {
+      round: 2,
+      displayTerritoryIds: [],
+      firstDisplayTerritoryIds: [],
+      nextDisplayIndex: 0,
+      auctioneerPlayerId: "A",
+      awardedPlayerIds: ["A", "B"],
+      availableBidsByPlayerId: {},
+    },
+  }, dice, timestamp).state;
 }
 
 function action(playerId, territoryId, choice, selectedSuit) {

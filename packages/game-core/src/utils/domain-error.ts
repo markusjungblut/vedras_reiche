@@ -18,12 +18,30 @@ export enum DomainErrorCode {
   GlobalInfluenceUnavailable = "GLOBAL_INFLUENCE_UNAVAILABLE",
   UnsupportedAction = "UNSUPPORTED_ACTION",
   MaxRoundsReached = "MAX_ROUNDS_REACHED",
+  AuctionAlreadyActive = "AUCTION_ALREADY_ACTIVE",
+  AuctionNotBidding = "AUCTION_NOT_BIDDING",
+  AuctionNotFound = "AUCTION_NOT_FOUND",
+  InvalidAuctionTarget = "INVALID_AUCTION_TARGET",
+  NotEligibleBidder = "NOT_ELIGIBLE_BIDDER",
+  BidAlreadySubmitted = "BID_ALREADY_SUBMITTED",
+  InvalidBid = "INVALID_BID",
+  BasicBidUnavailable = "BASIC_BID_UNAVAILABLE",
+  InsufficientGlobalInfluence = "INSUFFICIENT_GLOBAL_INFLUENCE",
+  InsufficientLocalInfluence = "INSUFFICIENT_LOCAL_INFLUENCE",
+  PendingSplitRequired = "PENDING_SPLIT_REQUIRED",
+  InvalidSplitResolution = "INVALID_SPLIT_RESOLUTION",
+  InvalidStartAuctionState = "INVALID_START_AUCTION_STATE",
+  NoEligibleStartTerritory = "NO_ELIGIBLE_START_TERRITORY",
+  SecondAuctionUnavailable = "SECOND_AUCTION_UNAVAILABLE",
+  ActionAlreadyCompleted = "ACTION_ALREADY_COMPLETED",
+  LegalActionAvailable = "LEGAL_ACTION_AVAILABLE",
+  PendingWarRequired = "PENDING_WAR_REQUIRED",
 }
 
 export class DomainError extends Error {
   constructor(
     readonly code: DomainErrorCode,
-    message = code,
+    message: string = code,
   ) {
     super(message);
     this.name = "DomainError";

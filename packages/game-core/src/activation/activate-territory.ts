@@ -6,6 +6,11 @@ import type { PlayerId, TerritoryId } from "../model/ids.js";
 import { getPlayerOrderFromStartPlayer } from "../rules/player-order.js";
 import { GamePhase } from "../state/game-phase.js";
 import type { GameState } from "../state/game-state.js";
+import { beginActionPhase } from "../state/action-phase.js";
+import { finishCurrentBasicAction, forfeitCurrentBasicAction, startPendingWar } from "../state/action-phase.js";
+import { beginStartAuctions, openNextStartAuction, submitStartAuctionBid } from "../auctions/start-auctions.js";
+import { openNormalAuction, submitNormalAuctionBid } from "../auctions/normal-auctions.js";
+import { resolveTerritorySplit } from "../auctions/resolve-split.js";
 import type { CardSource } from "../utils/card-source.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
@@ -91,30 +96,72 @@ export function activateTerritory(
     },
   ];
   if (finished) {
-    descriptions.push(
-      { type: GameEventType.ActivationPhaseFinished, payload: { round: state.round } },
-      { type: GameEventType.ActionPhaseStarted, payload: { round: state.round } },
-    );
+    descriptions.push({ type: GameEventType.ActivationPhaseFinished, payload: { round: state.round } });
   }
   const newEvents = createEvents(state, context.timestamp, descriptions);
   const nextState: GameState = {
     ...effect.state,
-    phase: finished ? GamePhase.ActionPhase : GamePhase.ActivationPhase,
+    phase: GamePhase.ActivationPhase,
     activation: { pendingTerritoryIds, resolvedTerritoryIds },
     activePlayerId,
     events: [...state.events, ...newEvents],
   };
+  if (finished) {
+    const actionPhase = beginActionPhase(nextState, context.timestamp);
+    return { state: actionPhase.state, events: [...newEvents, ...actionPhase.events] };
+  }
   return { state: nextState, events: newEvents };
 }
 
-/** Only activation is executable in AP2; auction and war actions remain placeholders. */
+/** Routes game actions through the headless domain workflows. */
 export function applyAction(
   state: GameState,
   action: GameAction,
   context: ActivationContext,
 ): ActionResult {
-  if (action.type === GameActionType.ActivateTerritory) {
-    return activateTerritory(state, action, context);
+  switch (action.type) {
+    case GameActionType.ActivateTerritory:
+      return activateTerritory(state, action, context);
+    case GameActionType.BeginStartAuctions:
+      return beginStartAuctions(state, action.lastSetupPlayerId, context.randomSource, context.timestamp);
+    case GameActionType.OpenNextStartAuction:
+      return openNextStartAuction(state, context.timestamp);
+    case GameActionType.OpenAuction:
+      return openNormalAuction(state, action, context.timestamp);
+    case GameActionType.SubmitAuctionBid: {
+      if (state.auction?.kind === "START") {
+        return submitStartAuctionBid(state, action, context.randomSource, context.timestamp);
+      }
+      const submitted = submitNormalAuctionBid(state, action, context.timestamp);
+      if (submitted.state.auction !== undefined || submitted.state.pendingSplit !== undefined ||
+          submitted.state.actionPhase?.secondAuctionAvailable) {
+        return submitted;
+      }
+      const completed = finishCurrentBasicAction(submitted.state, context.timestamp);
+      return { state: completed.state, events: [...submitted.events, ...completed.events] };
+    }
+    case GameActionType.ResolveTerritorySplit: {
+      const resolved = resolveTerritorySplit(state, action, context.randomSource, context.timestamp);
+      if (state.pendingSplit?.auctionKind !== "NORMAL") {
+        return resolved;
+      }
+      const completed = finishCurrentBasicAction(resolved.state, context.timestamp);
+      return { state: completed.state, events: [...resolved.events, ...completed.events] };
+    }
+    case GameActionType.EndActionTurn:
+      if (state.activePlayerId !== action.playerId) {
+        throw new DomainError(DomainErrorCode.NotActivePlayer);
+      }
+      if (!state.actionPhase?.secondAuctionAvailable) {
+        throw new DomainError(DomainErrorCode.SecondAuctionUnavailable);
+      }
+      return finishCurrentBasicAction(state, context.timestamp);
+    case GameActionType.ForfeitAction:
+      if (state.activePlayerId !== action.playerId) {
+        throw new DomainError(DomainErrorCode.NotActivePlayer);
+      }
+      return forfeitCurrentBasicAction(state, context.timestamp);
+    case GameActionType.StartWar:
+      return startPendingWar(state, action, context.timestamp);
   }
-  throw new DomainError(DomainErrorCode.UnsupportedAction);
 }

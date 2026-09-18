@@ -9,6 +9,7 @@ import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
 import { GamePhase } from "./game-phase.js";
 import type { GameState } from "./game-state.js";
+import { beginActionPhase } from "./action-phase.js";
 
 function firstPlayerWithPendingTerritory(
   state: GameState,
@@ -24,8 +25,7 @@ function firstPlayerWithPendingTerritory(
 }
 
 /**
- * Begins round one after setup, or a later round after the action phase is complete.
- * The future action-phase handler is responsible for deciding when its phase is complete.
+ * Begins a round only after start auctions or the previous full action phase is complete.
  */
 export function startRound(
   state: GameState,
@@ -33,11 +33,16 @@ export function startRound(
   timestamp: string,
 ): ActionResult {
   const firstRound = state.round === 0;
+  if (state.phase !== GamePhase.RoundReady ||
+      state.auction !== undefined || state.pendingSplit !== undefined || state.pendingWar !== undefined) {
+    throw new DomainError(DomainErrorCode.InvalidPhase);
+  }
   if (firstRound) {
-    if (state.phase !== GamePhase.Setup && state.phase !== GamePhase.StartAuctions) {
-      throw new DomainError(DomainErrorCode.InvalidPhase);
+    if (state.startAuctions?.round !== 2 ||
+        state.startAuctions.awardedPlayerIds.length !== state.players.length) {
+      throw new DomainError(DomainErrorCode.InvalidStartAuctionState);
     }
-  } else if (state.phase !== GamePhase.ActionPhase) {
+  } else if (state.actionPhase?.completedPlayerIds.length !== state.players.length) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
   if (state.round >= state.maxRounds) {
@@ -71,16 +76,13 @@ export function startRound(
   ];
 
   if (activePlayerId === undefined) {
-    descriptions.push(
-      { type: GameEventType.ActivationPhaseFinished, payload: { round: nextRound } },
-      { type: GameEventType.ActionPhaseStarted, payload: { round: nextRound } },
-    );
+    descriptions.push({ type: GameEventType.ActivationPhaseFinished, payload: { round: nextRound } });
   }
 
   const newEvents = createEvents(state, timestamp, descriptions);
   const nextState: GameState = {
     ...state,
-    phase: activePlayerId === undefined ? GamePhase.ActionPhase : GamePhase.ActivationPhase,
+    phase: GamePhase.ActivationPhase,
     round: nextRound,
     startPlayerId,
     territories,
@@ -91,5 +93,9 @@ export function startRound(
     ...(activePlayerId === undefined ? { activePlayerId: undefined } : { activePlayerId }),
   };
 
+  if (activePlayerId === undefined) {
+    const actionPhase = beginActionPhase(nextState, timestamp);
+    return { state: actionPhase.state, events: [...newEvents, ...actionPhase.events] };
+  }
   return { state: nextState, events: newEvents };
 }

@@ -1,6 +1,6 @@
 # Vedras Reiche
 
-Dieses Repository enthält den headless Game Core für eine digitale Version von **Vedras Reiche**. Arbeitspaket 1 legte Modelle und Regelwerte an; Arbeitspaket 2 ergänzt die Rundensteuerung und eine vollständig abwickelbare Aktivierungsphase. Browser-Client und Multiplayer-Server sind weiterhin Platzhalter.
+Dieses Repository enthält den headless Game Core für eine digitale Version von **Vedras Reiche**. Arbeitspaket 1 legte Modelle und Regelwerte an, Arbeitspaket 2 die Rundensteuerung und Aktivierungsphase. Arbeitspaket 3 ergänzt Startauktionen, normale Auktionen und den Ablauf der Aktionsphase. Browser-Client und Multiplayer-Server sind weiterhin Platzhalter.
 
 Die [ausführliche Spielanleitung](docs/rules/Vedras%20Reiche.docx) ist die maßgebliche Regelquelle. Nicht eindeutig belegte Regeln werden nicht ergänzt; tatsächlich offene Punkte stehen in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
 
@@ -29,6 +29,12 @@ OPEN_QUESTIONS.md
 
 Das Repository verwendet npm Workspaces und TypeScript im Strict Mode.
 
+## Startauktionen
+
+Vor Runde 1 finden zwei Startauktionsrunden statt. Jede legt mit der eingespeisten `RandomSource` `Spielerzahl + 1` neutrale Gebiete in zufälliger, anschließend fester Reihenfolge aus. Die zweite Auslage enthält keine Gebiete der ersten, auch wenn diese neutral geblieben sind. Das nächste noch neutrale Gebiet der Auslage wird versteigert; nach dem letzten Gebiet beginnt ein weiterer Durchlauf durch dieselbe Auslage. Der Auktionssteller wandert nach jeder einzelnen Auktion im Uhrzeigersinn. Er wählt das Gebiet nicht aus.
+
+In jeder Startauktionsrunde erhält jeder Spieler die Gebote `0` bis `Spielerzahl`. Nur Spieler ohne Gebiet aus dieser Runde bieten mit. Jedes aufgedeckte Gebot wird verbraucht, auch die `0` und auch bei einem verlorenen Gebot. Ein Spieler ohne Gebiet erhält sofort einen neuen vollständigen Satz, wenn sein Satz aufgebraucht ist. Ein eindeutiger Höchstbietender erhält das Gebiet und scheidet für diese Startauktionsrunde aus. Bei lauter Nullen oder mindestens drei Höchstbietenden bleibt das Gebiet neutral. Genau zwei Höchstbietende führen zu einer ausstehenden Gebietsteilung, bis eine Geometrieauflösung eine legale Teilung oder deren Unmöglichkeit meldet. Nach zwei vollständig abgeschlossenen Runden besitzt jeder Spieler zwei Gebiete; für das reguläre Spiel stehen sechs globale Einflusspunkte und die Grundgebote `1`, `2`, `3` bereit.
+
 ## Runden und Aktivierungen
 
 Eine Runde beginnt mit der Aktivierungsphase und geht danach in die Aktionsphase über. Der erste Startspieler wird über die eingespeiste `RandomSource` bestimmt. Nach jeder vollständig abgeschlossenen Runde wandert diese Rolle in der festgelegten Spielerreihenfolge im Uhrzeigersinn weiter. Der Zustand hält die aktuelle Runde und die für die Spielerzahl geltende Höchstzahl fest.
@@ -47,6 +53,16 @@ Die offenen Aktivierungen werden zu Beginn der Phase ermittelt. Erhält ein Gebi
 | ♠ Pik | Ein einmal verwendbarer Bonus mit Spieler und Herkunftsgebiet wird für die laufende Runde vorgemerkt und verfällt am Rundenende, wenn er ungenutzt bleibt. Die Bonusberechnung gehört zum späteren Kriegssystem. |
 
 Nachbarschaften liegen derzeit als logische Beziehungen zwischen Gebieten vor. Sie reichen für Zielvalidierung und Grenzmarkierungen. Die tatsächliche Karten- und Grenzgeometrie, einschließlich einer Verschiebung um bis zu zwei Kästchen, ist noch nicht modelliert. Die abstrakte Gebietsfläche ersetzt keine Raster- oder Polygonberechnung.
+
+## Aktionsphase und normale Auktionen
+
+Die Aktionsphase beginnt beim Startspieler und läuft im Uhrzeigersinn. Jeder Spieler führt genau eine Grundaktion aus. Der aktuelle Spieler kann eine Auktion für ein unmittelbar angrenzendes neutrales Gebiet eröffnen; ein Krieg ist als spätere Alternative vorgesehen. Nur wenn weder Auktion noch ein möglicher Krieg existiert, verfällt die Grundaktion. Ein Gebiet, das ein Spieler in der Auktion eines anderen gewinnt, verbraucht seine eigene Grundaktion nicht.
+
+Bei einer normalen Auktion müssen alle Spieler verdeckt bieten, auch ohne Nachbarschaft zum Gebiet. Ein Gebot besteht aus einem verfügbaren Grundgebot `1`, `2` oder `3`, ganzzahligem globalem Einfluss und gegebenenfalls eigenem lokalem Einfluss auf dem versteigerten Gebiet. Der Core wertet erst aus, wenn alle Gebote vorliegen. Nur wer tatsächlich ein Gebiet erhält, bezahlt Einfluss und erschöpft das eingesetzte Grundgebot. Nach Erschöpfung aller drei Grundgebote steht sofort ein neuer vollständiger Satz zur Verfügung. Wird das Gebiet vergeben, verfällt sämtlicher dort verbliebener lokaler Einfluss.
+
+Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über eine legale Gebietsteilung offen. Bei mindestens drei Höchstbietenden bleibt das Gebiet neutral und niemand bezahlt. Nach dem ersten solchen Gleichstand darf der aktive Spieler innerhalb derselben Grundaktion eine zweite Auktion eröffnen oder seinen Zug beenden. Eine dritte Auktion ist nicht möglich. Nach vollständig abgewickelter Aktion folgt der nächste Spieler. Erst nach der letzten Aktion ist die Runde abgeschlossen und kann die nächste beginnen; nach der letzten Spielrunde folgt `SCORING`.
+
+Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. Ein späterer Server muss vor der Aufdeckung die Gebotshöhen aus den Ansichten anderer Spieler entfernen.
 
 ## Installation und Entwicklung
 
@@ -67,8 +83,8 @@ npm run typecheck
 npm test
 ```
 
-Die Tests verwenden den integrierten Test-Runner von Node.js. Neben den Grundmodellen prüfen sie kontrollierte Zufallsfolgen, Aktivierungsreihenfolge, Symbolfähigkeiten, ungültige Aktionen und einen durchgehenden Übergang von der Aktivierungsphase in die Aktionsphase.
+Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen Grundmodelle, kontrollierte Zufallsfolgen, Aktivierungen, Auktionsausgänge, ungültige Aktionen und Phasenübergänge.
 
 ## Grenze dieses Arbeitspakets
 
-Der Core validiert Aktivierungsaktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Die Aktionsphase ist als nächster Zustand vorhanden. Auktionen, Kriege, grafische Karte und Multiplayer werden in späteren Arbeitspaketen ausgeführt.
+Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Die tatsächliche Gebietsteilung und Grenzgeometrie, Kriegsauswertung, Wertung, grafische Karte und Multiplayer bleiben spätere Arbeitspakete. Eine ausstehende Gebietsteilung wird bis zu einer kontrolliert gelieferten Auflösung nicht als Flächenrechnung simuliert.
