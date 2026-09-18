@@ -2,7 +2,7 @@ import type { ActionResult } from "../actions/action-result.js";
 import type { StartWarAction } from "../actions/game-action.js";
 import { createEvents, type EventDescription } from "../events/create-events.js";
 import { GameEventType } from "../events/game-event.js";
-import type { PlayerId } from "../model/ids.js";
+import type { PlayerId, TerritoryId } from "../model/ids.js";
 import { getPlayerOrderFromStartPlayer } from "../rules/player-order.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import { GamePhase } from "./game-phase.js";
@@ -13,21 +13,35 @@ export interface PotentialBasicActions {
   readonly canStartWar: boolean;
 }
 
+/** Returns legal neutral targets for an opener without deciding the action itself. */
+export function getPotentialAuctionTerritoryIds(state: GameState, playerId: PlayerId): TerritoryId[] {
+  const own = state.territories.filter((territory) => territory.ownerId === playerId);
+  return state.territories
+    .filter((target) => target.ownerId === null && own.some((source) =>
+      source.adjacentTerritoryIds.includes(target.id) || target.adjacentTerritoryIds.includes(source.id)))
+    .map((territory) => territory.id);
+}
+
+export interface PotentialWarTarget {
+  readonly attackerTerritoryId: TerritoryId;
+  readonly defenderTerritoryId: TerritoryId;
+}
+
+/** Returns AP4 handoff candidates; combat legality remains in the core war module. */
+export function getPotentialWarTargets(state: GameState, playerId: PlayerId): PotentialWarTarget[] {
+  const own = state.territories.filter((territory) => territory.ownerId === playerId);
+  const opponents = state.territories.filter((territory) => territory.ownerId !== null && territory.ownerId !== playerId);
+  return own.flatMap((attacker) => opponents
+    .filter((defender) => attacker.adjacentTerritoryIds.includes(defender.id) || defender.adjacentTerritoryIds.includes(attacker.id))
+    .map((defender) => ({ attackerTerritoryId: attacker.id, defenderTerritoryId: defender.id })));
+}
+
 /** Logical adjacency only; AP4 will validate the remaining war rules. */
 export function getPotentialBasicActions(state: GameState, playerId: PlayerId): PotentialBasicActions {
-  let canOpenAuction = false;
-  let canStartWar = false;
-  for (const territory of state.territories) {
-    if (territory.ownerId !== playerId) continue;
-    for (const neighbor of state.territories) {
-      if (neighbor.id === territory.id ||
-          !(territory.adjacentTerritoryIds.includes(neighbor.id) ||
-            neighbor.adjacentTerritoryIds.includes(territory.id))) continue;
-      if (neighbor.ownerId === null) canOpenAuction = true;
-      else if (neighbor.ownerId !== playerId) canStartWar = true;
-    }
-  }
-  return { canOpenAuction, canStartWar };
+  return {
+    canOpenAuction: getPotentialAuctionTerritoryIds(state, playerId).length > 0,
+    canStartWar: getPotentialWarTargets(state, playerId).length > 0,
+  };
 }
 
 function advancePastUnavailablePlayers(

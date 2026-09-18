@@ -1,22 +1,22 @@
 # Vedras Reiche
 
-Dieses Repository enthält den headless Game Core für eine digitale Version von **Vedras Reiche**. Arbeitspaket 1 legte Modelle und Regelwerte an, Arbeitspaket 2 die Rundensteuerung und Aktivierungsphase. Arbeitspaket 3 ergänzt Startauktionen, normale Auktionen und den Ablauf der Aktionsphase. Browser-Client und Multiplayer-Server sind weiterhin Platzhalter.
+Dieses Repository enthält den Game Core und einen lokalen Visual Debug Client für eine digitale Version von **Vedras Reiche**. Arbeitspaket 1 legte Modelle und Regelwerte an, Arbeitspaket 2 die Rundensteuerung und Aktivierungsphase, Arbeitspaket 3 Startauktionen, normale Auktionen und den Ablauf der Aktionsphase. Arbeitspaket 3.5 macht diese Mechaniken im Browser bedienbar. Ein Multiplayer-Server folgt später.
 
 Die [ausführliche Spielanleitung](docs/rules/Vedras%20Reiche.docx) ist die maßgebliche Regelquelle. Nicht eindeutig belegte Regeln werden nicht ergänzt; tatsächlich offene Punkte stehen in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
 
 ## Architektur
 
 ```text
-Web Client → Multiplayer Server → Game Core
+Visual Debug Client (React + Vite) → @vedras/game-core
 ```
 
-Der Game Core verarbeitet Spielzustand und Aktionen unabhängig von Oberfläche und Transport. Der spätere Server hält den maßgeblichen Zustand und verteilt bestätigte Ergebnisse. Die Zuständigkeiten und Zustandsübergänge stehen in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Der direkte Core-Aufruf im Browser dient ausschließlich der lokalen Entwicklung mit mehreren Spielern an einem Fenster. Der Game Core verarbeitet Spielzustand und Aktionen unabhängig von Oberfläche und Transport. In der späteren Multiplayer-Version hält ein Server den maßgeblichen Zustand und verteilt bestätigte Ergebnisse. Die Zuständigkeiten und Zustandsübergänge stehen in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Projektstruktur
 
 ```text
 apps/
-  web/               Platzhalter für den Browser-Client
+  web/               React/Vite Visual Debug Client und Demo-Szenarien
   server/            Platzhalter für den Multiplayer-Server
 packages/
   game-core/
@@ -64,6 +64,12 @@ Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über ei
 
 Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. Ein späterer Server muss vor der Aufdeckung die Gebotshöhen aus den Ansichten anderer Spieler entfernen.
 
+## Visual Debug Client
+
+Der Browser-Client zeigt einen vorbereiteten Spielstand mit Anna, Ben und Clara sowie 16 abstrakten Gebieten. Das feste Raster ist nur eine Übersicht; Spielnachbarschaften stammen aus dem Core-Zustand. Startauktionen, Aktivierungen und normale Auktionen lassen sich lokal als Pass-and-play bedienen. Das Ereignisprotokoll, ein einblendbarer Rohzustand und sichtbare Domain-Fehler helfen beim Nachvollziehen der Regeln.
+
+Ein wählbarer Debug-Seed macht den Zufallsablauf bei gleichen Entscheidungen reproduzierbar. Schnellstart-Szenarien führen gültige Core-Aktionen aus, um bestimmte Phasen schneller zu erreichen. Der Debug Client enthält keine echte Karten- oder Grenzgeometrie und keinen Multiplayer-Modus.
+
 ## Installation und Entwicklung
 
 Voraussetzung ist Node.js 20 oder neuer mit npm. Im Repository-Stammverzeichnis:
@@ -73,7 +79,7 @@ npm install
 npm run dev
 ```
 
-`dev` startet den TypeScript-Watch-Modus für den Game Core; es startet keinen Browser-Client und keinen Multiplayer-Server.
+Danach ist der Visual Debug Client gewöhnlich unter [http://localhost:5173](http://localhost:5173) erreichbar. `npm run dev:core` startet separat den TypeScript-Watch-Modus des Game Core. Nach Core-Änderungen während eines laufenden Web-Servers den Core neu bauen oder `dev:core` parallel laufen lassen.
 
 ## Prüfung
 
@@ -87,4 +93,4 @@ Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen Grundm
 
 ## Grenze dieses Arbeitspakets
 
-Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Die tatsächliche Gebietsteilung und Grenzgeometrie, Kriegsauswertung, Wertung, grafische Karte und Multiplayer bleiben spätere Arbeitspakete. Eine ausstehende Gebietsteilung wird bis zu einer kontrolliert gelieferten Auflösung nicht als Flächenrechnung simuliert.
+Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Der Web Client zeigt die Ergebnisse, ohne Spielregeln nachzubauen. Die tatsächliche Gebietsteilung und Grenzgeometrie, Kriegsauswertung, Wertung, grafische Karte und Multiplayer bleiben spätere Arbeitspakete. Eine ausstehende Gebietsteilung wird bis zu einer kontrolliert gelieferten Auflösung nicht als Flächenrechnung simuliert.

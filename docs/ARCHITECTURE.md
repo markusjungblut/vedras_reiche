@@ -5,15 +5,20 @@ Regelquelle ist die [ausführliche Spielanleitung](rules/Vedras%20Reiche.docx) i
 ## Ebenen und Verantwortlichkeiten
 
 ```text
-Web Client
-    ↓ Aktion vorschlagen
-Multiplayer Server
-    ↓ Aktion mit aktuellem Zustand verarbeiten
-Game Core
-    ↑ neuer Zustand und Ereignisse
+┌──────────────────────────────┐
+│ Visual Debug Client          │
+│ React + Vite, lokal im Browser│
+└──────────────┬───────────────┘
+               │ Game Actions
+               ▼
+┌──────────────────────────────┐
+│ @vedras/game-core            │
+└──────────────────────────────┘
 ```
 
-Der künftige Browser-Client zeigt bestätigte Spielinformationen und erfasst Entscheidungen. Der spätere Multiplayer-Server verwaltet den maßgeblichen Zustand, prüft die Berechtigung eingehender Aktionen und verteilt bestätigte Ergebnisse. Transport, Sitzungen und Persistenz liegen außerhalb des Game Core. Beide Anwendungen sind derzeit Platzhalter.
+Der Visual Debug Client erfasst Entscheidungen, ruft Core-Aktionen direkt auf und zeigt deren neuen Zustand sowie Ereignisse. Diese direkte Verbindung ist **nur ein lokaler Entwicklungsmodus** mit Pass-and-play. Der Browser darf in einer späteren Multiplayer-Version seinen maßgeblichen Spielzustand nicht selbst bestimmen. Dann gilt `Browser → Server → Game Core`: Der Server verwaltet den maßgeblichen Zustand, prüft die Berechtigung eingehender Aktionen und verteilt bestätigte Ergebnisse. Transport, Sitzungen und Persistenz liegen außerhalb des Game Core.
+
+Der Debug Client besitzt einen reproduzierbaren Seed, Testkarte, Kartenziehquelle und vorbereitete Szenarien. Diese Hilfen liegen ausschließlich unter `apps/web`; weder Demo-Gebiete noch UI-Felder werden Teil des Game Core. Die Ansicht ordnet die Gebiete abstrakt an und leitet aus ihrem Layout keine Nachbarschaften ab. Spielrelevante Änderungen laufen ausschließlich über Core-Aktionen; die React-Komponenten speichern nur Anzeige- und Eingabezustand.
 
 `packages/game-core` enthält die Spielmodelle und Regeln als eigenständige TypeScript-Bibliothek. Der Core hängt nicht von React, DOM, Canvas, WebSockets, Datenbanken oder Browser-APIs ab. Server, Tests, Bots und spätere Replay-Werkzeuge können dieselben Zustandsübergänge verwenden.
 
@@ -114,4 +119,4 @@ Die spätere Karte benötigt Rasterflächen oder Polygone. Nur damit lassen sich
 
 ## Stand und weitere Arbeitspakete
 
-Arbeitspaket 3 ergänzt Startauktionen und normale Auktionen sowie die Steuerung der Aktionsphase bis zu `ROUND_FINISHED` beziehungsweise `SCORING`. Kriegsauswertung, Kartengeometrie, tatsächliche Teilungen, Punktewertung, Web Client und Multiplayer-Server sind noch ausstehend. Tatsächlich offene Regelfragen stehen in [OPEN_QUESTIONS.md](../OPEN_QUESTIONS.md).
+Arbeitspaket 3 ergänzt Startauktionen und normale Auktionen sowie die Steuerung der Aktionsphase bis zu `ROUND_FINISHED` beziehungsweise `SCORING`. Arbeitspaket 3.5 ergänzt den lokal spielbaren Visual Debug Client. Kriegsauswertung, Kartengeometrie, tatsächliche Teilungen, Punktewertung und Multiplayer-Server sind noch ausstehend. Tatsächlich offene Regelfragen stehen in [OPEN_QUESTIONS.md](../OPEN_QUESTIONS.md).

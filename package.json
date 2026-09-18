@@ -4,9 +4,10 @@
   "type": "module",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "npm run dev --workspace @vedras/game-core",
-    "build": "npm run build --workspace @vedras/game-core",
-    "typecheck": "npm run typecheck --workspace @vedras/game-core",
+    "dev": "npm run build --workspace @vedras/game-core && npm run dev --workspace @vedras/web",
+    "dev:core": "npm run dev --workspace @vedras/game-core",
+    "build": "npm run build --workspace @vedras/game-core && npm run build --workspace @vedras/web",
+    "typecheck": "npm run typecheck --workspace @vedras/game-core && npm run typecheck --workspace @vedras/web",
     "test": "npm run test --workspace @vedras/game-core"
   },
   "devDependencies": {

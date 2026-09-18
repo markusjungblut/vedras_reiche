@@ -7,6 +7,7 @@ import type { PlayerId } from "../model/ids.js";
 import type { Player } from "../model/player.js";
 import { GamePhase } from "../state/game-phase.js";
 import type { GameState } from "../state/game-state.js";
+import { getPotentialAuctionTerritoryIds } from "../state/action-phase.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 
 const BASIC_BIDS = [1, 2, 3] as const;
@@ -67,10 +68,7 @@ export function openNormalAuction(
   if (target === undefined) {
     throw new DomainError(DomainErrorCode.TerritoryNotFound);
   }
-  if (target.ownerId !== null || !state.territories.some((territory) =>
-    territory.ownerId === action.playerId &&
-    (territory.adjacentTerritoryIds.includes(target.id) ||
-      target.adjacentTerritoryIds.includes(territory.id)))) {
+  if (target.ownerId !== null || !getPotentialAuctionTerritoryIds(state, action.playerId).includes(target.id)) {
     throw new DomainError(DomainErrorCode.InvalidAuctionTarget);
   }
 
