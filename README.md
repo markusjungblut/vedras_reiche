@@ -1,6 +1,6 @@
 # Vedras Reiche
 
-Dieses Repository enthält den Game Core und einen lokalen Pass-and-Play-Client für eine digitale Version von **Vedras Reiche**. Arbeitspakete 1–7 decken Modelle, vollständigen Spielaufbau, Runden, Aktivierungen, Auktionen, Rastergeometrie, Krieg und Endwertung ab. Ein Multiplayer-Server folgt später.
+Dieses Repository enthält den Game Core und einen lokalen Pass-and-Play-Client für eine digitale Version von **Vedras Reiche**. Arbeitspakete 1–8 decken Modelle, vollständigen Spielaufbau, Runden, Aktivierungen, Auktionen, Rastergeometrie, Krieg, Endwertung und das verbindliche digitale Regelprofil ab. Ein Multiplayer-Server folgt später.
 
 Die [ausführliche Spielanleitung](docs/rules/Vedras%20Reiche.docx) ist die maßgebliche Regelquelle. Nicht eindeutig belegte Regeln werden nicht ergänzt; tatsächlich offene Punkte stehen in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
 
@@ -31,13 +31,13 @@ Das Repository verwendet npm Workspaces und TypeScript im Strict Mode.
 
 ## Spielaufbau
 
-`Neues Spiel` startet eine vollständige lokale Partie ohne Debug-Fixture: Zwei bis sechs Namen werden in ihre dauerhafte Sitzreihenfolge gebracht, Kartenformat und technische Rastergröße gewählt und der erste Kartenzeichner bestimmt. Im `MAP_CREATION`-Zustand erstellen die Spieler abwechselnd exakt `4 × Spielerzahl + 4` Gebiete. Ein Gebiet kann neu gezeichnet oder in zwei gültige Gebiete geteilt werden; eine Korrektur überträgt Zellen nur zwischen zwei bestehenden Gebieten.
+`Neues Spiel` startet eine vollständige lokale Partie ohne Debug-Fixture: Zwei bis sechs Namen werden in ihre dauerhafte Sitzreihenfolge gebracht und der erste Kartenzeichner bestimmt. Das digitale Spielfeld ist fest `50 × 50` Zellen groß; jedes Gebiet benötigt mindestens 20 Zellen. Im `MAP_CREATION`-Zustand erstellen die Spieler abwechselnd exakt `4 × Spielerzahl + 4` Gebiete. Ein Gebiet kann neu gezeichnet oder in zwei gültige Gebiete geteilt werden; eine Korrektur überträgt Zellen nur zwischen zwei bestehenden Gebieten.
 
-Nach `P`, `2P`, `3P` und `4P` Gebieten unterbricht der Core den Zeichenablauf für die vorgeschriebenen Wahrzeichen, Knotenpunkte, Festungen und Relikte. Finalisiert wird erst bei vollständiger POI-Tabelle und wenn jedes Gebiet Mindestfläche, orthogonalen Zusammenhang und mindestens zwei Seiten-Nachbarn besitzt. Die Karte muss als Gesamtheit nicht zusammenhängen.
+Nach `P`, `2P`, `3P` und `4P` Gebieten unterbricht der Core den Zeichenablauf für die vorgeschriebenen Wahrzeichen, Knotenpunkte, Festungen und Relikte. Derselbe Zugzeiger läuft während aller Zeichen- und POI-Schritte weiter. Finalisiert wird erst bei vollständiger POI-Tabelle, höchstens einem POI je Zelle, einer vollständig belegten Karte und wenn jedes Gebiet Mindestfläche, orthogonalen Zusammenhang und mindestens zwei Seiten-Nachbarn besitzt. Die Karte muss als Gesamtheit nicht zusammenhängen.
 
 Erst danach zieht der Core aus den 48 gedruckten Karten gleich viele Karten pro Symbol, mischt sie und verteilt sie auf die neutralen Anfangsgebiete. Geheime Fraktionen werden per `RandomSource` in Sitzreihenfolge vergeben und im lokalen Client einzeln hinter einer Pass-and-Play-Ansicht gezeigt. Der gespeicherte letzte Kartenzeichner bestimmt den ersten Auktionssteller der vorhandenen Startauktionen.
 
-Die digitalen Standardraster für eine veröffentlichte Version sind noch keine Regelentscheidung; siehe [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
+Die Papierwerte A4 und A5 bleiben in der Spielanleitung erhalten, gehören aber nicht zum normalen digitalen Spielpfad.
 
 ## Startauktionen
 
@@ -76,9 +76,9 @@ Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über ei
 
 Die Endwertung leitet Fläche, Nachbarschaften sowie die aktuelle Zugehörigkeit von POIs und Entwicklungen aus der Rasterkarte ab. Sie rechnet Gebietspunkte exakt in Hundertstel: Grundfläche und alle Prozentboni werden additiv kombiniert. Der Core speichert für jedes kontrollierte Gebiet die einzelnen Bonusanteile und für jeden Spieler die Gesamtsumme.
 
-Für das größte zusammenhängende Reich erhält eine eindeutige größte Komponente automatisch ihren Bonus. Bei mehreren gleich großen Komponenten wählt der betreffende Spieler eine davon. Sobald alle nötigen Entscheidungen vorliegen, erzeugt der Core ein unveränderliches `GameResult`, bestimmt alle punktgleichen Sieger und wechselt nach `FINISHED`. Weitere reguläre Aktionen sind dann gesperrt. Der Debug-Client bietet dafür ein Endwertungs-Szenario, aufklappbare Abrechnungen und eine optionale Punkteansicht auf der Karte.
+Für das größte zusammenhängende Reich erhält eine eindeutige größte Komponente automatisch ihren Bonus. Bei mehreren gleich großen Komponenten wählt der betreffende Spieler eine davon. Sobald alle nötigen Entscheidungen vorliegen, erzeugt der Core ein unveränderliches `GameResult`, bestimmt alle punktgleichen Sieger und wechselt nach `FINISHED`. Weitere reguläre Aktionen sind dann gesperrt. Die Siegerehrung rundet nur die angezeigten Gesamtpunkte, ermittelt Platzierungen aber anhand der exakten Hundertstel und deckt alle Fraktionen auf.
 
-Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor der Aufdeckung gegnerische Gebotshöhen, geheime Fraktionssymbole und noch nicht gemeinsam ausgewertete gegnerische ♠-Entscheidungen. Ein späterer Server darf nur diese serverseitig redigierte Spieleransicht an Clients senden.
+Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor Spielende gegnerische Gebotshöhen, geheime Fraktionssymbole und noch nicht gemeinsam ausgewertete gegnerische ♠-Entscheidungen. Bei `FINISHED` werden alle Fraktionen für die Siegerehrung öffentlich. Ein späterer Server darf nur diese serverseitig redigierte Spieleransicht an Clients senden.
 
 ## Lokaler Client und Debug-Szenarien
 
@@ -96,9 +96,9 @@ Ein Krieg sperrt beide beteiligten Gebiete für weitere Kriege in derselben Rund
 
 Bei Gleichstand endet die Grundaktion ohne Gebietsänderung. Differenz 1–2 eröffnet einen Grenzgewinn bis Tiefe 2, Differenz ab 3 bei einem Siegergebiet kleiner als die halbe Verliererfläche einen starken Vorstoß bis Tiefe 4. Eine ♦-Markierung verändert diese Tiefen um +1 für ihren Besitzer oder −1 für dessen Gegner und verfällt nach dem Krieg. Der Spieler zeichnet die Übernahme im erlaubten Korridor; der Core prüft Zusammenhang, Mindestfläche und Gebietszellen. Der Spieler darf auch keine Zelle übernehmen.
 
-Bei Differenz ab 3 und Siegerfläche mindestens der Hälfte der Verliererfläche erfolgt ein Durchbruch: Ab 40 Verliererzellen auf A4 beziehungsweise 20 auf A5 zeichnet der Gewinner eine Teilung, und der Verlierer wählt zuerst. Sein Teil behält die Originalkarte und ID; der andere erhält eine neue Karte und ID. Eine ursprüngliche ♦-Markierung erlaubt anschließend eine optionale 1-Zellen-Korrektur zugunsten ihres Besitzers. Unterhalb der Schwelle wird das unterlegene Gebiet vollständig erobert, ohne mit einem anderen Gebiet zu verschmelzen. Ein geschwächtes Gebiet wird bei jeder Niederlage mit mindestens einem Punkt vollständig erobert; ein geschwächter Sieger verliert seine Schwächung.
+Bei Differenz ab 3 und Siegerfläche mindestens der Hälfte der Verliererfläche erfolgt im digitalen Profil ab 40 Verliererzellen ein Durchbruch: Der Gewinner zeichnet eine Teilung, und der Verlierer wählt zuerst. Sein Teil behält die Originalkarte und ID; der andere erhält eine neue Karte und ID. Eine ursprüngliche ♦-Markierung erlaubt anschließend eine optionale 1-Zellen-Korrektur zugunsten ihres Besitzers. Unterhalb der Schwelle wird das unterlegene Gebiet vollständig erobert, ohne mit einem anderen Gebiet zu verschmelzen. Ein geschwächtes Gebiet wird bei jeder Niederlage mit mindestens einem Punkt vollständig erobert; ein geschwächter Sieger verliert seine Schwächung.
 
-POIs und Siedlungen/Städte bleiben bei jeder Rasteränderung auf ihren Zellen. Die genaue Rasterform der regelsprachlichen „vollständig verschobenen Front“ für die Entstehung einer Schwächung ist noch offen; siehe [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md). Der Core setzt deshalb durch Grenzgewinn derzeit keine neue Schwächung.
+POIs und Siedlungen/Städte bleiben bei jeder Rasteränderung auf ihren Zellen. Für eine Schwächung berechnet der Core ausschließlich vom gespeicherten ursprünglichen Grenzverlauf eine orthogonale BFS-Tiefe im ursprünglichen Verlierergebiet. Ließe der vollständige Streifen bis zur effektiven Kampftiefe weniger als 20 Zellen zurück, wird das Gebiet geschwächt; freiwillig weniger übernommene Zellen oder reine Zusammenhangshindernisse ändern diese Entscheidung nicht.
 
 ## Installation und Entwicklung
 

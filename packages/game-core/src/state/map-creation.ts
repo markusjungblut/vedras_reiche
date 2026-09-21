@@ -36,7 +36,7 @@ import type { RandomSource } from "../utils/random-source.js";
 
 export interface MapValidationIssue {
   readonly territoryId: TerritoryId;
-  readonly code: "BELOW_MINIMUM_AREA" | "DISCONNECTED" | "TOO_FEW_NEIGHBORS";
+  readonly code: "UNASSIGNED_CELL" | "UNKNOWN_TERRITORY" | "BELOW_MINIMUM_AREA" | "DISCONNECTED" | "TOO_FEW_NEIGHBORS";
   readonly message: string;
 }
 
@@ -154,7 +154,8 @@ export function beginMapCreation(state: GameState, action: BeginMapCreationActio
   return result({ ...state, phase: GamePhase.MapCreation, map, mapCreation, activePlayerId: action.firstPlayerId }, timestamp, [{
     type: GameEventType.MapCreationStarted,
     actorId: action.firstPlayerId,
-    payload: { firstPlayerId: action.firstPlayerId, width: map.width, height: map.height, format: map.format ?? "A4" },
+    payload: { firstPlayerId: action.firstPlayerId, width: map.width, height: map.height,
+      profile: map.format === undefined ? "DIGITAL" : "PAPER", ...(map.format === undefined ? {} : { format: map.format }) },
   }]);
 }
 
@@ -290,6 +291,9 @@ export function placeSetupPointOfInterest(
   if (placed >= requirements[action.poiType]) {
     throw new DomainError(DomainErrorCode.InvalidPoiPlacement, "The required number is already placed.");
   }
+  if (state.pointsOfInterest.some((poi) => poi.position.x === action.position.x && poi.position.y === action.position.y)) {
+    throw new DomainError(DomainErrorCode.InvalidPoiPlacement, "Only one point of interest may occupy a cell.");
+  }
   const nextCounts = { ...mapCreation.placedPoiCounts, [action.poiType]: placed + 1 };
   const complete = nextCounts[action.poiType] === requirements[action.poiType];
   const nextMapCreation: MapCreationState = {
@@ -311,6 +315,14 @@ export function getSetupMapValidationIssues(state: GameState): MapValidationIssu
   if (state.map === undefined) return [{ territoryId: "KARTE", code: "DISCONNECTED", message: "Keine Rasterkarte vorhanden." }];
   const minimum = getMinimumTerritoryArea(state.map.format);
   const issues: MapValidationIssue[] = [];
+  const unassignedCount = Object.values(state.map.cells).filter((territoryId) => territoryId === null).length;
+  if (unassignedCount > 0) issues.push({ territoryId: "KARTE", code: "UNASSIGNED_CELL",
+    message: `Karte: ${unassignedCount} freie Rasterzelle${unassignedCount === 1 ? "" : "n"}.` });
+  const territoryIds = new Set(state.territories.map((territory) => territory.id));
+  const unknownCellCount = Object.values(state.map.cells)
+    .filter((territoryId) => territoryId !== null && !territoryIds.has(territoryId)).length;
+  if (unknownCellCount > 0) issues.push({ territoryId: "KARTE", code: "UNKNOWN_TERRITORY",
+    message: `Karte: ${unknownCellCount} Zelle${unknownCellCount === 1 ? "" : "n"} ohne bestehendes Gebiet.` });
   for (const territory of state.territories) {
     const area = getTerritoryArea(state.map, territory.id);
     if (area < minimum) issues.push({ territoryId: territory.id, code: "BELOW_MINIMUM_AREA",

@@ -10,6 +10,7 @@ import {
   createTerritoryCard,
   createGameViewForPlayer,
   finishCurrentBasicAction,
+  formatRoundedScoreHundredths,
   formatScoreHundredths,
   GameActionType,
   GameEventType,
@@ -84,6 +85,7 @@ test("an exact quarter bonus keeps twenty-three cells at 28,75 points", () => {
   assert.equal(score.totalBonusPercent, 25);
   assert.equal(score.scoreHundredths, 2875);
   assert.equal(formatScoreHundredths(score.scoreHundredths), "28,75");
+  assert.equal(formatRoundedScoreHundredths(score.scoreHundredths), "29");
 });
 
 test("the geometrically largest realm receives the bonus on each of its territories", () => {
@@ -178,14 +180,14 @@ test("exact ties retain all winners without a tie-breaker", () => {
   assert.equal(playerResult(scored, "clara").totalScoreHundredths < playerResult(scored, "anna").totalScoreHundredths, true);
 });
 
-test("final player views contain results while retaining other faction secrets", () => {
+test("final player views contain results and reveal all factions", () => {
   const state = stateFromRows({ rows: ["A"], players: [
     { id: "anna", secretFactionSuit: Suit.Hearts }, { id: "ben", secretFactionSuit: Suit.Spades },
   ], territories: [territory("A", "anna")], });
   const finished = beginScoring(state, timestamp).state;
   const view = createGameViewForPlayer(finished, "anna");
   assert.ok(view.result);
-  assert.equal(view.players.find((player) => player.id === "ben").secretFactionSuit, undefined);
+  assert.equal(view.players.find((player) => player.id === "ben").secretFactionSuit, Suit.Spades);
 });
 
 test("the final basic action completes scoring and blocks every later game action", () => {

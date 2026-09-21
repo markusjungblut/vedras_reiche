@@ -98,7 +98,56 @@ test("empty gain is legal at minimum area; claiming a cell there is rejected", (
     claimedCells: [{ x: 8, y: 0 }] }), (error) => error.code === DomainErrorCode.MinimumTerritorySizeViolated);
   const resolved = act(fought, { type: GameActionType.ProposeBorderAdvance, warId, playerId: "P", claimedCells: [] }).state;
   assert.equal(getTerritoryArea(resolved.map, "B"), 20);
-  assert.equal(assessBorderAdvanceLimitation(fought.map, "A", "B", fought.pendingWar.originalSharedBorder, 2, []).determinate, false);
+  const limitation = assessBorderAdvanceLimitation(fought.map, "A", "B", fought.pendingWar.originalSharedBorder, 2, []);
+  assert.deepEqual(limitation, { determinate: true, limitedByMinimumArea: true, limitedByGeometry: false });
+});
+
+function mapFromCells(width, height, entries) {
+  return createGridMap({ width, height }, Object.fromEntries(entries.map(({ x, y, territoryId }) => [`${x},${y}`, territoryId])));
+}
+
+test("complete front depth weakens only when it would reduce the loser below twenty cells", () => {
+  const minLimited = mapFromCells(9, 3, [
+    ...Array.from({ length: 3 }, (_, y) => ({ x: 0, y, territoryId: "A" })),
+    ...Array.from({ length: 24 }, (_, offset) => ({ x: 1 + offset % 8, y: Math.floor(offset / 8), territoryId: "B" })),
+  ]);
+  const minBorder = getSharedBorder(minLimited, "A", "B");
+  assert.deepEqual(assessBorderAdvanceLimitation(minLimited, "A", "B", minBorder, 2, []), {
+    determinate: true, limitedByMinimumArea: true, limitedByGeometry: false,
+  });
+
+  const exactMinimum = mapFromCells(10, 3, [
+    ...Array.from({ length: 3 }, (_, y) => ({ x: 0, y, territoryId: "A" })),
+    ...Array.from({ length: 26 }, (_, offset) => ({ x: 1 + offset % 9, y: Math.floor(offset / 9), territoryId: "B" })),
+  ]);
+  const exactBorder = getSharedBorder(exactMinimum, "A", "B");
+  assert.deepEqual(assessBorderAdvanceLimitation(exactMinimum, "A", "B", exactBorder, 2, []), {
+    determinate: true, limitedByMinimumArea: false, limitedByGeometry: false,
+  });
+});
+
+test("a geometrically disconnected full front does not weaken the loser", () => {
+  const map = mapFromCells(6, 9, [
+    ...Array.from({ length: 9 }, (_, y) => ({ x: 0, y, territoryId: "A" })),
+    ...Array.from({ length: 9 }, (_, y) => [{ x: 1, y, territoryId: "B" }, { x: 2, y, territoryId: "B" }]).flat(),
+    ...Array.from({ length: 12 }, (_, offset) => ({ x: 3 + offset % 3, y: Math.floor(offset / 3), territoryId: "B" })),
+    ...Array.from({ length: 12 }, (_, offset) => ({ x: 3 + offset % 3, y: 5 + Math.floor(offset / 3), territoryId: "B" })),
+  ]);
+  const limitation = assessBorderAdvanceLimitation(map, "A", "B", getSharedBorder(map, "A", "B"), 2, []);
+  assert.deepEqual(limitation, { determinate: true, limitedByMinimumArea: false, limitedByGeometry: true });
+});
+
+test("diamond depth can weaken even when the winner claims only one cell", () => {
+  const plain = fight(start(fixture({ b: 30 })), [5, 3]);
+  const plainLimitation = assessBorderAdvanceLimitation(plain.map, "A", "B", plain.pendingWar.originalSharedBorder, plain.pendingWar.maximumDepth, []);
+  assert.equal(plainLimitation.limitedByMinimumArea, false);
+
+  const marked = fight(start(fixture({ b: 30, markPlayer: "P" })), [5, 3]);
+  assert.equal(marked.pendingWar.maximumDepth, 3);
+  const resolved = act(marked, { type: GameActionType.ProposeBorderAdvance, warId: marked.pendingWar.id,
+    playerId: "P", claimedCells: [{ x: 8, y: 0 }] }).state;
+  assert.equal(resolved.territories.find((territory) => territory.id === "B").weakened, true);
+  assert.equal(resolved.map.cells["8,0"], "A");
 });
 
 test("border gain moves cell-bound POIs and preserves multiple settlements", () => {

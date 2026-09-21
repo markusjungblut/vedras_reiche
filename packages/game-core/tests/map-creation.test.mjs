@@ -14,6 +14,10 @@ import {
   getSetupMapValidationIssues,
   getSetupPoiRequirements,
   getStartingTerritoryCount,
+  getTerritoryArea,
+  DIGITAL_BOARD_HEIGHT,
+  DIGITAL_BOARD_WIDTH,
+  DIGITAL_MAP_CONFIG,
   MapCreationStage,
   PointOfInterestType,
   Suit,
@@ -62,8 +66,15 @@ function placeRequiredPois(state) {
   };
   while (stageType[state.mapCreation.stage]) {
     const type = stageType[state.mapCreation.stage];
+    const position = Object.entries(state.map.cells)
+      .filter(([, territoryId]) => territoryId !== null)
+      .map(([key]) => {
+        const [x, y] = key.split(",").map(Number);
+        return { x, y };
+      })
+      .find((cell) => !state.pointsOfInterest.some((poi) => poi.position.x === cell.x && poi.position.y === cell.y));
     state = applyAction(state, { type: GameActionType.PlaceSetupPointOfInterest,
-      playerId: state.mapCreation.activePlayerId, poiType: type, position: { x: 0, y: 0 } }, context()).state;
+      playerId: state.mapCreation.activePlayerId, poiType: type, position }, context()).state;
   }
   return state;
 }
@@ -110,6 +121,17 @@ test("invalid setup territory is rejected without mutating state", () => {
   assert.equal(state.map.cells["0,0"], null);
 });
 
+test("a point of interest cell may be used only once", () => {
+  let state = setup();
+  for (let index = 0; index < 3; index += 1) state = createBlock(state, index);
+  state = applyAction(state, { type: GameActionType.PlaceSetupPointOfInterest,
+    playerId: state.mapCreation.activePlayerId, poiType: PointOfInterestType.Landmark, position: { x: 0, y: 0 } }, context()).state;
+  assert.throws(() => applyAction(state, { type: GameActionType.PlaceSetupPointOfInterest,
+    playerId: state.mapCreation.activePlayerId, poiType: PointOfInterestType.Landmark, position: { x: 0, y: 0 } }, context()),
+  (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidPoiPlacement);
+  assert.equal(state.pointsOfInterest.length, 1);
+});
+
 test("a fifty-cell territory can be split into two connected twenty-five-cell setup territories", () => {
   let state = setup(2, 10, 5);
   const cells = Array.from({ length: 50 }, (_, index) => ({ x: index % 10, y: Math.floor(index / 10) }));
@@ -140,6 +162,58 @@ test("final map validation rejects a territory with only one side neighbor; corn
   assert.ok(getSetupMapValidationIssues(state).some((issue) => issue.territoryId === "G01" && issue.code === "TOO_FEW_NEIGHBORS"));
   assert.throws(() => applyAction(state, { type: GameActionType.FinalizeMapCreation, playerId: "P1" }, context()),
     (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidMapCreation);
+});
+
+test("final map validation rejects free cells", () => {
+  const players = [{ id: "P1" }, { id: "P2" }];
+  const cells = Object.fromEntries(Array.from({ length: 12 }, (_, territory) =>
+    Array.from({ length: 10 }, (_, cell) => [`${territory * 2 + cell % 2},${Math.floor(cell / 2)}`, `G${String(territory + 1).padStart(2, "0")}`])).flat());
+  const map = createGridMap({ format: "A5", width: 25, height: 5 }, cells);
+  const state = {
+    ...createGameState({ gameId: "free-cell", players, startPlayerId: "P1" }), phase: GamePhase.MapCreation, map,
+    activePlayerId: "P1", territories: Array.from({ length: 12 }, (_, index) => ({ id: `G${String(index + 1).padStart(2, "0")}`, ownerId: null })),
+    mapCreation: { firstPlayerId: "P1", activePlayerId: "P1", targetTerritoryCount: 12, createdTerritoryCount: 12,
+      stage: MapCreationStage.ReadyToFinalize, placedPoiCounts: { LANDMARK: 1, JUNCTION: 1, FORTRESS: 1, RELIC: 2 }, lastSetupPlayerId: "P2" },
+  };
+  assert.ok(getSetupMapValidationIssues(state).some((issue) => issue.code === "UNASSIGNED_CELL"));
+  assert.throws(() => applyAction(state, { type: GameActionType.FinalizeMapCreation, playerId: "P1" }, context()),
+    (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidMapCreation);
+  const unknownTerritoryState = { ...state, map: { ...state.map, cells: { ...state.map.cells, "24,4": "UNBEKANNT" } } };
+  assert.ok(getSetupMapValidationIssues(unknownTerritoryState).some((issue) => issue.code === "UNKNOWN_TERRITORY"));
+});
+
+function digitalTerritoryCells(index) {
+  const columnWidths = [13, 13, 12, 12];
+  const rowHeights = [17, 17, 16];
+  const column = index % columnWidths.length;
+  const row = Math.floor(index / columnWidths.length);
+  const xStart = columnWidths.slice(0, column).reduce((total, width) => total + width, 0);
+  const yStart = rowHeights.slice(0, row).reduce((total, height) => total + height, 0);
+  return Array.from({ length: columnWidths[column] * rowHeights[row] }, (_, offset) => ({
+    x: xStart + offset % columnWidths[column], y: yStart + Math.floor(offset / columnWidths[column]),
+  }));
+}
+
+test("the canonical digital setup uses a complete 50 by 50 partition", () => {
+  const players = [{ id: "P1" }, { id: "P2" }];
+  assert.deepEqual(DIGITAL_MAP_CONFIG, { width: 50, height: 50 });
+  let state = createGameState({ gameId: "digital-profile", players, startPlayerId: "P1" });
+  state = applyAction(state, { type: GameActionType.BeginMapCreation, firstPlayerId: "P1", map: DIGITAL_MAP_CONFIG }, context()).state;
+  assert.equal(state.map.width, DIGITAL_BOARD_WIDTH);
+  assert.equal(state.map.height, DIGITAL_BOARD_HEIGHT);
+  for (let index = 0; index < 12; index += 1) {
+    state = applyAction(state, { type: GameActionType.CreateSetupTerritory,
+      playerId: state.mapCreation.activePlayerId, cells: digitalTerritoryCells(index) }, context()).state;
+    state = placeRequiredPois(state);
+  }
+  assert.equal(state.mapCreation.stage, MapCreationStage.ReadyToFinalize);
+  assert.equal(Object.values(state.map.cells).every((territoryId) => territoryId !== null), true);
+  assert.equal(state.territories.every((territory) => getTerritoryArea(state.map, territory.id) >= 20), true);
+  state = applyAction(state, { type: GameActionType.FinalizeMapCreation, playerId: state.mapCreation.activePlayerId }, context()).state;
+  assert.equal(state.phase, GamePhase.Setup);
+  assert.equal(state.map.width, 50);
+  assert.equal(state.map.height, 50);
+  assert.equal(Object.values(state.map.cells).every((territoryId) => territoryId !== null), true);
 });
 
 test("a full three-player setup assigns cards, private factions, and passes its stored setup actor into start auctions", () => {

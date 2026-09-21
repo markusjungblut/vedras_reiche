@@ -198,3 +198,8 @@ export function formatScoreHundredths(scoreHundredths: number): string {
   const fraction = absolute % 100;
   return fraction === 0 ? `${sign}${whole}` : `${sign}${whole},${String(fraction).padStart(2, "0")}`;
 }
+
+/** Normal player-facing final scores round exact hundredths to whole points. */
+export function formatRoundedScoreHundredths(scoreHundredths: number): string {
+  return String(Math.floor((scoreHundredths + 50) / 100));
+}

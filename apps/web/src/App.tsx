@@ -6,9 +6,12 @@ import {
   DomainError,
   GameActionType,
   GamePhase,
+  DIGITAL_BOARD_HEIGHT,
+  DIGITAL_BOARD_WIDTH,
+  DIGITAL_MAP_CONFIG,
+  DIGITAL_MIN_TERRITORY_AREA,
   getSetupMapValidationIssues,
   getSetupPoiRequirements,
-  getStartingTerritoryCount,
   MapCreationStage,
   PointOfInterestType,
   getAvailableActivationTerritoryIds,
@@ -439,7 +442,7 @@ function SetupControls(props: ControlProps) {
       <div className="section-kicker">{label} platzieren</div>
       <h3>{name(state.activePlayerId ?? mapCreation.activePlayerId)} ist an der Reihe</h3>
       <p>Noch {required - mapCreation.placedPoiCounts[poiType]} / {required}. Wähle ein Kästchen auf der Karte.</p>
-      <small>Mehrere POIs dürfen im selben Gebiet und auf derselben Zelle liegen.</small>
+      <small>Mehrere POIs dürfen im selben Gebiet liegen, aber nicht dieselbe Zelle belegen.</small>
     </section>;
   }
   if (mapCreation.stage === MapCreationStage.ReadyToFinalize) {
@@ -567,9 +570,6 @@ export default function App() {
   const [showNewGameConfig, setShowNewGameConfig] = useState(false);
   const [showDebugScenarios, setShowDebugScenarios] = useState(false);
   const [newGamePlayers, setNewGamePlayers] = useState<readonly NewGamePlayerInput[]>(DEFAULT_PLAYERS);
-  const [mapFormat, setMapFormat] = useState<"A4" | "A5">("A5");
-  const [mapWidth, setMapWidth] = useState(20);
-  const [mapHeight, setMapHeight] = useState(8);
   const [firstMapDrawerKey, setFirstMapDrawerKey] = useState(DEFAULT_PLAYERS[0]!.key);
   const [state, setState] = useState<GameState | null>(null);
   const [selectedTerritoryId, setSelectedTerritoryId] = useState<string | undefined>();
@@ -622,15 +622,6 @@ export default function App() {
       setError("Bitte 2 bis 6 Spieler mit Namen eingeben.");
       return;
     }
-    if (!Number.isInteger(mapWidth) || !Number.isInteger(mapHeight) || mapWidth <= 0 || mapHeight <= 0) {
-      setError("Rasterbreite und Rasterhöhe müssen positive ganze Zahlen sein.");
-      return;
-    }
-    const minimumCells = getStartingTerritoryCount(newGamePlayers.length) * getMinimumTerritoryArea(mapFormat);
-    if (mapWidth * mapHeight < minimumCells) {
-      setError(`Das Raster benötigt für ${newGamePlayers.length} Spieler mindestens ${minimumCells} Kästchen.`);
-      return;
-    }
     try {
       const players = newGamePlayers.map((player, index) => ({ id: `player-${index + 1}`, name: player.name.trim() }));
       const drawerIndex = Math.max(0, newGamePlayers.findIndex((player) => player.key === firstMapDrawerKey));
@@ -639,7 +630,7 @@ export default function App() {
       const randomSource = new SeededRandomSource(selected);
       const cardSource = new DemoCardSource();
       const opened = applyAction(initial, { type: GameActionType.BeginMapCreation, firstPlayerId,
-        map: { format: mapFormat, width: mapWidth, height: mapHeight } }, { randomSource, cardSource, timestamp: nextTimestamp(initial) });
+        map: DIGITAL_MAP_CONFIG }, { randomSource, cardSource, timestamp: nextTimestamp(initial) });
       runtime.current = { randomSource, cardSource };
       setState(opened.state);
       setScenario(null);
@@ -808,16 +799,11 @@ export default function App() {
             const key = `seat-${newSeatIndex.current++}`; setNewGamePlayers((current) => [...current, { key, name: `Spieler ${current.length + 1}` }]);
           }}>Spieler hinzufügen</button>
           <div className="config-grid">
-            <Field label="Kartenformat"><select value={mapFormat} onChange={(event) => {
-              const format = event.target.value as "A4" | "A5"; setMapFormat(format);
-              setMapWidth(format === "A4" ? 32 : 20); setMapHeight(format === "A4" ? 20 : 8);
-            }}><option value="A4">A4 · mindestens 20 Kästchen je Gebiet</option><option value="A5">A5 · mindestens 10 Kästchen je Gebiet</option></select></Field>
-            <Field label="Rasterbreite"><input type="number" min="1" step="1" value={mapWidth} onChange={(event) => setMapWidth(Number(event.target.value))} /></Field>
-            <Field label="Rasterhöhe"><input type="number" min="1" step="1" value={mapHeight} onChange={(event) => setMapHeight(Number(event.target.value))} /></Field>
+            <div className="digital-profile" aria-label="Digitales Regelprofil"><strong>Digitales Spielfeld</strong><span>{DIGITAL_BOARD_WIDTH} × {DIGITAL_BOARD_HEIGHT} Kästchen</span><small>Mindestgebiet: {DIGITAL_MIN_TERRITORY_AREA} Kästchen</small></div>
             <Field label="Wer beginnt mit dem Kartenzeichnen?"><select value={firstMapDrawerKey} onChange={(event) => setFirstMapDrawerKey(event.target.value)}>{newGamePlayers.map((player) => <option key={player.key} value={player.key}>{player.name || "Ohne Namen"}</option>)}</select></Field>
           </div>
           <Field label="Lokaler Seed (für reproduzierbare Ziehungen)"><input type="number" min="0" step="1" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} /></Field>
-          <small>Die Rastermaße sind technische Startwerte und vor Spielbeginn frei wählbar.</small>
+          <small>Das digitale Regelprofil ist festgelegt und gilt für die gesamte Partie.</small>
           <button type="button" className="primary-button" onClick={startConfiguredGame}>Kartenbau starten</button>
         </div>
       </section>}

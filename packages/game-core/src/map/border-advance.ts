@@ -13,6 +13,12 @@ export interface BorderAdvanceValidation {
   readonly map?: GridMapState;
 }
 
+export interface BorderAdvanceLimitation {
+  readonly determinate: true;
+  readonly limitedByMinimumArea: boolean;
+  readonly limitedByGeometry: boolean;
+}
+
 /** Depth is measured only through the original losing territory, from its original shared front. */
 export function getCellsWithinBorderDepth(
   map: GridMapState, loserId: TerritoryId, border: SharedBorder, maximumDepth: number,
@@ -69,10 +75,22 @@ export function validateBorderAdvance(
   return { valid: true, corridor, map: changed };
 }
 
-/** The rule's "entire front" has no unique raster construction. No weakening is inferred here. */
+/**
+ * Assesses the complete original front independently of the winner's selected
+ * cells. The BFS corridor is the rule-defined theoretical full advance.
+ */
 export function assessBorderAdvanceLimitation(
-  _map: GridMapState, _winnerId: TerritoryId, _loserId: TerritoryId,
-  _originalBorder: SharedBorder, _maximumDepth: number, _claimedCells: readonly GridCell[],
-): { readonly limitedByMinimumArea: null; readonly limitedByGeometry: null; readonly determinate: false } {
-  return { limitedByMinimumArea: null, limitedByGeometry: null, determinate: false };
+  map: GridMapState, winnerId: TerritoryId, loserId: TerritoryId,
+  originalBorder: SharedBorder, maximumDepth: number, _claimedCells: readonly GridCell[],
+): BorderAdvanceLimitation {
+  const completeFront = getCellsWithinBorderDepth(map, loserId, originalBorder, maximumDepth);
+  const remainingArea = getTerritoryCells(map, loserId).length - completeFront.length;
+  const limitedByMinimumArea = remainingArea < getMinimumTerritoryArea(map.format);
+
+  const cells = { ...map.cells };
+  for (const cell of completeFront) cells[toCellKey(cell)] = winnerId;
+  const fullAdvanceMap = { ...map, cells };
+  const limitedByGeometry = !areCellsOrthogonallyConnected(getTerritoryCells(fullAdvanceMap, loserId)) ||
+    !areCellsOrthogonallyConnected(getTerritoryCells(fullAdvanceMap, winnerId));
+  return { determinate: true, limitedByMinimumArea, limitedByGeometry };
 }

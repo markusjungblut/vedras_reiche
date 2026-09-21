@@ -13,7 +13,7 @@ import {
 } from "../map/index.js";
 import type { TerritoryId } from "../model/ids.js";
 import { PointOfInterestType } from "../model/point-of-interest.js";
-import { getMinimumTerritoryArea } from "../rules/territory-size.js";
+import { getBreakthroughThreshold } from "../rules/territory-size.js";
 import { finishCurrentBasicAction } from "../state/action-phase.js";
 import type { CombatResult, PendingWar } from "../state/action-phase-state.js";
 import { GamePhase } from "../state/game-phase.js";
@@ -104,7 +104,7 @@ export function setWarSpadeChoice(
     if (loser.weakened) outcome = "CONQUEST";
     else if (difference <= 2) outcome = "BORDER_ADVANCE";
     else if (winnerArea * 2 < loserArea) outcome = "STRONG_ADVANCE";
-    else outcome = loserArea >= 2 * getMinimumTerritoryArea(state.map.format) ? "CUT_AND_CHOOSE" : "CONQUEST";
+    else outcome = loserArea >= getBreakthroughThreshold(state.map.format) ? "CUT_AND_CHOOSE" : "CONQUEST";
   }
   const combat: CombatResult = {
     attackerRoll, defenderRoll, attackerSpadeBonus, defenderSpadeBonus, defenderFortressBonus,
@@ -189,17 +189,25 @@ export function proposeBorderAdvance(state: GameState, action: ProposeBorderAdva
   const validation = validateBorderAdvance(state.map, war.combat.winnerTerritoryId,
     war.combat.loserTerritoryId, war.originalSharedBorder, war.maximumDepth, action.claimedCells);
   if (!validation.valid || validation.map === undefined) throw advanceError(validation.reason);
-  // The rule does not define a unique raster form of the "complete front".
-  // Keep the decision isolated; an indeterminate result must not set weakened.
   const limitation = assessBorderAdvanceLimitation(state.map, war.combat.winnerTerritoryId,
     war.combat.loserTerritoryId, war.originalSharedBorder, war.maximumDepth, action.claimedCells);
-  const next = reconcileMapBoundFeatures({ ...state, map: validation.map });
-  return finish(next, timestamp, [
+  const next = reconcileMapBoundFeatures({ ...state, map: validation.map,
+    territories: limitation.limitedByMinimumArea
+      ? state.territories.map((territory) => territory.id === war.combat!.loserTerritoryId
+        ? { ...territory, weakened: true } : territory)
+      : state.territories,
+  });
+  const descriptions: EventDescription[] = [
     { type: GameEventType.BorderAdvanceResolved, actorId: action.playerId,
       payload: { warId: war.id, claimedCells: action.claimedCells, maximumDepth: war.maximumDepth,
         weakeningAssessment: limitation } },
     { type: GameEventType.WarResolved, payload: { warId: war.id, outcome: war.combat.outcome } },
-  ]);
+  ];
+  if (limitation.limitedByMinimumArea) {
+    descriptions.splice(1, 0, { type: GameEventType.TerritoryWeakened,
+      payload: { territoryId: war.combat.loserTerritoryId } });
+  }
+  return finish(next, timestamp, descriptions);
 }
 
 export function proposeWarCut(state: GameState, action: ProposeWarCutAction, timestamp: string): ActionResult {

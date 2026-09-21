@@ -24,6 +24,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .seat-entry input { min-height: 37px; border: 1px solid #3a4d73; border-radius: 8px; padding: 7px 9px; color: #edf2fb; background: #0c1529; }
 .seat-entry .secondary-button, .seat-entry .text-button { padding: 7px 9px; }
 .config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.digital-profile { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid #3a4d73; border-radius: 8px; background: #0c1529; color: #edf2fb; }
+.digital-profile span { color: #ffd18a; font-weight: 750; }
 .validation-list { display: grid; gap: 5px; margin: 0; padding-left: 20px; color: #ffc4bc; }
 .secret-faction { padding: 16px; border: 1px solid #e6b26b; border-radius: 11px; background: #2c251d; color: #ffe1ad !important; font-size: 25px; font-weight: 800; letter-spacing: .06em; text-align: center; }
 .eyebrow, .section-kicker { margin: 0 0 5px; color: #8fa7d5; font-size: 11px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
@@ -137,6 +139,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .player-score summary { display: flex; justify-content: space-between; gap: 12px; padding: 12px; cursor: pointer; }
 .player-score summary strong:last-child, .score-territory-heading strong:last-child { color: #ffd18a; font-variant-numeric: tabular-nums; }
 .score-meta { padding: 0 12px 10px; color: #8fa1c2; font-size: 12px; }
+.result-faction { padding: 0 12px 10px; color: #ffe1ad; font-weight: 750; }
 .territory-score-list { display: grid; gap: 8px; padding: 0 12px 12px; }
 .score-territory { padding: 10px; border: 1px solid #2b3f66; border-radius: 9px; background: #0d172c; }
 .score-territory-heading, .score-lines div { display: flex; justify-content: space-between; gap: 12px; }

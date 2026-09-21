@@ -1,4 +1,5 @@
-import { formatScoreHundredths, GameActionType, type GameAction, type GameState, type TerritoryScoreBreakdown } from "@vedras/game-core";
+import { formatRoundedScoreHundredths, formatScoreHundredths, GameActionType, type GameAction, type GameState, type TerritoryScoreBreakdown } from "@vedras/game-core";
+import { suitName, suitSymbol } from "../formatters/suit-label";
 
 interface ScoringPanelProps {
   readonly state: GameState;
@@ -70,15 +71,23 @@ export function ResultPanel({ state, playerName }: Pick<ScoringPanelProps, "stat
   return <section className="control-section result-panel" aria-label="Endergebnis">
     <div className="section-kicker">Endwertung</div>
     <h3>Spiel beendet</h3>
-    <p className="winner-message">{winners.length > 1 ? "Gleichstand um den Sieg: " : "Sieger: "}<strong>{winners.map((winner) => playerName(winner.playerId)).join(" · ")}</strong></p>
+    <p className="winner-message">{winners.length > 1 ? "Gemeinsamer Sieg: " : "Sieger: "}<strong>{winners.map((winner) => playerName(winner.playerId)).join(" · ")}</strong></p>
+    <p>Sieger werden anhand der exakten Punktzahl bestimmt. Angezeigt werden ganze Punkte.</p>
     <div className="score-groups">
-      {groups.map((group, index) => <div className="score-group" key={`${index}-${group[0]!.totalScoreHundredths}`}>
+      {groups.map((group, index) => {
+        const placement = groups.slice(0, index).reduce((total, prior) => total + prior.length, 0) + 1;
+        return <div className="score-group" key={`${index}-${group[0]!.totalScoreHundredths}`}>
         {group.map((score) => <details key={score.playerId} className="player-score" open={index === 0}>
-          <summary><strong>{playerName(score.playerId)}</strong><strong>{formatScoreHundredths(score.totalScoreHundredths)}</strong></summary>
+          <summary><strong>{playerName(score.playerId)}</strong><strong>{formatRoundedScoreHundredths(score.totalScoreHundredths)} Punkte</strong></summary>
+          <div className="score-meta">{group.length > 1 ? `Gemeinsamer Platz ${placement}` : `${placement}. Platz`}</div>
+          {state.players.find((player) => player.id === score.playerId)?.secretFactionSuit !== undefined && <div className="result-faction">
+            {suitSymbol(state.players.find((player) => player.id === score.playerId)!.secretFactionSuit!)} {suitName(state.players.find((player) => player.id === score.playerId)!.secretFactionSuit!)}
+          </div>}
           <div className="score-meta">{score.controlledTerritoryCount} Gebiete · {score.controlledArea} Kästchen · {score.activeRelicCount} Relikte</div>
           <div className="territory-score-list">{score.territoryScores.map((territory) => <TerritoryBreakdown key={territory.territoryId} score={territory} />)}</div>
         </details>)}
-      </div>)}
+      </div>;
+      })}
     </div>
   </section>;
 }

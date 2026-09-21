@@ -3,6 +3,7 @@ import type { GameState } from "../state/game-state.js";
 import type { PlayerId } from "../model/ids.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { PendingWar } from "../state/action-phase-state.js";
+import { GamePhase } from "../state/game-phase.js";
 
 export type VisibleAuctionBid = AuctionBid | { readonly submitted: true };
 
@@ -30,7 +31,7 @@ export function createGameViewForPlayer(
     throw new DomainError(DomainErrorCode.InvalidPlayerOrder);
   }
   const players = state.players.map((player) => {
-    if (player.id === viewerPlayerId) return player;
+    if (state.phase === GamePhase.Finished || player.id === viewerPlayerId) return player;
     const { secretFactionSuit: _secretFactionSuit, ...publicPlayer } = player;
     return publicPlayer;
   });
