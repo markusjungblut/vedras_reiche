@@ -16,15 +16,15 @@ Regelquelle ist die [ausführliche Spielanleitung](rules/Vedras%20Reiche.docx) i
 └──────────────────────────────┘
 ```
 
-Der Visual Debug Client erfasst Entscheidungen, ruft Core-Aktionen direkt auf und zeigt deren neuen Zustand sowie Ereignisse. Diese direkte Verbindung ist **nur ein lokaler Entwicklungsmodus** mit Pass-and-play. Der Browser darf in einer späteren Multiplayer-Version seinen maßgeblichen Spielzustand nicht selbst bestimmen. Dann gilt `Browser → Server → Game Core`: Der Server verwaltet den maßgeblichen Zustand, prüft die Berechtigung eingehender Aktionen und verteilt bestätigte Ergebnisse. Transport, Sitzungen und Persistenz liegen außerhalb des Game Core.
+Der Visual Debug Client erfasst Entscheidungen, ruft Core-Aktionen direkt auf und zeigt deren neuen Zustand sowie Ereignisse. Diese direkte Verbindung ist **nur ein lokaler Entwicklungsmodus** mit Pass-and-play. Im Mehrspielermodus gilt `Browser → Server → Game Core`: Der Server verwaltet den maßgeblichen Zustand, prüft die Berechtigung eingehender Aktionen und verteilt bestätigte Ergebnisse. Transport und Sitzungen liegen außerhalb des Game Core.
 
 Der Debug Client besitzt einen reproduzierbaren Seed, Testkarte, Kartenziehquelle und vorbereitete Szenarien. Diese Hilfen liegen ausschließlich unter `apps/web`; spielrelevante Änderungen laufen ausschließlich über Core-Aktionen; die React-Komponenten speichern nur Anzeige- und Eingabezustand.
 
 ## Spielaufbau und Kartenerschaffung
 
-Ein neues lokales Spiel beginnt im leeren `SETUP` und wechselt mit `BeginMapCreationAction` in `MAP_CREATION`. Der normale Browser-Pfad verwendet dabei verbindlich das digitale Profil `50 × 50`, Mindestgröße 20 und Durchbruchsschwelle 40. `MapCreationState` hält den ersten und aktuellen Kartenzeichner, den fortlaufenden Cursor, die Zielzahl `4P + 4`, die Kartenbauetappe sowie die pro POI-Art platzierten Stückzahlen. `CreateSetupTerritoryAction` und `SplitSetupTerritoryAction` erzeugen jeweils genau ein neues Gebiet; die IDs entstehen im Core. `EditSetupBorderAction` ist eine Korrektur ohne Zug- oder Gebietszähleränderung.
+Ein neues lokales Spiel beginnt im leeren `SETUP` und wechselt mit `BeginMapCreationAction` in `MAP_CREATION`. Der normale Browser-Pfad verwendet dabei verbindlich das digitale Profil `50 × 50`, Mindestgröße 20 und Durchbruchsschwelle 40. `MapCreationState` hält den ersten und aktuellen Kartenzeichner, den fortlaufenden Cursor, die Zielzahl `4P + 4`, die aktuelle Zahl temporärer Regionen, den Border-Graphen, die Kartenbauetappe sowie die pro POI-Art platzierten Stückzahlen. Jede Zelle gehört von Beginn an zur Setup-Region. `CommitSetupBoundaryDraftAction` fügt einen oder mehrere Kantenstriche nur dann hinzu, wenn exakt eine vorherige Region in zwei Regionen zerfällt. `CorrectSetupBordersAction` darf den Border-Graphen nur bei unveränderter Regionszahl ändern.
 
-Die vier POI-Etappen liegen nach `P`, `2P`, `3P` und `4P` Gebieten. Auch ihre Platzierungen bewegen den gleichen Spielreihenfolge-Cursor weiter. Eine Zelle darf höchstens einen POI tragen. Beim Abschluss prüft der Core jede Zelle auf Zuweisung und jedes Gebiet auf Mindestfläche, orthogonalen Zusammenhang und mindestens zwei unterschiedliche gemeinsame Seiten-Nachbarn. Es gibt bewusst keine globale Zusammenhangsprüfung für die ganze Rasterkarte.
+Die vier POI-Etappen liegen nach `P`, `2P`, `3P` und `4P` erkannten Setup-Regionen. Auch ihre Platzierungen bewegen den gleichen Spielreihenfolge-Cursor weiter. Eine Zelle darf höchstens einen POI tragen und darf unabhängig von bereits gezeichneten Grenzen gewählt werden. Beim Abschluss prüft der Core jede Zelle auf Zuweisung und jedes Gebiet auf Mindestfläche, orthogonalen Zusammenhang und mindestens zwei unterschiedliche gemeinsame Seiten-Nachbarn. Es gibt bewusst keine globale Zusammenhangsprüfung für die ganze Rasterkarte.
 
 Nach erfolgreicher Prüfung verteilt `drawBalancedStartingTerritoryCards` aus dem vollständigen Satz der 48 gedruckten Karten exakt `P + 1` Karten pro Symbol und mischt sie über die eingespeiste `RandomSource`. Die Fraktionen werden anschließend in dauerhafter Sitzreihenfolge gezogen; bei fünf oder sechs Personen beginnt die Restgruppe mit einer neuen Permutation aller vier Symbole. Die Spieleransicht bleibt für fremde Fraktionen redigiert. `lastSetupPlayerId` bleibt nach dem Kartenbau im Zustand, damit die bestehende Startauktion den korrekten ersten Auktionssteller ableitet.
 
@@ -32,7 +32,7 @@ Nach erfolgreicher Prüfung verteilt `drawBalancedStartingTerritoryCards` aus de
 
 ## Rasterkarte als Domain-Wahrheit
 
-`GameState.map` ist nach dem Kartenaufbau die autoritative Geometrie. Während `MAP_CREATION` darf eine Rasterzelle `null` sein; nach der Finalisierung verweist jede Zelle auf genau eine `TerritoryId`. Fläche, orthogonaler Zusammenhang, Nachbarschaften und gemeinsame Grenzen werden aus diesen Zellen berechnet. Diagonaler Eckkontakt ist keine Nachbarschaft. Die SVG-Karte im Browser ist eine Darstellung dieser Daten und keine eigene Regelquelle.
+`GameState.map` ist nach dem Kartenaufbau die autoritative Geometrie. Während `MAP_CREATION` wird seine temporäre Regionsbeschriftung vollständig und ausschließlich aus `MapCreationState.borders` abgeleitet; keine Zelle ist `null`. Nach der Finalisierung verweist jede Zelle auf genau eine stabile `TerritoryId`. Fläche, orthogonaler Zusammenhang, Nachbarschaften und gemeinsame Grenzen werden aus diesen Zellen berechnet. Diagonaler Eckkontakt ist keine Nachbarschaft. Die SVG-Karte im Browser ist eine Darstellung dieser Daten und keine eigene Regelquelle.
 
 POIs und positionierte Siedlungen/Städte speichern eine konkrete `GridCell`. POI-Zugehörigkeit wird stets aus der Zelle selektiert. `reconcileMapBoundFeatures` ordnet Siedlungen und Städte nach jeder AP5-Kartenänderung ihrer neuen TerritoryId zu, auch wenn mehrere Features in einem Gebiet landen. `GridMapConfig` bleibt für explizite Papierregel- und Debug-Fixtures konfigurierbar; der normale digitale Browser-Pfad verwendet ausschließlich `DIGITAL_MAP_CONFIG`.
 
@@ -44,7 +44,7 @@ Für echte Replays muss jede Kartenmutation rekonstruierbar sein oder periodisch
 
 ## Spieleransichten und verdeckte Entscheidungen
 
-Ein späterer Multiplayer-Server darf keine vollständige `GameState` an Clients senden. `createGameViewForPlayer` liefert eine serverseitig redigierte `PlayerGameView`: Das eigene Gebot bleibt sichtbar, gegnerische laufende Gebote werden durch ein reines `submitted`-Merkmal ersetzt. Während der Kriegswahl zeigt sie vom Gegner nur `LOCKED` statt der gewählten ♠-ID. Aufdeckung erfolgt durch den regulären Domain-Ablauf; CSS-Ausblenden ist keine Sicherheitsgrenze.
+Der Multiplayer-Server sendet keine vollständige `GameState` an Clients. `createGameViewForPlayer` liefert eine serverseitig redigierte `PlayerGameView`: Das eigene Gebot bleibt sichtbar, gegnerische laufende Gebote werden durch ein reines `submitted`-Merkmal ersetzt. Während der Kriegswahl zeigt sie vom Gegner nur `LOCKED` statt der gewählten ♠-ID. Aufdeckung erfolgt durch den regulären Domain-Ablauf; CSS-Ausblenden ist keine Sicherheitsgrenze.
 
 ## Aktionen, Fehler und Ereignisse
 
@@ -96,7 +96,7 @@ OPEN → BIDDING → REVEAL → RESOLUTION
 
 `REVEAL` und `RESOLUTION` können in einem synchronen Zustandsübergang erfolgen; sie benennen die fachliche Reihenfolge. `PENDING_SPLIT` blockiert den weiteren Auktions- und Phasenablauf, bis Divider und First Chooser die geometrisch geprüfte Teilung abgeschlossen haben. Ein legaler Split unterscheidet den Teil mit der ursprünglichen Gebietskarte vom neu entstandenen Teil. Dieser erhält eine bisher ungenutzte Karte; wenn alle 48 gedruckten Karten im Spiel sind, wird die ursprüngliche Gebietskarte dupliziert. Der Core leitet Teil B aus dem Komplement der angegebenen Zellen ab, aktualisiert die Karte und berechnet Nachbarschaften erneut. Bei normalen Auktionen werden Zahlungen und lokaler Einfluss erst nach einer erfolgreichen Teilung verarbeitet. Die gemeinsame Rollenfunktion gilt für Start- und normale Auktionen.
 
-Die Gebotshöhen sind bis zur gemeinsamen Aufdeckung verborgenes Domain-Wissen. Die Spieleransicht redigiert noch nicht aufgedeckte Gebote; ein zukünftiger Server muss diese Projektion statt des vollständigen Zustands senden. Der Core darf die Werte intern für die Auflösung speichern. Kryptografie und Commit-Reveal gehören nicht zu diesem Arbeitspaket.
+Die Gebotshöhen sind bis zur gemeinsamen Aufdeckung verborgenes Domain-Wissen. Die Spieleransicht redigiert noch nicht aufgedeckte Gebote; der Multiplayer-Server sendet diese Projektion statt des vollständigen Zustands. Der Core darf die Werte intern für die Auflösung speichern. Kryptografie und Commit-Reveal gehören nicht zu diesem Arbeitspaket.
 
 ## Aktionsphase und normale Auktionen
 
@@ -135,7 +135,7 @@ Gespeicherte ♠-Aktivierungen bleiben für die laufende Runde verfügbar und k�
 
 ## Determinismus und Replay
 
-Alle Zufallswerte stammen aus einer austauschbaren `RandomSource`; im Regelcode steht kein direktes `Math.random()`. Tests können W6-Werte und die zufällige Startauslage kontrolliert vorgeben. Ein späterer Server kontrolliert die Quelle. Für ein Replay müssen Ausgangszustand, Reihenfolge der Aktionen und verwendete Zufallswerte reproduzierbar sein. Das Speicherformat ist noch offen.
+Alle Zufallswerte stammen aus einer austauschbaren `RandomSource`; im Regelcode steht kein direktes `Math.random()`. Tests können W6-Werte und die zufällige Startauslage kontrolliert vorgeben. Der Multiplayer-Server verwendet eine kryptografische `RandomSource`. Für ein Replay müssen Ausgangszustand, Reihenfolge der Aktionen und verwendete Zufallswerte reproduzierbar sein. Das Speicherformat ist noch offen.
 
 ## Nachbarschaft und Grenzmarkierung
 
@@ -166,6 +166,26 @@ Bei Differenz 1–2 ist die maximale Tiefe 2. Bei Differenz ab 3 entscheidet das
 
 `assessBorderAdvanceLimitation` verwendet die im `WarSnapshot` gespeicherte ursprüngliche Grenze. Die unmittelbaren Verliererzellen bilden Tiefe 1; eine orthogonale BFS innerhalb der ursprünglichen Verliererzellen bestimmt weitere Tiefen. Der gesamte Streifen bis zur effektiven Tiefe wird unabhängig von der tatsächlich gewählten Übernahme bewertet. Verbleiben dadurch weniger als 20 Zellen, wird das Verlierergebiet geschwächt. Ein durch die volle Verschiebung verlorener Zusammenhang wird separat als geometrische Beschränkung erfasst und setzt keine Schwächung.
 
-## Stand und weitere Arbeitspakete
+## Autoritativer Multiplayer-Server
 
-Die Arbeitspakete 5 und 6 ergänzen Kriegsauswertung, geometrische Grenzverschiebungen, Endwertung und `FINISHED`. Arbeitspaket 7 ergänzt den vollständigen lokalen Spielaufbau vor den vorhandenen Startauktionen. Arbeitspaket 8 legt das digitale Regelprofil und die Schwächungsformalisierung fest. Savegame und Multiplayer-Server sind noch ausstehend.
+```text
+Client
+  ↓ Commands
+@vedras/protocol
+  ↓
+Authoritative Server
+  ↓
+@vedras/game-core
+  ↓ GameState
+createGameViewForPlayer
+  ↓
+Spielerspezifischer Snapshot
+  ↓
+Client
+```
+
+Der Client ist nicht vertrauenswürdig. `apps/server` hält je Room den einzigen vollständigen `GameState`. Jede Nachricht wird einer Session aus `roomId` und kryptografischem Session-Token zugeordnet, der Server prüft die Spieleridentität und verarbeitet Commands pro Room seriell. Ungültige Commands ändern weder Zustand noch Revision; erfolgreiche Commands erhöhen die Revision und lösen persönliche Voll-Snapshots aus.
+
+`packages/protocol` enthält nur versionierte Transport-DTOs und Fehlercodes. Der Server hängt von diesem Package und dem Core ab; der Core kennt keinen Transport. `RemoteGameController` besitzt im Browser nur eine `PlayerGameView`, während `LocalGameController` den getrennten Debugmodus direkt über den Core betreibt.
+
+WebSocket-Verbindungen erhalten einen Heartbeat. Ein Disconnect behält den Teilnehmer im Room; dieselbe Session kann sich wieder verbinden. Eine neue Verbindung ersetzt eine bestehende. Rooms sind bewusst nur im Prozessspeicher vorhanden. Datenbank, Savegames und Wiederherstellung nach einem Serverneustart bleiben spätere Arbeitspakete.

@@ -32,9 +32,8 @@ function revealedBids(event: GameEvent, playerName: PlayerName): string {
 export function eventLabel(event: GameEvent, playerName: PlayerName): string {
   switch (event.type) {
     case GameEventType.MapCreationStarted: return "Kartenbau begonnen.";
-    case GameEventType.SetupTerritoryCreated: return `Gebiet ${field(event, "territoryId")} gezeichnet.`;
-    case GameEventType.SetupTerritorySplit: return `Gebiet ${field(event, "originalTerritoryId")} geteilt.`;
-    case GameEventType.SetupBorderChanged: return "Setup-Grenze korrigiert.";
+    case GameEventType.SetupBoundaryCommitted: return `Grenze bestätigt: ${field(event, "regionCount")} Regionen.`;
+    case GameEventType.SetupBordersCorrected: return "Setup-Grenze korrigiert.";
     case GameEventType.PoiPlacementStarted: return "POI-Platzierung beginnt.";
     case GameEventType.PoiPlaced: return "POI auf der Karte platziert.";
     case GameEventType.MapCreationCompleted: return "Karte erfolgreich geprüft.";

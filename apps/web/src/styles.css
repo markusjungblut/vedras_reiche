@@ -17,6 +17,13 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .welcome-screen > p { max-width: 600px; color: #aab8d2; font-size: 18px; }
 .welcome-actions { margin-top: 26px; }
 .new-game-config, .debug-welcome { margin-top: 28px; padding: 22px; }
+.multiplayer-panel { max-width: 620px; }
+.join-room-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.room-code { margin: 0; padding: 11px 12px; border: 1px solid #405a89; border-radius: 9px; background: #0c1529; color: #b9cae8; }
+.room-code strong { margin-left: 5px; color: #ffd18a; font-size: 18px; letter-spacing: .09em; }
+.lobby-player-list { display: grid; gap: 7px; }
+.lobby-player { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 43px; padding: 8px 10px; border: 1px solid #31486f; border-radius: 9px; background: #0c1529; }
+.lobby-player .secondary-button { padding: 4px 8px; }
 .config-stack { display: grid; gap: 14px; }
 .config-stack > div > small { display: block; margin-top: 4px; }
 .seat-entry { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; }
@@ -82,6 +89,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .map-background { fill: #0a1427; }
 .map-cell { fill: #1a2b4a; stroke: none; cursor: pointer; transition: fill .1s ease; }
 .map-cell-neutral { fill: #1a2b4a; }
+.map-cell-setup-region-0 { fill: #294b79; }.map-cell-setup-region-1 { fill: #3a5d71; }.map-cell-setup-region-2 { fill: #5a5077; }
+.map-cell-setup-region-3 { fill: #705346; }.map-cell-setup-region-4 { fill: #3f6855; }.map-cell-setup-region-5 { fill: #4e4772; }
 .map-cell:hover, .map-cell-selected { fill: #d58e46; }
 .map-cell-neighbor { fill: #334e7d; }
 .map-cell.owner-map-0 { fill: #7d3f4b; }.map-cell.owner-map-1 { fill: #276b62; }.map-cell.owner-map-2 { fill: #3c568d; }

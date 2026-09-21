@@ -1,0 +1,67 @@
+import {
+  applyAction,
+  type CardSource,
+  type GameAction,
+  type GameState,
+  type PlayerGameView,
+  type RandomSource,
+} from "@vedras/game-core";
+
+export interface GameControllerSnapshot {
+  readonly view?: PlayerGameView;
+  readonly revision: number;
+}
+
+export interface GameController {
+  getSnapshot(): GameControllerSnapshot;
+  dispatch(action: GameAction): Promise<void>;
+  subscribe(listener: (snapshot: GameControllerSnapshot) => void): () => void;
+  dispose(): void;
+}
+
+export interface LocalGameControllerOptions {
+  readonly randomSource: RandomSource;
+  readonly cardSource: CardSource;
+  readonly timestamp: (state: GameState) => string;
+}
+
+/** Local debug controller. Its complete state never leaves this browser. */
+export class LocalGameController implements GameController {
+  private state: GameState;
+  private revision = 0;
+  private readonly listeners = new Set<(snapshot: GameControllerSnapshot) => void>();
+
+  constructor(initialState: GameState, private readonly options: LocalGameControllerOptions) {
+    this.state = initialState;
+  }
+
+  getSnapshot(): GameControllerSnapshot {
+    return { view: this.state as unknown as PlayerGameView, revision: this.revision };
+  }
+
+  async dispatch(action: GameAction): Promise<void> {
+    const result = applyAction(this.state, action, {
+      randomSource: this.options.randomSource,
+      cardSource: this.options.cardSource,
+      timestamp: this.options.timestamp(this.state),
+    });
+    this.state = result.state;
+    this.revision += 1;
+    this.emit();
+  }
+
+  subscribe(listener: (snapshot: GameControllerSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    listener(this.getSnapshot());
+    return () => this.listeners.delete(listener);
+  }
+
+  dispose(): void {
+    this.listeners.clear();
+  }
+
+  private emit(): void {
+    const snapshot = this.getSnapshot();
+    for (const listener of this.listeners) listener(snapshot);
+  }
+}

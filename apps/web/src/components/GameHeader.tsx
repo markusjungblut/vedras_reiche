@@ -4,15 +4,16 @@ import { phaseLabel } from "../formatters/phase-label";
 interface GameHeaderProps {
   state: GameState;
   playerName: (id: string) => string;
+  mode?: "LOCAL" | "MULTIPLAYER";
 }
 
-export function GameHeader({ state, playerName }: GameHeaderProps) {
+export function GameHeader({ state, playerName, mode = "LOCAL" }: GameHeaderProps) {
   return (
     <header className="game-header">
       <div className="brand-lockup">
         <div className="brand-emblem" aria-hidden="true">♜</div>
         <div>
-          <p className="eyebrow">Lokale Partie</p>
+          <p className="eyebrow">{mode === "MULTIPLAYER" ? "Mehrspieler" : "Lokale Partie"}</p>
           <h1>Vedras Reiche</h1>
         </div>
       </div>

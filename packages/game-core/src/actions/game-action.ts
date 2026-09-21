@@ -3,14 +3,14 @@ import type { TerritoryId } from "../model/ids.js";
 import type { Suit } from "../model/territory-card.js";
 import type { GridCell } from "../map/grid-map.js";
 import type { GridMapConfig } from "../map/grid-map.js";
+import type { SetupBorderEdge } from "../map/setup-regions.js";
 import type { PointOfInterestType } from "../model/point-of-interest.js";
 import type { NormalAuctionBid, StartAuctionBid } from "../auctions/auction-state.js";
 
 export enum GameActionType {
   BeginMapCreation = "BEGIN_MAP_CREATION",
-  CreateSetupTerritory = "CREATE_SETUP_TERRITORY",
-  SplitSetupTerritory = "SPLIT_SETUP_TERRITORY",
-  EditSetupBorder = "EDIT_SETUP_BORDER",
+  CommitSetupBoundaryDraft = "COMMIT_SETUP_BOUNDARY_DRAFT",
+  CorrectSetupBorders = "CORRECT_SETUP_BORDERS",
   PlaceSetupPointOfInterest = "PLACE_SETUP_POINT_OF_INTEREST",
   FinalizeMapCreation = "FINALIZE_MAP_CREATION",
   BeginStartAuctions = "BEGIN_START_AUCTIONS",
@@ -31,6 +31,7 @@ export enum GameActionType {
   ResolveDiamondCorrection = "RESOLVE_DIAMOND_CORRECTION",
   ResolveNeutralDiamond = "RESOLVE_NEUTRAL_DIAMOND",
   ChooseLargestRealm = "CHOOSE_LARGEST_REALM",
+  StartRound = "START_ROUND",
 }
 
 export interface BeginMapCreationAction {
@@ -39,27 +40,19 @@ export interface BeginMapCreationAction {
   readonly map: GridMapConfig;
 }
 
-export interface CreateSetupTerritoryAction {
-  readonly type: GameActionType.CreateSetupTerritory;
+/** Commits one or more new boundary segments as one normal map-drawing turn. */
+export interface CommitSetupBoundaryDraftAction {
+  readonly type: GameActionType.CommitSetupBoundaryDraft;
   readonly playerId: PlayerId;
-  readonly cells: readonly GridCell[];
+  readonly edges: readonly SetupBorderEdge[];
 }
 
-/** Part A retains the existing territory ID; the complementary part receives a core-generated ID. */
-export interface SplitSetupTerritoryAction {
-  readonly type: GameActionType.SplitSetupTerritory;
+/** A correction changes shape only and must preserve the setup-region count. */
+export interface CorrectSetupBordersAction {
+  readonly type: GameActionType.CorrectSetupBorders;
   readonly playerId: PlayerId;
-  readonly territoryId: TerritoryId;
-  readonly partACells: readonly GridCell[];
-}
-
-/** Moves selected cells from `donorTerritoryId` into `recipientTerritoryId`. */
-export interface EditSetupBorderAction {
-  readonly type: GameActionType.EditSetupBorder;
-  readonly playerId: PlayerId;
-  readonly donorTerritoryId: TerritoryId;
-  readonly recipientTerritoryId: TerritoryId;
-  readonly claimedCells: readonly GridCell[];
+  readonly addEdges?: readonly SetupBorderEdge[];
+  readonly removeEdges?: readonly SetupBorderEdge[];
 }
 
 export interface PlaceSetupPointOfInterestAction {
@@ -204,11 +197,15 @@ export interface ChooseLargestRealmAction {
   readonly componentId: string;
 }
 
+/** Starts the next round through the same authoritative action dispatcher. */
+export interface StartRoundAction {
+  readonly type: GameActionType.StartRound;
+}
+
 export type GameAction =
   | BeginMapCreationAction
-  | CreateSetupTerritoryAction
-  | SplitSetupTerritoryAction
-  | EditSetupBorderAction
+  | CommitSetupBoundaryDraftAction
+  | CorrectSetupBordersAction
   | PlaceSetupPointOfInterestAction
   | FinalizeMapCreationAction
   | BeginStartAuctionsAction
@@ -228,4 +225,5 @@ export type GameAction =
   | ResolveDiamondCorrectionAction
   | ResolveNeutralDiamondAction
   | ChooseLargestRealmAction
+  | StartRoundAction
   | ActivateTerritoryAction;

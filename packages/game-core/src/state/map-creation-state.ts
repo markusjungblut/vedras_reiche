@@ -1,5 +1,6 @@
 import type { PlayerId } from "../model/ids.js";
 import { PointOfInterestType } from "../model/point-of-interest.js";
+import type { SetupBorderState } from "../map/setup-regions.js";
 
 export enum MapCreationStage {
   DrawTerritories = "DRAW_TERRITORIES",
@@ -14,7 +15,9 @@ export interface MapCreationState {
   readonly firstPlayerId: PlayerId;
   readonly activePlayerId: PlayerId;
   readonly targetTerritoryCount: number;
-  readonly createdTerritoryCount: number;
+  /** Includes the initial full-board setup region. */
+  readonly regionCount: number;
+  readonly borders: SetupBorderState;
   readonly stage: MapCreationStage;
   readonly placedPoiCounts: Readonly<Record<PointOfInterestType, number>>;
   readonly lastSetupPlayerId?: PlayerId;

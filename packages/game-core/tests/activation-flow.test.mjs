@@ -7,6 +7,7 @@ import {
   GamePhase,
   SettlementKind,
   Suit,
+  applyAction,
   activateTerritory,
   createGameState,
   createTerritoryCard,
@@ -67,6 +68,20 @@ function activate(state, playerId, territoryId, choice) {
     { randomSource: new SequenceRandomSource([]), timestamp },
   );
 }
+
+test("START_ROUND action uses the central dispatcher and its injected random source", () => {
+  const state = readyForFirstRound(createGameState({
+    gameId: "start-round-action",
+    players: [{ id: "A" }, { id: "B" }],
+    startPlayerId: "A",
+  }));
+  const random = new SequenceRandomSource([0, 1, 1, 2, 1, 3, 1]);
+  const result = applyAction(state, { type: GameActionType.StartRound }, { randomSource: random, timestamp });
+  assert.equal(result.state.round, 1);
+  assert.equal(result.state.phase, GamePhase.RoundReady);
+  assert.deepEqual(result.state.activationNumbers, [1, 3, 5]);
+  random.assertConsumed();
+});
 
 test("three players complete an activation phase in player-chosen territory order", () => {
   const setup = {

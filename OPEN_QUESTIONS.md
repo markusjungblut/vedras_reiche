@@ -6,7 +6,7 @@ Derzeit sind keine spielmechanischen Regelfragen bekannt.
 
 - Das normale Browser-Spiel verwendet ein Raster von `50 × 50` Zellen.
 - Ein Gebiet benötigt mindestens 20 Zellen; der Durchbruch beginnt ab 40 Verliererzellen.
-- Die finale Karte ist vollständig belegt. Während des Kartenbaus sind freie Zellen erlaubt.
+- Die Karte ist auch während des Kartenbaus vollständig belegt: Jede Zelle gehört zu genau einer temporären Setup-Region. Dauerhafte TerritoryIds und Gebietskarten entstehen erst bei der Finalisierung.
 - Der Setup-Zugzeiger läuft über Zeichen- und POI-Phasen hinweg durchgehend weiter.
 - Jede Rasterzelle darf höchstens einen POI tragen.
 - Wertungen bleiben intern exakte Hundertstel; die Siegerehrung zeigt gerundete ganze Punkte.

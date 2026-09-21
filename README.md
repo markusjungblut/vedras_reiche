@@ -1,27 +1,30 @@
 # Vedras Reiche
 
-Dieses Repository enthält den Game Core und einen lokalen Pass-and-Play-Client für eine digitale Version von **Vedras Reiche**. Arbeitspakete 1–8 decken Modelle, vollständigen Spielaufbau, Runden, Aktivierungen, Auktionen, Rastergeometrie, Krieg, Endwertung und das verbindliche digitale Regelprofil ab. Ein Multiplayer-Server folgt später.
+Dieses Repository enthält den Game Core, einen lokalen Pass-and-Play-Client und einen autoritativen Multiplayer-Server für eine digitale Version von **Vedras Reiche**. Der Server verwaltet gemeinsame Partien für zwei bis sechs Browser.
 
 Die [ausführliche Spielanleitung](docs/rules/Vedras%20Reiche.docx) ist die maßgebliche Regelquelle. Nicht eindeutig belegte Regeln werden nicht ergänzt; tatsächlich offene Punkte stehen in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
 
 ## Architektur
 
 ```text
-Visual Debug Client (React + Vite) → @vedras/game-core
+Lokaler Debug-Client → @vedras/game-core
+
+Mehrspieler-Client → WebSocket/Protocol → Server → @vedras/game-core
 ```
 
-Der direkte Core-Aufruf im Browser dient ausschließlich der lokalen Entwicklung mit mehreren Spielern an einem Fenster. Der Game Core verarbeitet Spielzustand und Aktionen unabhängig von Oberfläche und Transport. In der späteren Multiplayer-Version hält ein Server den maßgeblichen Zustand und verteilt bestätigte Ergebnisse. Die Zuständigkeiten und Zustandsübergänge stehen in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Der direkte Core-Aufruf im Browser dient ausschließlich der lokalen Entwicklung mit mehreren Spielern an einem Fenster. Im Mehrspielermodus hält allein der Server den vollständigen Spielzustand. Browser senden Aktionen und erhalten nur ihre eigene, vom Core redigierte Spieleransicht. Die Zuständigkeiten und Zustandsübergänge stehen in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Projektstruktur
 
 ```text
 apps/
   web/               React/Vite Visual Debug Client und Demo-Szenarien
-  server/            Platzhalter für den Multiplayer-Server
+  server/            Node/WebSocket-Server für autoritative Rooms
 packages/
   game-core/
     src/             Modelle, Aktionen, Ereignisse, Regeln und Zustand
     tests/           automatisierte Core-Tests
+  protocol/          versionierte Transport-DTOs ohne Spiellogik
 docs/
   ARCHITECTURE.md
 OPEN_QUESTIONS.md
@@ -31,9 +34,9 @@ Das Repository verwendet npm Workspaces und TypeScript im Strict Mode.
 
 ## Spielaufbau
 
-`Neues Spiel` startet eine vollständige lokale Partie ohne Debug-Fixture: Zwei bis sechs Namen werden in ihre dauerhafte Sitzreihenfolge gebracht und der erste Kartenzeichner bestimmt. Das digitale Spielfeld ist fest `50 × 50` Zellen groß; jedes Gebiet benötigt mindestens 20 Zellen. Im `MAP_CREATION`-Zustand erstellen die Spieler abwechselnd exakt `4 × Spielerzahl + 4` Gebiete. Ein Gebiet kann neu gezeichnet oder in zwei gültige Gebiete geteilt werden; eine Korrektur überträgt Zellen nur zwischen zwei bestehenden Gebieten.
+`Neues Spiel` startet eine vollständige lokale Partie ohne Debug-Fixture: Zwei bis sechs Namen werden in ihre dauerhafte Sitzreihenfolge gebracht und der erste Kartenzeichner bestimmt. Das digitale Spielfeld ist fest `50 × 50` Zellen groß; jede Zelle gehört im `MAP_CREATION`-Zustand sofort zur einzigen temporären Setup-Region. Spieler zeichnen Grenzen auf Rasterkanten. Ein normaler Entwurf darf mit mehreren Strichen genau eine bestehende Region in zwei Regionen teilen; beide brauchen mindestens 20 Zellen. Der Korrekturmodus darf die Grenzen ändern, aber nicht die Zahl der Regionen.
 
-Nach `P`, `2P`, `3P` und `4P` Gebieten unterbricht der Core den Zeichenablauf für die vorgeschriebenen Wahrzeichen, Knotenpunkte, Festungen und Relikte. Derselbe Zugzeiger läuft während aller Zeichen- und POI-Schritte weiter. Finalisiert wird erst bei vollständiger POI-Tabelle, höchstens einem POI je Zelle, einer vollständig belegten Karte und wenn jedes Gebiet Mindestfläche, orthogonalen Zusammenhang und mindestens zwei Seiten-Nachbarn besitzt. Die Karte muss als Gesamtheit nicht zusammenhängen.
+Nach `P`, `2P`, `3P` und `4P` erkannten Setup-Regionen unterbricht der Core den Zeichenablauf für die vorgeschriebenen Wahrzeichen, Knotenpunkte, Festungen und Relikte. Derselbe Zugzeiger läuft während aller Zeichen- und POI-Schritte weiter. POIs können auf jeder freien Rasterzelle stehen und bleiben bei späteren Teilungen zellgebunden. Finalisiert wird erst bei `4 × Spielerzahl + 4` Regionen, vollständiger POI-Tabelle und wenn jede endgültige Region Mindestfläche, orthogonalen Zusammenhang und mindestens zwei Seiten-Nachbarn besitzt. Die Karte muss als Gesamtheit nicht zusammenhängen.
 
 Erst danach zieht der Core aus den 48 gedruckten Karten gleich viele Karten pro Symbol, mischt sie und verteilt sie auf die neutralen Anfangsgebiete. Geheime Fraktionen werden per `RandomSource` in Sitzreihenfolge vergeben und im lokalen Client einzeln hinter einer Pass-and-Play-Ansicht gezeigt. Der gespeicherte letzte Kartenzeichner bestimmt den ersten Auktionssteller der vorhandenen Startauktionen.
 
@@ -78,13 +81,25 @@ Die Endwertung leitet Fläche, Nachbarschaften sowie die aktuelle Zugehörigkeit
 
 Für das größte zusammenhängende Reich erhält eine eindeutige größte Komponente automatisch ihren Bonus. Bei mehreren gleich großen Komponenten wählt der betreffende Spieler eine davon. Sobald alle nötigen Entscheidungen vorliegen, erzeugt der Core ein unveränderliches `GameResult`, bestimmt alle punktgleichen Sieger und wechselt nach `FINISHED`. Weitere reguläre Aktionen sind dann gesperrt. Die Siegerehrung rundet nur die angezeigten Gesamtpunkte, ermittelt Platzierungen aber anhand der exakten Hundertstel und deckt alle Fraktionen auf.
 
-Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor Spielende gegnerische Gebotshöhen, geheime Fraktionssymbole und noch nicht gemeinsam ausgewertete gegnerische ♠-Entscheidungen. Bei `FINISHED` werden alle Fraktionen für die Siegerehrung öffentlich. Ein späterer Server darf nur diese serverseitig redigierte Spieleransicht an Clients senden.
+Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor Spielende gegnerische Gebotshöhen, geheime Fraktionssymbole und noch nicht gemeinsam ausgewertete gegnerische ♠-Entscheidungen. Bei `FINISHED` werden alle Fraktionen für die Siegerehrung öffentlich. Der Multiplayer-Server sendet ausschließlich diese serverseitig redigierte Spieleransicht an Clients.
 
 ## Lokaler Client und Debug-Szenarien
 
-Der Browser-Client startet regulär mit `Neues Spiel` und führt über Kartenbau, POIs, Karten- und Fraktionsverteilung direkt in die Startauktionen. Rasterzellen, gemeinsame Kanten, Besitzerfarben, Karten-Symbole, Aktivierungszahlen und POIs werden aus `GameState.map` dargestellt. Ein Klick oder Ziehen auf dem Raster zeichnet einen Gebietsentwurf; Zoom- und Einpassen-Steuerungen erleichtern die Ansicht. Startauktionen, Aktivierungen und normale Auktionen lassen sich lokal als Pass-and-play bedienen.
+Der Browser-Client startet regulär mit `Neues Spiel` und führt über Kartenbau, POIs, Karten- und Fraktionsverteilung direkt in die Startauktionen. Rasterzellen, gemeinsame Kanten, Besitzerfarben, Karten-Symbole, Aktivierungszahlen und POIs werden aus `GameState.map` dargestellt. Der Kartenbau bietet Grenzstift, Pinsel und Korrektur sowie Draft-Vorschau, Rückgängig und Verwerfen. Startauktionen, Aktivierungen und normale Auktionen lassen sich lokal als Pass-and-play bedienen.
 
-Ein wählbarer Debug-Seed macht den Zufallsablauf bei gleichen Entscheidungen reproduzierbar. Schnellstarts für Gleichstand, Grenzgewinn, Vorstoß, Eroberung, Teilung, ♦, ♠ und Festungen führen die betreffenden Core-Aktionen aus. Die Demo-Rasterabmessung ist ausschließlich eine Fixture und keine neue Spielregel; ein Multiplayer-Modus ist nicht enthalten.
+Ein wählbarer Debug-Seed macht den Zufallsablauf bei gleichen Entscheidungen reproduzierbar. Schnellstarts für Gleichstand, Grenzgewinn, Vorstoß, Eroberung, Teilung, ♦, ♠ und Festungen führen die betreffenden Core-Aktionen aus. Die Demo-Rasterabmessung ist ausschließlich eine Fixture und keine neue Spielregel.
+
+## Lokales Multiplayer-Spiel
+
+Starte Server und Browser gemeinsam:
+
+```sh
+npm run dev:multiplayer
+```
+
+Öffne [http://localhost:5173](http://localhost:5173) in zwei Browser-Tabs. Im ersten Tab `Mehrspieler` wählen, einen Namen eingeben und `Spiel erstellen` wählen. Den angezeigten Raumcode im zweiten Tab zusammen mit einem Namen eingeben und `Raum beitreten` wählen. Der Host legt Sitzreihenfolge und ersten Kartenzeichner fest und startet anschließend die Partie.
+
+Ein Browser-Refresh verbindet mit der in dieser Browser-Sitzung gespeicherten Room-Session wieder. Rooms liegen nur im Speicher des Servers; nach einem Serverneustart sind sie nicht mehr vorhanden. Für andere Entwicklungs-Origins kann der Server mit `WEB_ORIGIN=http://host:port` gestartet werden; `PORT` setzt den Server-Port.
 
 ## AP4: Rastergeometrie und Gebietsteilung
 
@@ -109,7 +124,7 @@ npm install
 npm run dev
 ```
 
-Danach ist der Visual Debug Client gewöhnlich unter [http://localhost:5173](http://localhost:5173) erreichbar. `npm run dev:core` startet separat den TypeScript-Watch-Modus des Game Core. Nach Core-Änderungen während eines laufenden Web-Servers den Core neu bauen oder `dev:core` parallel laufen lassen.
+Danach ist der lokale Client gewöhnlich unter [http://localhost:5173](http://localhost:5173) erreichbar. `npm run dev:core` startet separat den TypeScript-Watch-Modus des Game Core. `npm run dev:server` und `npm run dev:web` starten die beiden Mehrspieler-Prozesse einzeln.
 
 ## Prüfung
 
@@ -119,8 +134,8 @@ npm run typecheck
 npm test
 ```
 
-Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen außerdem Kampfboni, Gleichstand, Gebietssperre, Grenzkorridore, Durchbruch, Eroberung, Kriegs-Teilung und neutrale ♦-Änderungen.
+Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen Core-Regeln sowie Room-Lifecycle, Sessions, autoritative Commands, Deduplizierung und redigierte WebSocket-Snapshots.
 
 ## Weitere Arbeitspakete
 
-Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Savegame und Multiplayer-Server bleiben spätere Arbeitspakete.
+Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Persistente Savegames und Wiederherstellung nach Serverneustart bleiben spätere Arbeitspakete.

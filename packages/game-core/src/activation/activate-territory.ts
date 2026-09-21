@@ -21,12 +21,12 @@ import { resolveDiamondCorrection, setWarSpadeChoice, proposeBorderAdvance, prop
 import { chooseLargestRealm } from "../scoring/scoring.js";
 import {
   beginMapCreation,
-  createSetupTerritory,
-  editSetupBorder,
+  commitSetupBoundaryDraft,
+  correctSetupBorders,
   finalizeMapCreation,
   placeSetupPointOfInterest,
-  splitSetupTerritory,
 } from "../state/map-creation.js";
+import { startRound } from "../state/start-round.js";
 
 export interface ActivationContext {
   readonly randomSource: RandomSource;
@@ -189,12 +189,10 @@ export function applyAction(
   switch (action.type) {
     case GameActionType.BeginMapCreation:
       return beginMapCreation(state, action, context.timestamp);
-    case GameActionType.CreateSetupTerritory:
-      return createSetupTerritory(state, action, context.timestamp);
-    case GameActionType.SplitSetupTerritory:
-      return splitSetupTerritory(state, action, context.timestamp);
-    case GameActionType.EditSetupBorder:
-      return editSetupBorder(state, action, context.timestamp);
+    case GameActionType.CommitSetupBoundaryDraft:
+      return commitSetupBoundaryDraft(state, action, context.timestamp);
+    case GameActionType.CorrectSetupBorders:
+      return correctSetupBorders(state, action, context.timestamp);
     case GameActionType.PlaceSetupPointOfInterest:
       return placeSetupPointOfInterest(state, action, context.timestamp);
     case GameActionType.FinalizeMapCreation:
@@ -264,5 +262,7 @@ export function applyAction(
       return resolveNeutralDiamond(state, action, context.timestamp);
     case GameActionType.ChooseLargestRealm:
       return chooseLargestRealm(state, action, context.timestamp);
+    case GameActionType.StartRound:
+      return startRound(state, context.randomSource, context.timestamp);
   }
 }

@@ -2,9 +2,8 @@ import type { GameEventId, PlayerId } from "../model/ids.js";
 
 export enum GameEventType {
   MapCreationStarted = "MAP_CREATION_STARTED",
-  SetupTerritoryCreated = "SETUP_TERRITORY_CREATED",
-  SetupTerritorySplit = "SETUP_TERRITORY_SPLIT",
-  SetupBorderChanged = "SETUP_BORDER_CHANGED",
+  SetupBoundaryCommitted = "SETUP_BOUNDARY_COMMITTED",
+  SetupBordersCorrected = "SETUP_BORDERS_CORRECTED",
   PoiPlacementStarted = "POI_PLACEMENT_STARTED",
   PoiPlaced = "POI_PLACED",
   MapCreationCompleted = "MAP_CREATION_COMPLETED",

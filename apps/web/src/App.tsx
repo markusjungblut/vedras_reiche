@@ -1,7 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   applyAction,
-  areCellsOrthogonallyConnected,
   createGameState,
   DomainError,
   GameActionType,
@@ -22,12 +21,18 @@ import {
   getMinimumTerritoryArea,
   getTerritoryCells,
   fromCellKey,
+  areCellsOrthogonallyConnected,
+  analyzeSetupPartitionChange,
+  deriveSetupRegions,
+  normalizeSetupBorderEdges,
+  toSetupBorderEdgeKey,
+  type SetupBorderEdge,
   validateTerritorySplit,
-  startRound,
   Suit,
   type ActivationChoice,
   type GameAction,
   type GameState,
+  type PlayerGameView,
   type Territory,
   type GridCell,
 } from "@vedras/game-core";
@@ -45,8 +50,13 @@ import type { CardSource, RandomSource } from "@vedras/game-core";
 import { suitName, suitSymbol } from "./formatters/suit-label";
 import { DemoCardSource } from "./debug/demo-card-source";
 import { SeededRandomSource } from "./debug/seeded-random-source";
+import { LocalGameController, type GameController } from "./controllers/game-controller";
+import { RemoteGameController, type MultiplayerCredentials } from "./controllers/remote-game-controller";
+import type { PublicRoomState } from "@vedras/protocol";
 
 const DEFAULT_SEED = 12345;
+const SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL ?? window.location.origin;
+const MULTIPLAYER_SESSION_KEY = "vedras-reiche-multiplayer-session";
 const SCENARIOS: readonly { kind: ScenarioKind; label: string; detail: string }[] = [
   { kind: "START_AUCTIONS", label: "Startauktionen", detail: "Zwei Auslagen und verdeckte Startgebote" },
   { kind: "ACTIVATION_PHASE", label: "Aktivierungsphase", detail: "Symbole und Gebietsreihenfolge ausprobieren" },
@@ -76,17 +86,57 @@ interface SplitDraft {
   readonly originalCardPart: "A" | "B";
 }
 
-type SetupMode = "CREATE" | "SPLIT" | "BORDER" | "POI";
+type SetupMode = "PEN" | "BRUSH" | "CORRECTION";
 
 interface SetupDraft {
   readonly mode: SetupMode;
-  readonly keys: readonly string[];
-  readonly territoryId?: string;
-  readonly donorTerritoryId?: string;
-  readonly recipientTerritoryId?: string;
+  /** Cell paths are UI input only; the core receives derived grid edges. */
+  readonly strokes: readonly (readonly string[])[];
 }
 
 interface NewGamePlayerInput { readonly key: string; readonly name: string; }
+
+interface MultiplayerSession extends MultiplayerCredentials {}
+
+function multiplayerSocketUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = "/ws";
+  url.search = "";
+  return url.toString();
+}
+
+function storedMultiplayerSession(): MultiplayerSession | undefined {
+  try {
+    const stored = sessionStorage.getItem(MULTIPLAYER_SESSION_KEY);
+    if (stored === null) return undefined;
+    const parsed = JSON.parse(stored) as Partial<MultiplayerSession>;
+    return typeof parsed.roomId === "string" && typeof parsed.playerId === "string" && typeof parsed.sessionToken === "string"
+      ? { roomId: parsed.roomId, playerId: parsed.playerId, sessionToken: parsed.sessionToken } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function rememberMultiplayerSession(session: MultiplayerSession | undefined): void {
+  try {
+    if (session === undefined) sessionStorage.removeItem(MULTIPLAYER_SESSION_KEY);
+    else sessionStorage.setItem(MULTIPLAYER_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // Browser storage is optional for local development.
+  }
+}
+
+async function postMultiplayer<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(new URL(path, SERVER_BASE_URL), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json() as T & { message?: string };
+  if (!response.ok) throw new Error(payload.message ?? "Die Serveranfrage wurde abgelehnt.");
+  return payload;
+}
 
 const DEFAULT_PLAYERS: readonly NewGamePlayerInput[] = [
   { key: "seat-1", name: "Anna" }, { key: "seat-2", name: "Ben" }, { key: "seat-3", name: "Clara" },
@@ -411,22 +461,60 @@ function ActionControls({ state, selectedTerritoryId, onSelectTerritory, onActio
   </section>;
 }
 
-function cellsFromKeys(keys: readonly string[]): GridCell[] {
-  return keys.map((key) => fromCellKey(key));
+function setupEdges(strokes: readonly (readonly string[])[], mapWidth: number, mapHeight: number): SetupBorderEdge[] {
+  const edges: SetupBorderEdge[] = [];
+  for (const stroke of strokes) {
+    const cells = stroke.map(fromCellKey);
+    if (cells.length < 2) continue;
+
+    const first = cells[0]!;
+    if (cells.every((cell) => cell.x === first.x)) {
+      const boundaryX = first.x === 0 ? 0 : first.x - 1;
+      const drawnMinY = Math.min(...cells.map((cell) => cell.y));
+      const minY = drawnMinY <= 1 ? 0 : drawnMinY;
+      const drawnMaxY = Math.max(...cells.map((cell) => cell.y));
+      const maxY = drawnMaxY >= mapHeight - 2 ? mapHeight - 1 : drawnMaxY;
+      for (let y = minY; y <= maxY; y += 1) {
+        edges.push({ from: { x: boundaryX, y }, to: { x: boundaryX + 1, y } });
+      }
+      continue;
+    }
+
+    if (cells.every((cell) => cell.y === first.y)) {
+      const boundaryY = first.y === 0 ? 0 : first.y - 1;
+      const drawnMinX = Math.min(...cells.map((cell) => cell.x));
+      const minX = drawnMinX <= 1 ? 0 : drawnMinX;
+      const drawnMaxX = Math.max(...cells.map((cell) => cell.x));
+      const maxX = drawnMaxX >= mapWidth - 2 ? mapWidth - 1 : drawnMaxX;
+      for (let x = minX; x <= maxX; x += 1) {
+        edges.push({ from: { x, y: boundaryY }, to: { x, y: boundaryY + 1 } });
+      }
+      continue;
+    }
+
+    for (let index = 1; index < cells.length; index += 1) {
+      let current = cells[index - 1]!;
+      const target = cells[index]!;
+      while (current.x !== target.x) {
+        const next = { x: current.x + Math.sign(target.x - current.x), y: current.y };
+        edges.push({ from: current, to: next }); current = next;
+      }
+      while (current.y !== target.y) {
+        const next = { x: current.x, y: current.y + Math.sign(target.y - current.y) };
+        edges.push({ from: current, to: next }); current = next;
+      }
+    }
+  }
+  return edges;
 }
 
 function SetupControls(props: ControlProps) {
-  const { state, onAction, playerName: name, setupDraft, onSetSetupDraft, selectedTerritoryId, setupValidationIssues = [] } = props;
+  const { state, onAction, playerName: name, setupDraft, onSetSetupDraft, setupValidationIssues = [] } = props;
   const mapCreation = state.mapCreation;
   const map = state.map;
   if (!mapCreation || !map || !onSetSetupDraft) return <p>Der Kartenbauzustand ist nicht verfügbar.</p>;
-  const draft = setupDraft ?? { mode: "CREATE" as const, keys: [] };
-  const minimum = getMinimumTerritoryArea(map.format);
-  const selectedCells = cellsFromKeys(draft.keys);
-  const setMode = (mode: SetupMode) => onSetSetupDraft({ mode, keys: [],
-    ...(mode === "SPLIT" && selectedTerritoryId ? { territoryId: selectedTerritoryId } : {}),
-    ...(mode === "BORDER" && selectedTerritoryId ? { donorTerritoryId: selectedTerritoryId } : {}),
-  });
+  const draft = setupDraft ?? { mode: "PEN" as const, strokes: [] };
+  const edges = setupEdges(draft.strokes, map.width, map.height);
   const stagePoiType: Partial<Record<MapCreationStage, PointOfInterestType>> = {
     [MapCreationStage.PlaceLandmarks]: PointOfInterestType.Landmark,
     [MapCreationStage.PlaceJunctions]: PointOfInterestType.Junction,
@@ -441,75 +529,95 @@ function SetupControls(props: ControlProps) {
     return <section className="control-section" aria-label="POIs platzieren">
       <div className="section-kicker">{label} platzieren</div>
       <h3>{name(state.activePlayerId ?? mapCreation.activePlayerId)} ist an der Reihe</h3>
-      <p>Noch {required - mapCreation.placedPoiCounts[poiType]} / {required}. Wähle ein Kästchen auf der Karte.</p>
-      <small>Mehrere POIs dürfen im selben Gebiet liegen, aber nicht dieselbe Zelle belegen.</small>
+      <p>Noch {required - mapCreation.placedPoiCounts[poiType]} / {required}. Wähle ein beliebiges Kästchen auf der Karte.</p>
+      <small>POIs bleiben an ihrer Rasterzelle, auch wenn diese Region später geteilt wird.</small>
     </section>;
   }
-  if (mapCreation.stage === MapCreationStage.ReadyToFinalize) {
-    const candidates = state.territories;
-    const correctingBorder = draft.mode === "BORDER";
+
+  let previewCount = mapCreation.regionCount;
+  let previewValid = false;
+  let previewMessage = "Zeichne einen oder mehrere Grenzstriche.";
+  try {
+    const keys = normalizeSetupBorderEdges(map, edges);
+    const current = deriveSetupRegions(map, mapCreation.borders);
+    const edgeKeys = draft.mode === "CORRECTION"
+      ? (() => {
+        const next = new Set(mapCreation.borders.edgeKeys);
+        for (const key of keys) next.has(key) ? next.delete(key) : next.add(key);
+        return [...next];
+      })()
+      : [...new Set([...mapCreation.borders.edgeKeys, ...keys])];
+    const after = deriveSetupRegions(map, { edgeKeys });
+    previewCount = after.length;
+    const minimum = getMinimumTerritoryArea(map.format);
+    const tooSmall = after.find((region) => region.cells.length < minimum);
+    if (tooSmall !== undefined) previewMessage = "Ungültig: " + tooSmall.id + " hätte nur " + tooSmall.cells.length + " / " + minimum + " Kästchen.";
+    else if (draft.mode === "CORRECTION") {
+      previewValid = edges.length > 0 && after.length === current.length;
+      previewMessage = previewValid ? "Korrektur erhält die Gebietszahl." : "Ungültig: Eine Korrektur darf die Gebietszahl nicht ändern.";
+    } else {
+      const change = analyzeSetupPartitionChange(current, after);
+      previewValid = edges.length > 0 && change.validSingleSplit;
+      previewMessage = previewValid ? "Gültig: Genau eine Region wird geteilt." : previewCount > mapCreation.regionCount + 1
+        ? "Ungültige Teilung: Ein Zeichenzug darf nur ein zusätzliches Gebiet erzeugen."
+        : "Der Entwurf muss genau eine Region in zwei Regionen teilen.";
+    }
+  } catch {
+    previewMessage = "Ungültige Grenzsegmente.";
+  }
+
+  const clear = () => onSetSetupDraft({ mode: draft.mode, strokes: [] });
+  const undo = () => onSetSetupDraft({
+    ...draft,
+    strokes: draft.strokes.length === 0 ? [] : draft.strokes[draft.strokes.length - 1]!.length > 1
+      ? [...draft.strokes.slice(0, -1), draft.strokes[draft.strokes.length - 1]!.slice(0, -1)]
+      : draft.strokes.slice(0, -1),
+  });
+  const correction = draft.mode === "CORRECTION";
+  const commit = () => {
+    if (correction) {
+      const existing = new Set(mapCreation.borders.edgeKeys);
+      onAction({ type: GameActionType.CorrectSetupBorders, playerId: mapCreation.activePlayerId,
+        addEdges: edges.filter((edge) => !existing.has(toSetupBorderEdgeKey(edge.from, edge.to))),
+        removeEdges: edges.filter((edge) => existing.has(toSetupBorderEdgeKey(edge.from, edge.to))),
+      });
+    } else onAction({ type: GameActionType.CommitSetupBoundaryDraft, playerId: mapCreation.activePlayerId, edges });
+  };
+
+  if (mapCreation.stage === MapCreationStage.ReadyToFinalize && !correction) {
     return <section className="control-section" aria-label="Karte prüfen">
       <div className="section-kicker">Karte prüfen</div>
-      <h3>Gebiete: {mapCreation.createdTerritoryCount} / {mapCreation.targetTerritoryCount}</h3>
-      <p>{setupValidationIssues.length === 0 ? "✓ Alle Gebiete erfüllen Fläche, Zusammenhang und zwei Seiten-Nachbarn." : "Die Karte benötigt noch Korrekturen:"}</p>
-      {setupValidationIssues.length > 0 && <ul className="validation-list">{setupValidationIssues.map((issue, index) => <li key={`${issue.territoryId}-${index}`}>✗ {issue.message}</li>)}</ul>}
-      <div className="button-row"><button type="button" className={correctingBorder ? "selected-button" : "secondary-button"}
-        onClick={() => onSetSetupDraft({ mode: "BORDER", keys: [] })}>Grenze korrigieren</button>
-        {correctingBorder && <button type="button" className="secondary-button" onClick={() => onSetSetupDraft({ mode: "CREATE", keys: [] })}>Korrektur schließen</button>}</div>
-      {correctingBorder && <>
-        <Field label="Zellen abgeben von"><select value={draft.donorTerritoryId ?? ""} onChange={(event) => onSetSetupDraft({ ...draft, donorTerritoryId: event.target.value, keys: [] })}>
-          <option value="">Gebiet wählen</option>{candidates.map((territory) => <option key={territory.id} value={territory.id}>{territory.id}</option>)}</select></Field>
-        <Field label="Zellen übertragen an"><select value={draft.recipientTerritoryId ?? ""} onChange={(event) => onSetSetupDraft({ ...draft, recipientTerritoryId: event.target.value })}>
-          <option value="">Gebiet wählen</option>{candidates.filter((territory) => territory.id !== draft.donorTerritoryId).map((territory) => <option key={territory.id} value={territory.id}>{territory.id}</option>)}</select></Field>
-        <p>Ausgewählt: {selectedCells.length} Kästchen. Der Core prüft Fläche und Zusammenhang beider Gebiete.</p>
-        <button type="button" className="primary-button" disabled={!draft.donorTerritoryId || !draft.recipientTerritoryId || selectedCells.length === 0}
-          onClick={() => onAction({ type: GameActionType.EditSetupBorder, playerId: mapCreation.activePlayerId,
-            donorTerritoryId: draft.donorTerritoryId!, recipientTerritoryId: draft.recipientTerritoryId!, claimedCells: selectedCells })}>Grenze übernehmen</button>
-      </>}
-      <button type="button" className="primary-button" disabled={setupValidationIssues.length > 0}
-        onClick={() => onAction({ type: GameActionType.FinalizeMapCreation, playerId: mapCreation.activePlayerId })}>Karte abschließen</button>
+      <h3>Gebiete: {mapCreation.regionCount} / {mapCreation.targetTerritoryCount}</h3>
+      <p>{setupValidationIssues.length === 0 ? "✓ Alle Regionen erfüllen Fläche, Zusammenhang und Nachbarschaft." : "Die Karte benötigt noch Korrekturen:"}</p>
+      {setupValidationIssues.length > 0 && <ul className="validation-list">{setupValidationIssues.map((issue, index) => <li key={String(issue.territoryId) + "-" + index}>✗ {issue.message}</li>)}</ul>}
+      <div className="button-row">
+        <button type="button" className="secondary-button" onClick={() => onSetSetupDraft({ mode: "CORRECTION", strokes: [] })}>Korrektur</button>
+        <button type="button" className="primary-button" disabled={setupValidationIssues.length > 0}
+          onClick={() => onAction({ type: GameActionType.FinalizeMapCreation, playerId: mapCreation.activePlayerId })}>Karte abschließen</button>
+      </div>
     </section>;
   }
-  const splitTerritory = state.territories.find((territory) => territory.id === draft.territoryId);
-  const splitValidation = splitTerritory ? validateTerritorySplit(map, splitTerritory.id, selectedCells, minimum) : undefined;
-  const candidates = state.territories;
+
   return <section className="control-section" aria-label="Kartenbau">
     <div className="section-kicker">Kartenbau</div>
-    <h3>Gebiete: {mapCreation.createdTerritoryCount} / {mapCreation.targetTerritoryCount}</h3>
-    <p>Aktiver Spieler: {name(mapCreation.activePlayerId)} · Mindestgröße: {minimum} Kästchen</p>
-    <p>Nächster Meilenstein: {mapCreation.createdTerritoryCount < state.players.length ? "Wahrzeichen" : mapCreation.createdTerritoryCount < state.players.length * 2 ? "Knotenpunkte" : mapCreation.createdTerritoryCount < state.players.length * 3 ? "Festungen" : mapCreation.createdTerritoryCount < state.players.length * 4 ? "Relikte" : "Karte abschließen"}</p>
+    <h3>Gebiete: {mapCreation.regionCount} / {mapCreation.targetTerritoryCount}</h3>
+    <p>Aktiver Spieler: {name(mapCreation.activePlayerId)} · Mindestgröße: {getMinimumTerritoryArea(map.format)} Kästchen</p>
+    <p>Nächster Meilenstein: {mapCreation.regionCount < state.players.length ? "Wahrzeichen" : mapCreation.regionCount < state.players.length * 2 ? "Knotenpunkte" : mapCreation.regionCount < state.players.length * 3 ? "Festungen" : mapCreation.regionCount < state.players.length * 4 ? "Relikte" : "Karte abschließen"}</p>
     <div className="button-row">
-      <button type="button" className={draft.mode === "CREATE" ? "selected-button" : "secondary-button"} onClick={() => setMode("CREATE")}>Neues Gebiet</button>
-      <button type="button" className={draft.mode === "SPLIT" ? "selected-button" : "secondary-button"} onClick={() => setMode("SPLIT")}>Gebiet teilen</button>
-      <button type="button" className={draft.mode === "BORDER" ? "selected-button" : "secondary-button"} onClick={() => setMode("BORDER")}>Grenze korrigieren</button>
-      <button type="button" className="secondary-button" onClick={() => onSetSetupDraft({ ...draft, keys: [] })}>Auswahl zurücksetzen</button>
+      <button type="button" className={draft.mode === "PEN" ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "PEN", strokes: [] })}>Grenzstift</button>
+      <button type="button" className={draft.mode === "BRUSH" ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "BRUSH", strokes: [] })}>Pinsel</button>
+      <button type="button" className={correction ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "CORRECTION", strokes: [] })}>Korrektur</button>
     </div>
-    {draft.mode === "CREATE" && <>
-      <p>Entwurf: {selectedCells.length} Kästchen · Zusammenhang {areCellsOrthogonallyConnected(selectedCells) ? "✓" : "✗"}</p>
-      <button type="button" className="primary-button" disabled={selectedCells.length < minimum || !areCellsOrthogonallyConnected(selectedCells)}
-        onClick={() => onAction({ type: GameActionType.CreateSetupTerritory, playerId: mapCreation.activePlayerId, cells: selectedCells })}>Gebiet zeichnen</button>
-    </>}
-    {draft.mode === "SPLIT" && <>
-      <Field label="Bestehendes Gebiet"><select value={draft.territoryId ?? ""} onChange={(event) => onSetSetupDraft({ mode: "SPLIT", territoryId: event.target.value, keys: [] })}>
-        <option value="">Gebiet wählen</option>{candidates.map((territory) => <option key={territory.id} value={territory.id}>{territory.id}</option>)}</select></Field>
-      {splitTerritory && <p>Teil A: {selectedCells.length} · Teil B: {splitValidation?.partBCells.length ?? 0} · {splitValidation?.valid ? "gültig" : `noch ungültig: ${splitValidation?.reason ?? "Auswahl"}`}</p>}
-      <button type="button" className="primary-button" disabled={!splitTerritory || !splitValidation?.valid}
-        onClick={() => splitTerritory && onAction({ type: GameActionType.SplitSetupTerritory, playerId: mapCreation.activePlayerId,
-          territoryId: splitTerritory.id, partACells: selectedCells })}>Teilung zeichnen</button>
-    </>}
-    {draft.mode === "BORDER" && <>
-      <Field label="Zellen abgeben von"><select value={draft.donorTerritoryId ?? ""} onChange={(event) => onSetSetupDraft({ ...draft, donorTerritoryId: event.target.value, keys: [] })}>
-        <option value="">Gebiet wählen</option>{candidates.map((territory) => <option key={territory.id} value={territory.id}>{territory.id}</option>)}</select></Field>
-      <Field label="Zellen übertragen an"><select value={draft.recipientTerritoryId ?? ""} onChange={(event) => onSetSetupDraft({ ...draft, recipientTerritoryId: event.target.value })}>
-        <option value="">Gebiet wählen</option>{candidates.filter((territory) => territory.id !== draft.donorTerritoryId).map((territory) => <option key={territory.id} value={territory.id}>{territory.id}</option>)}</select></Field>
-      <p>Ausgewählt: {selectedCells.length} Kästchen. Der Core prüft beim Bestätigen Fläche und Zusammenhang beider Gebiete.</p>
-      <button type="button" className="primary-button" disabled={!draft.donorTerritoryId || !draft.recipientTerritoryId || selectedCells.length === 0}
-        onClick={() => onAction({ type: GameActionType.EditSetupBorder, playerId: mapCreation.activePlayerId,
-          donorTerritoryId: draft.donorTerritoryId!, recipientTerritoryId: draft.recipientTerritoryId!, claimedCells: selectedCells })}>Grenze übernehmen</button>
-    </>}
+    <p>Draft: {mapCreation.regionCount} → {previewCount} Gebiete · {previewMessage}</p>
+    <small>{draft.mode === "BRUSH" ? "Der Pinsel zeichnet denselben gerasterten Kantenpfad mit großzügiger Drag-Eingabe." : "Zum Zeichnen auf der Karte ziehen. Diagonale Bewegungen werden in orthogonale Rasterkanten zerlegt."}</small>
+    <div className="button-row">
+      <button type="button" className="secondary-button" disabled={edges.length === 0} onClick={undo}>Rückgängig</button>
+      <button type="button" className="secondary-button" disabled={edges.length === 0} onClick={clear}>Draft löschen</button>
+      <button type="button" className="primary-button" disabled={!previewValid} onClick={commit}>{correction ? "Korrektur übernehmen" : "Teilung bestätigen"}</button>
+      {correction && mapCreation.stage === MapCreationStage.ReadyToFinalize && <button type="button" className="secondary-button" onClick={() => onSetSetupDraft({ mode: "PEN", strokes: [] })}>Korrektur schließen</button>}
+    </div>
   </section>;
 }
-
 function FinishedSetupControls(props: ControlProps) {
   const { state, onAction, privacyPlayerId, factionVisible, onSetPrivacyPlayerId, onSetFactionVisible } = props;
   if (state.lastSetupPlayerId === undefined) return <p>Dieser Debug-Zustand ist bereits vorbereitet.</p>;
@@ -571,27 +679,102 @@ export default function App() {
   const [showDebugScenarios, setShowDebugScenarios] = useState(false);
   const [newGamePlayers, setNewGamePlayers] = useState<readonly NewGamePlayerInput[]>(DEFAULT_PLAYERS);
   const [firstMapDrawerKey, setFirstMapDrawerKey] = useState(DEFAULT_PLAYERS[0]!.key);
-  const [state, setState] = useState<GameState | null>(null);
+  const [view, setView] = useState<PlayerGameView | null>(null);
   const [selectedTerritoryId, setSelectedTerritoryId] = useState<string | undefined>();
   const [showHidden, setShowHidden] = useState(false);
   const [showScoreLabels, setShowScoreLabels] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [splitDraft, setSplitDraft] = useState<SplitDraft | null>(null);
   const [mapDraft, setMapDraft] = useState<{ key: string; keys: readonly string[] } | null>(null);
-  const [setupDraft, setSetupDraft] = useState<SetupDraft>({ mode: "CREATE", keys: [] });
+  const [setupDraft, setSetupDraft] = useState<SetupDraft>({ mode: "PEN", strokes: [] });
   const [privacyPlayerId, setPrivacyPlayerId] = useState<string | undefined>();
   const [factionVisible, setFactionVisible] = useState(false);
+  const [multiplayer, setMultiplayer] = useState<MultiplayerSession | null>(null);
+  const [multiplayerRoom, setMultiplayerRoom] = useState<PublicRoomState | undefined>();
+  const [multiplayerName, setMultiplayerName] = useState("Anna");
+  const [joinRoomCode, setJoinRoomCode] = useState("");
+  const [showMultiplayer, setShowMultiplayer] = useState(false);
+  const [lobbyOrder, setLobbyOrder] = useState<readonly string[]>([]);
+  const [firstMultiplayerDrawerId, setFirstMultiplayerDrawerId] = useState<string | undefined>();
   const runtime = useRef<Runtime | null>(null);
+  const controller = useRef<GameController | null>(null);
+  const unsubscribeController = useRef<(() => void) | null>(null);
   const newSeatIndex = useRef(4);
+
+  // Render helpers still use the established GameState-shaped component API.
+  // In remote mode this value originates solely from PlayerGameView.
+  const state = view as GameState | null;
+
+  const activateController = (nextController: GameController, remote: boolean) => {
+    unsubscribeController.current?.();
+    controller.current?.dispose();
+    controller.current = nextController;
+    if (remote) setView(null);
+    else {
+      setMultiplayer(null);
+      setMultiplayerRoom(undefined);
+      rememberMultiplayerSession(undefined);
+    }
+    unsubscribeController.current = nextController.subscribe((snapshot) => {
+      if (snapshot.view !== undefined) setView(snapshot.view);
+      const room = (snapshot as { readonly room?: PublicRoomState }).room;
+      if (room !== undefined) {
+        setMultiplayerRoom(room);
+        setLobbyOrder((current) => {
+          const playerIds = room.players.map((player) => player.playerId);
+          const retained = current.filter((id) => playerIds.includes(id));
+          return [...retained, ...playerIds.filter((id) => !retained.includes(id))];
+        });
+        setFirstMultiplayerDrawerId((current) => current !== undefined && room.players.some((player) => player.playerId === current)
+          ? current : room.players[0]?.playerId);
+      }
+    });
+  };
+
+  const connectMultiplayer = async (session: MultiplayerSession) => {
+    const remote = new RemoteGameController(session, multiplayerSocketUrl(SERVER_BASE_URL));
+    setMultiplayer(session);
+    setScenario(null);
+    setShowNewGameConfig(false);
+    setShowDebugScenarios(false);
+    setShowMultiplayer(true);
+    setSelectedTerritoryId(undefined);
+    setSetupDraft({ mode: "PEN", strokes: [] });
+    setSplitDraft(null);
+    setMapDraft(null);
+    setPrivacyPlayerId(session.playerId);
+    setFactionVisible(false);
+    rememberMultiplayerSession(session);
+    activateController(remote, true);
+    await remote.connect();
+    setError(null);
+  };
+
+  useEffect(() => {
+    let disposed = false;
+    const saved = storedMultiplayerSession();
+    if (saved !== undefined) void connectMultiplayer(saved).catch((caught) => {
+      if (!disposed) setError(caught instanceof Error ? caught.message : String(caught));
+    });
+    return () => {
+      disposed = true;
+      unsubscribeController.current?.();
+      controller.current?.dispose();
+    };
+  }, []);
 
   const loadScenario = (kind: ScenarioKind, chosenSeed: number) => {
     try {
       const demo = createScenario(kind, chosenSeed);
       runtime.current = { randomSource: demo.randomSource, cardSource: demo.cardSource };
-      setState(demo.state);
+      activateController(new LocalGameController(demo.state, {
+        randomSource: demo.randomSource,
+        cardSource: demo.cardSource,
+        timestamp: nextTimestamp,
+      }), false);
       setSplitDraft(null);
       setMapDraft(null);
-      setSetupDraft({ mode: "CREATE", keys: [] });
+      setSetupDraft({ mode: "PEN", strokes: [] });
       setFactionVisible(false);
       setPrivacyPlayerId(undefined);
       setShowScoreLabels(false);
@@ -615,6 +798,49 @@ export default function App() {
     const value = selectedSeed();
     if (value !== undefined) loadScenario(kind, value);
   };
+  const createMultiplayerRoom = async () => {
+    try {
+      const session = await postMultiplayer<MultiplayerSession>("/api/rooms", { playerName: multiplayerName });
+      await connectMultiplayer(session);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+  const joinMultiplayerRoom = async () => {
+    try {
+      const roomId = joinRoomCode.trim().toUpperCase();
+      if (roomId.length === 0) throw new Error("Bitte einen Raumcode eingeben.");
+      const session = await postMultiplayer<MultiplayerSession>(`/api/rooms/${encodeURIComponent(roomId)}/join`, { playerName: multiplayerName });
+      await connectMultiplayer(session);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+  const startMultiplayerRoom = async () => {
+    if (multiplayer === null || multiplayerRoom === undefined || firstMultiplayerDrawerId === undefined) return;
+    try {
+      await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/start`, {
+        sessionToken: multiplayer.sessionToken,
+        playerOrder: lobbyOrder,
+        firstMapDrawerPlayerId: firstMultiplayerDrawerId,
+      });
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+  const moveLobbyPlayer = (playerId: string, direction: -1 | 1) => {
+    setLobbyOrder((current) => {
+      const index = current.indexOf(playerId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target]!, next[index]!];
+      return next;
+    });
+  };
   const startConfiguredGame = () => {
     const selected = selectedSeed();
     if (selected === undefined) return;
@@ -632,12 +858,12 @@ export default function App() {
       const opened = applyAction(initial, { type: GameActionType.BeginMapCreation, firstPlayerId,
         map: DIGITAL_MAP_CONFIG }, { randomSource, cardSource, timestamp: nextTimestamp(initial) });
       runtime.current = { randomSource, cardSource };
-      setState(opened.state);
+      activateController(new LocalGameController(opened.state, { randomSource, cardSource, timestamp: nextTimestamp }), false);
       setScenario(null);
       setSeed(selected);
       setSplitDraft(null);
       setMapDraft(null);
-      setSetupDraft({ mode: "CREATE", keys: [] });
+      setSetupDraft({ mode: "PEN", strokes: [] });
       setSelectedTerritoryId(undefined);
       setShowNewGameConfig(false);
       setShowDebugScenarios(false);
@@ -647,37 +873,24 @@ export default function App() {
     }
   };
   const dispatch = (action: GameAction) => {
-    if (!state || !runtime.current) return;
-    try {
-      const result = applyAction(state, action, {
-        randomSource: runtime.current.randomSource,
-        cardSource: runtime.current.cardSource,
-        timestamp: nextTimestamp(state),
-      });
-      setState(result.state);
-      if (action.type === GameActionType.CreateSetupTerritory || action.type === GameActionType.SplitSetupTerritory ||
-          action.type === GameActionType.EditSetupBorder || action.type === GameActionType.PlaceSetupPointOfInterest) {
-        setSetupDraft({ mode: "CREATE", keys: [] });
+    if (!state || controller.current === null) return;
+    void controller.current.dispatch(action).then(() => {
+      if (action.type === GameActionType.CommitSetupBoundaryDraft || action.type === GameActionType.CorrectSetupBorders ||
+          action.type === GameActionType.PlaceSetupPointOfInterest) {
+        setSetupDraft({ mode: "PEN", strokes: [] });
       }
       if (action.type === GameActionType.FinalizeMapCreation) {
-        setSetupDraft({ mode: "CREATE", keys: [] });
-        setPrivacyPlayerId(result.state.players[0]?.id);
+        setSetupDraft({ mode: "PEN", strokes: [] });
+        setPrivacyPlayerId(multiplayer?.playerId ?? state.players[0]?.id);
         setFactionVisible(false);
       }
       setError(null);
-    } catch (caught) {
+    }).catch((caught) => {
       setError(caught instanceof DomainError ? caught.code : String(caught));
-    }
+    });
   };
   const beginRound = () => {
-    if (!state || !runtime.current) return;
-    try {
-      const result = startRound(state, runtime.current.randomSource, nextTimestamp(state));
-      setState(result.state);
-      setError(null);
-    } catch (caught) {
-      setError(caught instanceof DomainError ? caught.code : String(caught));
-    }
+    dispatch({ type: GameActionType.StartRound });
   };
   const reset = () => {
     if (scenario && window.confirm("Aktuelles Demo-Spiel wirklich zurücksetzen?")) loadScenario(scenario, seed);
@@ -696,30 +909,24 @@ export default function App() {
     setMapDraft({ key: editor.key, keys: current.includes(key) ? current.filter((item) => item !== key) : [...current, key] });
   };
   const mapCreation = state?.mapCreation;
-  const setupSelectable = (() => {
-    if (!state?.map || !mapCreation) return [] as GridCell[];
-    if (mapCreation.stage === MapCreationStage.PlaceLandmarks || mapCreation.stage === MapCreationStage.PlaceJunctions ||
-        mapCreation.stage === MapCreationStage.PlaceFortresses || mapCreation.stage === MapCreationStage.PlaceRelics) {
-      return Object.entries(state.map.cells).filter(([, id]) => id !== null).map(([key]) => fromCellKey(key));
-    }
-    if (mapCreation.stage !== MapCreationStage.DrawTerritories && mapCreation.stage !== MapCreationStage.ReadyToFinalize) return [] as GridCell[];
-    if (mapCreation.stage === MapCreationStage.ReadyToFinalize && setupDraft.mode !== "BORDER") return [] as GridCell[];
-    if (setupDraft.mode === "CREATE") return Object.entries(state.map.cells)
-      .filter(([, id]) => id === null).map(([key]) => fromCellKey(key));
-    if (setupDraft.mode === "SPLIT" && setupDraft.territoryId) return getTerritoryCells(state.map, setupDraft.territoryId);
-    if (setupDraft.mode === "BORDER" && setupDraft.donorTerritoryId) return getTerritoryCells(state.map, setupDraft.donorTerritoryId);
-    return [] as GridCell[];
-  })();
   const setupPoiType: Partial<Record<MapCreationStage, PointOfInterestType>> = {
     [MapCreationStage.PlaceLandmarks]: PointOfInterestType.Landmark,
     [MapCreationStage.PlaceJunctions]: PointOfInterestType.Junction,
     [MapCreationStage.PlaceFortresses]: PointOfInterestType.Fortress,
     [MapCreationStage.PlaceRelics]: PointOfInterestType.Relic,
   };
+  const setupSelectable = (() => {
+    if (!state?.map || !mapCreation) return [] as GridCell[];
+    const poiType = setupPoiType[mapCreation.stage];
+    if (poiType !== undefined) return Object.keys(state.map.cells).map(fromCellKey);
+    if (mapCreation.stage === MapCreationStage.ReadyToFinalize && setupDraft.mode !== "CORRECTION") return [] as GridCell[];
+    return mapCreation.stage === MapCreationStage.DrawTerritories || mapCreation.stage === MapCreationStage.ReadyToFinalize
+      ? Object.keys(state.map.cells).map(fromCellKey) : [] as GridCell[];
+  })();
   const setupEditor = mapCreation && state?.map ? {
     mode: setupPoiType[mapCreation.stage] ? "POI" as const : setupDraft.mode,
     selectable: setupSelectable,
-    selected: setupDraft.keys.filter((key) => setupSelectable.some((cell) => `${cell.x},${cell.y}` === key)).map(fromCellKey),
+    selected: setupDraft.strokes.flat().map(fromCellKey),
   } : undefined;
   const selectSetupCell = (cell: GridCell, additive: boolean) => {
     if (!state || !mapCreation) return;
@@ -728,13 +935,13 @@ export default function App() {
       dispatch({ type: GameActionType.PlaceSetupPointOfInterest, playerId: mapCreation.activePlayerId, poiType, position: cell });
       return;
     }
-    const key = `${cell.x},${cell.y}`;
+    const key = String(cell.x) + "," + cell.y;
     setSetupDraft((current) => {
-      if (additive) return current.keys.includes(key) ? current : { ...current, keys: [...current.keys, key] };
-      return { ...current, keys: current.keys.includes(key) ? current.keys.filter((item) => item !== key) : [...current.keys, key] };
+      if (!additive || current.strokes.length === 0) return { ...current, strokes: [...current.strokes, [key]] };
+      const last = current.strokes[current.strokes.length - 1]!;
+      return last[last.length - 1] === key ? current : { ...current, strokes: [...current.strokes.slice(0, -1), [...last, key]] };
     });
-  };
-  const setupValidationIssues = state?.phase === GamePhase.MapCreation ? getSetupMapValidationIssues(state) : [];
+  };  const setupValidationIssues = state?.phase === GamePhase.MapCreation ? getSetupMapValidationIssues(state) : [];
   const initialSplitCells = split && state?.map
     ? getTerritoryCells(state.map, split.originalTerritoryId) : [];
   const currentSplitDraft: SplitDraft | undefined = split ? splitDraft?.splitId === split.id
@@ -773,13 +980,42 @@ export default function App() {
 
   return <div className="app-shell">
     {!state ? <main className="welcome-screen">
-      <span className="eyebrow">Lokales Pass-and-Play</span>
+      <span className="eyebrow">{showMultiplayer ? "Mehrspieler" : "Lokales Pass-and-Play"}</span>
       <h1>Vedras Reiche</h1>
-      <p>Erstelle eine regelkonforme Partie oder öffne ein vorbereitetes Debug-Szenario.</p>
-      {!showNewGameConfig && !showDebugScenarios && <div className="button-row welcome-actions">
+      <p>{showMultiplayer ? "Der Spielserver verwaltet die Partie. Dein Browser zeigt nur deine eigene Spielansicht." : "Erstelle eine regelkonforme Partie oder öffne ein vorbereitetes Debug-Szenario."}</p>
+      {!showNewGameConfig && !showDebugScenarios && !showMultiplayer && <div className="button-row welcome-actions">
         <button type="button" className="primary-button" onClick={() => setShowNewGameConfig(true)}>Neues Spiel</button>
+        <button type="button" className="secondary-button" onClick={() => setShowMultiplayer(true)}>Mehrspieler</button>
         <button type="button" className="secondary-button" onClick={() => setShowDebugScenarios(true)}>Debug-Szenarien</button>
       </div>}
+      {showMultiplayer && <section className="new-game-config panel multiplayer-panel">
+        <div className="panel-heading"><div><span className="section-kicker">Mehrspieler</span><h2>{multiplayerRoom ? `Raum ${multiplayerRoom.roomId}` : "Gemeinsame Partie"}</h2></div>
+          {!multiplayer && <button type="button" className="text-button" onClick={() => setShowMultiplayer(false)}>Schließen</button>}</div>
+        {multiplayerRoom === undefined ? <div className="config-stack">
+          <Field label="Name"><input value={multiplayerName} maxLength={80} onChange={(event) => setMultiplayerName(event.target.value)} /></Field>
+          <div className="button-row"><button type="button" className="primary-button" onClick={() => void createMultiplayerRoom()}>Spiel erstellen</button></div>
+          <div className="join-room-row"><Field label="Raumcode"><input value={joinRoomCode} maxLength={8} placeholder="ABC123" onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())} /></Field>
+            <button type="button" className="secondary-button" onClick={() => void joinMultiplayerRoom()}>Raum beitreten</button></div>
+          {multiplayer && <p className="muted">Verbindung wird wiederhergestellt …</p>}
+        </div> : <div className="config-stack">
+          <p className="room-code">Raumcode: <strong>{multiplayerRoom.roomId}</strong></p>
+          <div className="lobby-player-list">{lobbyOrder.map((playerId, index) => {
+            const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
+            if (player === undefined) return null;
+            const host = multiplayerRoom.hostPlayerId === multiplayer?.playerId;
+            return <div key={playerId} className="lobby-player"><span>{index + 1}. {player.name} {player.connected ? "✓" : "○"}</span>
+              {host && <span className="button-row"><button type="button" className="secondary-button" disabled={index === 0} onClick={() => moveLobbyPlayer(playerId, -1)}>↑</button><button type="button" className="secondary-button" disabled={index === lobbyOrder.length - 1} onClick={() => moveLobbyPlayer(playerId, 1)}>↓</button></span>}
+            </div>;
+          })}</div>
+          {multiplayerRoom.hostPlayerId === multiplayer?.playerId ? <>
+            <Field label="Erster Kartenzeichner"><select value={firstMultiplayerDrawerId ?? ""} onChange={(event) => setFirstMultiplayerDrawerId(event.target.value)}>{lobbyOrder.map((playerId) => {
+              const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
+              return player ? <option key={playerId} value={playerId}>{player.name}</option> : null;
+            })}</select></Field>
+            <button type="button" className="primary-button" disabled={multiplayerRoom.players.length < 2 || firstMultiplayerDrawerId === undefined} onClick={() => void startMultiplayerRoom()}>Spiel starten</button>
+          </> : <p className="muted">Der Host legt Reihenfolge und ersten Kartenzeichner fest.</p>}
+        </div>}
+      </section>}
       {showNewGameConfig && <section className="new-game-config panel">
         <div className="panel-heading"><div><span className="section-kicker">Neues Spiel</span><h2>Partie konfigurieren</h2></div>
           <button type="button" className="text-button" onClick={() => setShowNewGameConfig(false)}>Schließen</button></div>
@@ -814,10 +1050,10 @@ export default function App() {
       </section>}
       {error && <p role="alert" className="error-banner">Aktion nicht möglich: {error}</p>}
     </main> : <>
-      <GameHeader state={state} playerName={name} />
+      <GameHeader state={state} playerName={name} mode={multiplayer ? "MULTIPLAYER" : "LOCAL"} />
       <main className="dashboard">
         <section className="toolbar panel">
-          <div><span className="section-kicker">{scenario ? "Debug-Szenario" : "Lokale Partie"}</span><strong>Seed {seed}</strong></div>
+          <div><span className="section-kicker">{multiplayer ? "Mehrspieler" : scenario ? "Debug-Szenario" : "Lokale Partie"}</span><strong>{multiplayer ? `Raum ${multiplayer.roomId}` : `Seed ${seed}`}</strong></div>
           {scenario ? <>
             <div className="button-row">
               {SCENARIOS.map((item) => <button key={item.kind} type="button"
@@ -829,7 +1065,7 @@ export default function App() {
                 onChange={(event) => setSeedInput(event.target.value)} />
             </Field>
             <button type="button" className="secondary-button" onClick={reset}>Demo zurücksetzen</button>
-          </> : <p className="muted">Kartenbau und Spielablauf verwenden den echten Game Core.</p>}
+          </> : <p className="muted">{multiplayer ? `Server-Revision ${controller.current?.getSnapshot().revision ?? 0}` : "Kartenbau und Spielablauf verwenden den echten Game Core."}</p>}
           {state.phase === GamePhase.Finished && <label className="debug-toggle"><input type="checkbox" checked={showScoreLabels}
             onChange={(event) => setShowScoreLabels(event.target.checked)} /> Wertungsansicht auf der Karte</label>}
         </section>
@@ -860,14 +1096,14 @@ export default function App() {
             <RecentWarResult state={state} /></ActionPanel>
           <div className="panel"><EventLog events={state.events} playerName={name} /></div>
         </div>
-        <div className="inspector-row panel">
+        {!multiplayer && <div className="inspector-row panel">
           <label className="debug-toggle"><input type="checkbox" checked={showHidden}
             onChange={(event) => setShowHidden(event.target.checked)} /> Verdeckte Informationen anzeigen</label>
           <StateInspector state={state} showHidden={showHidden} />
           <button type="button" className="text-button" onClick={() => dispatch({
             type: GameActionType.OpenAuction, playerId: "__ungueltig__", territoryId: state.territories[0]?.id ?? "",
           })}>Ungültige Aktion testen</button>
-        </div>
+        </div>}
       </main>
     </>}
   </div>;

@@ -27,7 +27,7 @@ interface TerritoryBoardProps {
   scoreHundredthsByTerritoryId?: Readonly<Record<string, number>> | undefined;
   showScoreLabels?: boolean | undefined;
   setupEditor?: {
-    readonly mode: "CREATE" | "SPLIT" | "BORDER" | "POI";
+    readonly mode: "PEN" | "BRUSH" | "CORRECTION" | "POI";
     readonly selectable: readonly GridCell[];
     readonly selected: readonly GridCell[];
   } | undefined;
@@ -97,14 +97,14 @@ export function TerritoryBoard({ state, selectedId, onSelect, highlightedIds, pl
     : [];
   return (
     <section className="panel board-panel" aria-labelledby="board-title">
-      <div className="panel-heading"><div><p className="eyebrow">Rasterkarte{state.map ? ` · ${state.map.width} × ${state.map.height}` : ""}</p><h2 id="board-title">Gebietsübersicht</h2></div><span className="panel-count">{state.territories.length} Gebiete</span></div>
+      <div className="panel-heading"><div><p className="eyebrow">Rasterkarte{state.map ? ` · ${state.map.width} × ${state.map.height}` : ""}</p><h2 id="board-title">Gebietsübersicht</h2></div><span className="panel-count">{state.mapCreation ? state.mapCreation.regionCount : state.territories.length} {state.mapCreation ? "Regionen" : "Gebiete"}</span></div>
       {map ? <RasterMap state={state} selectedId={selectedId} onSelect={onSelect} neighborIds={neighborIds} playerName={playerName}
         splitDraft={splitDraft} onToggleSplitCell={onToggleSplitCell} editor={editor} onToggleMapCell={onToggleMapCell}
         realmHighlights={realmHighlights} scoreHundredthsByTerritoryId={scoreHundredthsByTerritoryId} showScoreLabels={showScoreLabels}
         setupEditor={setupEditor} onSetupSelectCell={onSetupSelectCell} /> : <p className="panel-hint">Keine Karte im Setup.</p>}
       <p className="panel-hint">{setupEditor ? setupEditor.mode === "POI"
-        ? "POI platzieren: Klicke ein Kästchen eines bestehenden Gebiets an."
-        : "Kartenbau: Klicke oder ziehe über passende Kästchen. Die Auswahl bleibt als Vorschau sichtbar."
+        ? "POI platzieren: Klicke ein beliebiges Kästchen an."
+        : "Kartenbau: Ziehe entlang der Rasterzellen. Daraus entsteht ein orthogonaler Grenzpfad."
         : editor ? editor.mode === "CUT"
         ? editor.selectable.length > 0 ? "Teilung: Klicke Zellen des Verlierergebiets, um Teil A zu formen."
           : "Die vorgeschlagenen Teile A und B sind auf der Karte markiert. Der Verlierer wählt im Aktionsbereich."
@@ -214,8 +214,11 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
         const territory = territoryId ? state.territories.find((item) => item.id === territoryId) : undefined;
         const selected = territoryId === selectedId;
         const neighbor = territoryId !== null && neighborIds.includes(territoryId);
-        const ownerClass = territory?.ownerId === null || territory === undefined
-          ? "map-cell-neutral" : `owner-map-${Math.max(0, state.players.findIndex((player) => player.id === territory.ownerId))}`;
+        const setupRegionIndex = state.mapCreation && territoryId?.startsWith("R")
+          ? Number(territoryId.slice(1)) % 6 : undefined;
+        const ownerClass = setupRegionIndex !== undefined ? `map-cell-setup-region-${setupRegionIndex}`
+          : territory?.ownerId === null || territory === undefined
+            ? "map-cell-neutral" : `owner-map-${Math.max(0, state.players.findIndex((player) => player.id === territory.ownerId))}`;
         const splitPart = hasSplitOverlay && territoryId === splitId
           ? splitA.has(key) ? "map-cell-part-a" : "map-cell-part-b" : "";
         const editPart = editor && territoryId === editor.targetId
@@ -278,6 +281,6 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
         </g>;
       })}
     </svg>
-    <div className="map-summary">{selectedId ? `Gebiet ${selectedId}: ${getStateTerritoryArea(state, selectedId)} Kästchen` : "Gebiet auswählen"}</div>
+    <div className="map-summary">{selectedId ? `${state.mapCreation ? "Region" : "Gebiet"} ${selectedId}: ${getStateTerritoryArea(state, selectedId)} Kästchen` : state.mapCreation ? "Region auswählen" : "Gebiet auswählen"}</div>
   </div>;
 }
