@@ -1,5 +1,6 @@
 import type { GameAction, PlayerGameView } from "@vedras/game-core";
 import {
+  NetworkErrorCode,
   PROTOCOL_VERSION,
   type CommandAcceptedMessage,
   type GameActionDto,
@@ -12,10 +13,14 @@ export interface MultiplayerCredentials {
   readonly roomId: string;
   readonly playerId: string;
   readonly sessionToken: string;
+  readonly playerName?: string;
 }
+
+export type RemoteConnectionStatus = NonNullable<GameControllerSnapshot["connectionStatus"]>;
 
 export interface RemoteGameControllerSnapshot extends GameControllerSnapshot {
   readonly room?: PublicRoomState;
+  readonly connectionStatus: RemoteConnectionStatus;
 }
 
 interface PendingCommand {
@@ -23,7 +28,9 @@ interface PendingCommand {
   readonly reject: (reason: Error) => void;
 }
 
-/** Browser transport for authoritative rooms. It stores only the player-specific view. */
+const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 5_000] as const;
+
+/** Browser transport for authoritative rooms. It stores only a player view and reconnect credentials. */
 export class RemoteGameController implements GameController {
   private socket: WebSocket | undefined;
   private room: PublicRoomState | undefined;
@@ -31,6 +38,11 @@ export class RemoteGameController implements GameController {
   private revision = 0;
   private connected = false;
   private disposed = false;
+  private terminal = false;
+  private reconnectAttempts = 0;
+  private reconnectTimer: number | undefined;
+  private connectionStatus: RemoteConnectionStatus = "DISCONNECTED";
+  private connectionMessage: string | undefined;
   private readonly listeners = new Set<(snapshot: RemoteGameControllerSnapshot) => void>();
   private readonly pending = new Map<string, PendingCommand>();
   private connectPromise?: Promise<void>;
@@ -42,28 +54,12 @@ export class RemoteGameController implements GameController {
 
   connect(): Promise<void> {
     if (this.connectPromise !== undefined) return this.connectPromise;
+    if (this.terminal) return Promise.reject(new Error(this.connectionMessage ?? "Diese Spielersitzung ist nicht mehr verfügbar."));
     this.connectPromise = new Promise<void>((resolve, reject) => {
       this.resolveConnected = resolve;
       this.rejectConnected = reject;
-      const socket = new WebSocket(this.endpoint);
-      this.socket = socket;
-      socket.addEventListener("open", () => {
-        socket.send(JSON.stringify({
-          type: "AUTHENTICATE",
-          protocolVersion: PROTOCOL_VERSION,
-          roomId: this.credentials.roomId,
-          sessionToken: this.credentials.sessionToken,
-        }));
-      });
-      socket.addEventListener("message", (event) => this.receive(event.data));
-      socket.addEventListener("error", () => {
-        if (!this.connected) this.rejectConnection(new Error("Die Verbindung zum Spielserver konnte nicht aufgebaut werden."));
-      });
-      socket.addEventListener("close", () => {
-        if (!this.disposed && !this.connected) this.rejectConnection(new Error("Die Verbindung zum Spielserver wurde geschlossen."));
-        for (const pending of this.pending.values()) pending.reject(new Error("Die Verbindung zum Spielserver wurde geschlossen."));
-        this.pending.clear();
-      });
+      this.setConnection("CONNECTING");
+      this.openSocket();
     });
     return this.connectPromise;
   }
@@ -71,6 +67,8 @@ export class RemoteGameController implements GameController {
   getSnapshot(): RemoteGameControllerSnapshot {
     return {
       revision: this.revision,
+      connectionStatus: this.connectionStatus,
+      ...(this.connectionMessage === undefined ? {} : { connectionMessage: this.connectionMessage }),
       ...(this.view === undefined ? {} : { view: this.view }),
       ...(this.room === undefined ? {} : { room: this.room }),
     };
@@ -78,14 +76,12 @@ export class RemoteGameController implements GameController {
 
   dispatch(action: GameAction): Promise<void> {
     if (!this.connected || this.socket?.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error("Keine Verbindung zum Spielserver."));
+      return Promise.reject(new Error("Die Verbindung zum Spielserver wird wiederhergestellt."));
     }
-    const commandId = typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID() : `command-${Date.now()}-${++this.sequence}`;
+    const commandId = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `command-${Date.now()}-${++this.sequence}`;
     return new Promise<void>((resolve, reject) => {
       this.pending.set(commandId, { resolve, reject });
-      const dto = action as unknown as GameActionDto;
-      this.socket!.send(JSON.stringify({ type: "GAME_COMMAND", commandId, action: dto }));
+      this.socket!.send(JSON.stringify({ type: "GAME_COMMAND", commandId, action: action as unknown as GameActionDto }));
     });
   }
 
@@ -97,14 +93,42 @@ export class RemoteGameController implements GameController {
 
   dispose(): void {
     this.disposed = true;
+    if (this.reconnectTimer !== undefined) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
     this.socket?.close();
     this.socket = undefined;
-    for (const pending of this.pending.values()) pending.reject(new Error("Die Verbindung wurde beendet."));
-    this.pending.clear();
+    this.rejectPending("Die Verbindung wurde beendet.");
+    this.rejectInitial(new Error("Die Verbindung wurde beendet."));
     this.listeners.clear();
   }
 
-  private receive(raw: unknown): void {
+  private openSocket(): void {
+    if (this.disposed || this.terminal) return;
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(this.endpoint);
+    } catch {
+      this.scheduleReconnect();
+      return;
+    }
+    this.socket = socket;
+    socket.addEventListener("open", () => {
+      if (this.socket !== socket || this.disposed || this.terminal) return;
+      socket.send(JSON.stringify({
+        type: "AUTHENTICATE",
+        protocolVersion: PROTOCOL_VERSION,
+        roomId: this.credentials.roomId,
+        sessionToken: this.credentials.sessionToken,
+      }));
+    });
+    socket.addEventListener("message", (event) => this.receive(event.data, socket));
+    socket.addEventListener("error", () => {
+      if (this.socket === socket && !this.connected) this.setConnection("RECONNECTING", "Verbindung wird wiederhergestellt …");
+    });
+    socket.addEventListener("close", () => this.handleClose(socket));
+  }
+
+  private receive(raw: unknown, socket: WebSocket): void {
     let message: ServerMessage;
     try {
       message = JSON.parse(String(raw)) as ServerMessage;
@@ -112,8 +136,7 @@ export class RemoteGameController implements GameController {
       return;
     }
     if (message.type === "SERVER_ERROR") {
-      const error = new Error(message.message);
-      this.rejectConnection(error);
+      this.handleServerError(message.code, message.message, socket);
       return;
     }
     if (message.type === "COMMAND_ACCEPTED") {
@@ -131,8 +154,47 @@ export class RemoteGameController implements GameController {
     this.revision = message.revision;
     if (message.gameView !== undefined) this.view = message.gameView as PlayerGameView;
     this.connected = true;
-    this.resolveConnection();
-    this.emit();
+    this.reconnectAttempts = 0;
+    this.setConnection("CONNECTED");
+    this.resolveInitial();
+  }
+
+  private handleServerError(code: NetworkErrorCode, message: string, socket: WebSocket): void {
+    if (code === NetworkErrorCode.InvalidSession || code === NetworkErrorCode.RoomNotFound || code === NetworkErrorCode.SessionReplaced) {
+      this.terminal = true;
+      this.connected = false;
+      const status: RemoteConnectionStatus = code === NetworkErrorCode.InvalidSession ? "INVALID_SESSION" :
+        code === NetworkErrorCode.RoomNotFound ? "ROOM_NOT_FOUND" : "SESSION_REPLACED";
+      const displayMessage = status === "INVALID_SESSION" ? "Diese lokale Spielersitzung ist nicht mehr gültig." :
+        status === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." :
+        "Diese Spielersitzung wurde in einem anderen Fenster geöffnet.";
+      this.setConnection(status, displayMessage);
+      this.rejectPending(displayMessage);
+      this.rejectInitial(new Error(displayMessage));
+      socket.close();
+      return;
+    }
+    this.rejectPending(message);
+  }
+
+  private handleClose(socket: WebSocket): void {
+    if (this.socket !== socket) return;
+    this.socket = undefined;
+    this.connected = false;
+    this.rejectPending("Die Verbindung zum Spielserver wurde geschlossen.");
+    if (this.disposed || this.terminal) return;
+    this.setConnection("RECONNECTING", "Verbindung wird wiederhergestellt …");
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.disposed || this.terminal || this.reconnectTimer !== undefined) return;
+    const delay = RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempts, RECONNECT_DELAYS_MS.length - 1)]!;
+    this.reconnectAttempts += 1;
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = undefined;
+      this.openSocket();
+    }, delay);
   }
 
   private resolveCommand(message: CommandAcceptedMessage): void {
@@ -141,16 +203,27 @@ export class RemoteGameController implements GameController {
     pending?.resolve();
   }
 
-  private resolveConnection(): void {
+  private resolveInitial(): void {
     this.resolveConnected?.();
     this.resolveConnected = undefined;
     this.rejectConnected = undefined;
   }
 
-  private rejectConnection(error: Error): void {
+  private rejectInitial(error: Error): void {
     this.rejectConnected?.(error);
     this.resolveConnected = undefined;
     this.rejectConnected = undefined;
+  }
+
+  private rejectPending(message: string): void {
+    for (const pending of this.pending.values()) pending.reject(new Error(message));
+    this.pending.clear();
+  }
+
+  private setConnection(status: RemoteConnectionStatus, message?: string): void {
+    this.connectionStatus = status;
+    this.connectionMessage = message;
+    this.emit();
   }
 
   private emit(): void {

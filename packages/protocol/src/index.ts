@@ -13,6 +13,7 @@ export enum NetworkErrorCode {
   RoomFull = "ROOM_FULL",
   NotHost = "NOT_HOST",
   InvalidStartConfiguration = "INVALID_START_CONFIGURATION",
+  PersistenceFailed = "PERSISTENCE_FAILED",
   SessionReplaced = "SESSION_REPLACED",
   OriginNotAllowed = "ORIGIN_NOT_ALLOWED"
 }

@@ -18,6 +18,24 @@ Regelquelle ist die [ausführliche Spielanleitung](rules/Vedras%20Reiche.docx) i
 
 Der Visual Debug Client erfasst Entscheidungen, ruft Core-Aktionen direkt auf und zeigt deren neuen Zustand sowie Ereignisse. Diese direkte Verbindung ist **nur ein lokaler Entwicklungsmodus** mit Pass-and-play. Im Mehrspielermodus gilt `Browser → Server → Game Core`: Der Server verwaltet den maßgeblichen Zustand, prüft die Berechtigung eingehender Aktionen und verteilt bestätigte Ergebnisse. Transport und Sitzungen liegen außerhalb des Game Core.
 
+```text
+Browser
+  ↓
+WebSocket / HTTP
+  ↓
+Authoritative Server
+  ↓
+RoomManager
+  ├→ Game Core
+  └→ RoomStore
+       ↓
+     FileRoomStore
+       ↓
+   persistent snapshots
+```
+
+`RoomManager` kennt keine Dateisystem-APIs. `FileRoomStore` schreibt pro Room atomare Snapshots in `data/rooms/`; `VEDRAS_DATA_DIR` kann das Wurzelverzeichnis ersetzen. Der Snapshot enthält den vollständigen `GameState`, Revision, Teilnehmer-Identitäten und einen begrenzten Verlauf bestätigter Commands. Raw Session-Tokens werden nur dem Browser bei Create/Join gegeben, auf Disk liegt ausschließlich ihr SHA-256-Hash. Nach dem Restore sind Verbindungen getrennt und persönliche `PlayerGameView`s werden erneut serverseitig erzeugt.
+
 Der Debug Client besitzt einen reproduzierbaren Seed, Testkarte, Kartenziehquelle und vorbereitete Szenarien. Diese Hilfen liegen ausschließlich unter `apps/web`; spielrelevante Änderungen laufen ausschließlich über Core-Aktionen; die React-Komponenten speichern nur Anzeige- und Eingabezustand.
 
 ## Spielaufbau und Kartenerschaffung
@@ -40,7 +58,7 @@ POIs und positionierte Siedlungen/Städte speichern eine konkrete `GridCell`. PO
 
 Eine Zweiwege-Auktionsteilung durchläuft `AWAITING_DIVISION` und `AWAITING_CHOICE`. Der Divider liefert ausschließlich `partACells` und die Entscheidung, welcher Teil die ursprüngliche Karte behält. Teil B ist das exakte Komplement des ursprünglichen Gebiets. Der Core prüft Besitz der Zellen, Nichtleere, Mindestflächen und orthogonalen Zusammenhang. Erst danach wählt der festgelegte First Chooser einen Teil; Besitzer, neue Karte, Karte und lokale Einflüsse werden atomar aktualisiert. Nachbarschaften werden anschließend erneut aus der Karte selektiert. Die öffentliche Aktion `ResolveTerritorySplit` akzeptiert nur die anhand einer zu kleinen Rasterfläche nachweisbare Unmöglichkeit; fertige `Territory`-Objekte sind kein legaler Auflösungsweg mehr. Für verwinkelte Flächen mit rechnerisch genügend Zellen sucht der Core nicht erschöpfend nach einer möglichen Aufteilung. Solche Fälle bleiben offen, statt eine mögliche legale Teilung fälschlich auszuschließen.
 
-Für echte Replays muss jede Kartenmutation rekonstruierbar sein oder periodisch mit einem Map-Snapshot gespeichert werden. Ein Persistenzsystem ist noch nicht Teil dieser Arbeitspakete.
+Für echte Replays muss jede Kartenmutation rekonstruierbar sein oder periodisch mit einem Map-Snapshot gespeichert werden. Die Room-Persistenz speichert bereits vollständige aktuelle Zustände, ist aber kein Replay-Format.
 
 ## Spieleransichten und verdeckte Entscheidungen
 
@@ -188,4 +206,4 @@ Der Client ist nicht vertrauenswürdig. `apps/server` hält je Room den einzigen
 
 `packages/protocol` enthält nur versionierte Transport-DTOs und Fehlercodes. Der Server hängt von diesem Package und dem Core ab; der Core kennt keinen Transport. `RemoteGameController` besitzt im Browser nur eine `PlayerGameView`, während `LocalGameController` den getrennten Debugmodus direkt über den Core betreibt.
 
-WebSocket-Verbindungen erhalten einen Heartbeat. Ein Disconnect behält den Teilnehmer im Room; dieselbe Session kann sich wieder verbinden. Eine neue Verbindung ersetzt eine bestehende. Rooms sind bewusst nur im Prozessspeicher vorhanden. Datenbank, Savegames und Wiederherstellung nach einem Serverneustart bleiben spätere Arbeitspakete.
+WebSocket-Verbindungen erhalten einen Heartbeat. Ein Disconnect behält den Teilnehmer im Room; dieselbe Session kann sich wieder verbinden. Eine neue Verbindung ersetzt eine bestehende. Der Runtime-Room wird nach jedem bestätigten fachlichen Übergang in einem serverseitigen Snapshot gespeichert und beim Start wiederhergestellt. Verbindungen selbst, lokale Drafts und Player Views gehören nicht in den Snapshot. Eine Datenbank und eine gemeinsame Persistenz über mehrere Serverinstanzen bleiben spätere Arbeitspakete.

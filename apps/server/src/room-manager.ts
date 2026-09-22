@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   applyAction,
   createGameState,
@@ -14,11 +14,17 @@ import {
   type PlayerGameView,
   type RandomSource,
 } from "@vedras/game-core";
+import { NetworkErrorCode, type GameActionDto, type PublicRoomState } from "@vedras/protocol";
 import {
-  NetworkErrorCode,
-  type GameActionDto,
-  type PublicRoomState,
-} from "@vedras/protocol";
+  MAX_ACCEPTED_COMMANDS,
+  PERSISTENCE_VERSION,
+  deserializeGameState,
+  deserializePersistedRoom,
+  serializeGameState,
+  type PersistedParticipant,
+  type PersistedRoom,
+  type RoomStore,
+} from "./room-store.js";
 
 export type RoomStatus = "WAITING" | "RUNNING" | "FINISHED";
 
@@ -30,10 +36,16 @@ export interface RoomConnection {
 export interface RoomParticipant {
   readonly playerId: string;
   readonly name: string;
-  readonly sessionToken: string;
-  readonly processedCommandIds: Set<string>;
+  readonly sessionTokenHash: string;
+  readonly joinedAt: string;
   connected: boolean;
   connection?: RoomConnection;
+}
+
+export interface AcceptedCommand {
+  readonly playerId: string;
+  readonly commandId: string;
+  readonly revision: number;
 }
 
 export interface GameRoom {
@@ -43,13 +55,23 @@ export interface GameRoom {
   map: GridMapConfig;
   readonly participants: Map<string, RoomParticipant>;
   gameState?: GameState;
+  readonly acceptedCommands: AcceptedCommand[];
   revision: number;
+  readonly createdAt: string;
+  updatedAt: string;
   commandQueue: Promise<void>;
 }
 
 export interface Session {
   readonly room: GameRoom;
   readonly participant: RoomParticipant;
+}
+
+export interface CreatedRoom {
+  readonly room: GameRoom;
+  readonly participant: RoomParticipant;
+  /** Returned only once to the browser. It never becomes part of a Room snapshot. */
+  readonly sessionToken: string;
 }
 
 export interface CommandSuccess {
@@ -68,6 +90,21 @@ export interface CommandFailure {
 
 export type CommandResult = CommandSuccess | CommandFailure;
 
+export interface RestoreResult {
+  readonly loaded: number;
+  readonly skipped: number;
+}
+
+interface PersistenceChanges {
+  readonly status?: RoomStatus;
+  readonly participants?: readonly RoomParticipant[];
+  readonly map?: GridMapConfig;
+  readonly revision?: number;
+  readonly gameState?: GameState;
+  readonly acceptedCommands?: readonly AcceptedCommand[];
+  readonly updatedAt?: string;
+}
+
 export class RoomError extends Error {
   constructor(readonly code: NetworkErrorCode, message: string) {
     super(message);
@@ -78,15 +115,26 @@ export class RoomError extends Error {
 export interface RoomManagerOptions {
   readonly randomSource: RandomSource;
   readonly cardSource: CardSource;
+  readonly roomStore?: RoomStore;
   readonly now?: () => string;
   readonly roomIdFactory?: () => string;
   readonly playerIdFactory?: () => string;
   readonly sessionTokenFactory?: () => string;
+  readonly logger?: (event: string, details: Readonly<Record<string, string | number | boolean>>) => void;
 }
 
 const MAX_PLAYERS = 6;
 const MIN_PLAYERS = 2;
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+class MemoryRoomStore implements RoomStore {
+  private readonly rooms = new Map<string, PersistedRoom>();
+
+  async loadAll(): Promise<readonly PersistedRoom[]> { return [...this.rooms.values()]; }
+  async load(roomId: string): Promise<PersistedRoom | undefined> { return this.rooms.get(roomId); }
+  async save(room: PersistedRoom): Promise<void> { this.rooms.set(room.roomId, room); }
+  async delete(roomId: string): Promise<void> { this.rooms.delete(roomId); }
+}
 
 function defaultRoomId(): string {
   const bytes = randomBytes(6);
@@ -101,96 +149,156 @@ function playerNameIsValid(playerName: string): boolean {
   return playerName.trim().length > 0 && playerName.trim().length <= 80;
 }
 
-/** Holds the only full GameState for all in-memory rooms. */
+function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function tokensMatch(storedHash: string, suppliedToken: string): boolean {
+  const expected = Buffer.from(storedHash, "hex");
+  const actual = Buffer.from(hashSessionToken(suppliedToken), "hex");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+/** Holds the only full GameState for all in-memory rooms. Storage stays behind RoomStore. */
 export class RoomManager {
   private readonly rooms = new Map<string, GameRoom>();
+  private readonly pendingRoomIds = new Set<string>();
   private readonly now: () => string;
   private readonly roomIdFactory: () => string;
   private readonly playerIdFactory: () => string;
   private readonly sessionTokenFactory: () => string;
+  private readonly roomStore: RoomStore;
+  private storageHealthy = true;
 
   constructor(private readonly options: RoomManagerOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.roomIdFactory = options.roomIdFactory ?? defaultRoomId;
     this.playerIdFactory = options.playerIdFactory ?? randomUUID;
     this.sessionTokenFactory = options.sessionTokenFactory ?? (() => randomBytes(32).toString("base64url"));
+    this.roomStore = options.roomStore ?? new MemoryRoomStore();
   }
 
-  createRoom(playerName: string): { room: GameRoom; participant: RoomParticipant } {
+  async restore(): Promise<RestoreResult> {
+    try {
+      const snapshots = await this.roomStore.loadAll();
+      let loaded = 0;
+      let skipped = 0;
+      for (const snapshot of snapshots) {
+        const parsed = deserializePersistedRoom(snapshot as unknown);
+        if (parsed.room === undefined || this.rooms.has(parsed.room.roomId)) {
+          skipped += 1;
+          continue;
+        }
+        this.rooms.set(parsed.room.roomId, this.fromPersisted(parsed.room));
+        loaded += 1;
+      }
+      const diagnostics = this.roomStore as RoomStore & { getLastLoadSkipped?: () => number };
+      skipped += diagnostics.getLastLoadSkipped?.() ?? 0;
+      this.storageHealthy = true;
+      return { loaded, skipped };
+    } catch {
+      this.storageHealthy = false;
+      this.options.logger?.("persistence_restore_failed", {});
+      return { loaded: 0, skipped: 0 };
+    }
+  }
+
+  isStorageHealthy(): boolean { return this.storageHealthy; }
+
+  async createRoom(playerName: string): Promise<CreatedRoom> {
     if (!playerNameIsValid(playerName)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
     let roomId = this.roomIdFactory();
-    while (this.rooms.has(roomId)) roomId = this.roomIdFactory();
-    const participant = this.createParticipant(playerName);
+    while (this.rooms.has(roomId) || this.pendingRoomIds.has(roomId)) roomId = this.roomIdFactory();
+    this.pendingRoomIds.add(roomId);
+    const created = this.createParticipant(playerName);
+    const now = this.now();
     const room: GameRoom = {
       roomId,
       status: "WAITING",
-      hostPlayerId: participant.playerId,
+      hostPlayerId: created.participant.playerId,
       map: { ...DIGITAL_MAP_CONFIG },
-      participants: new Map([[participant.playerId, participant]]),
+      participants: new Map([[created.participant.playerId, created.participant]]),
+      acceptedCommands: [],
       revision: 0,
+      createdAt: now,
+      updatedAt: now,
       commandQueue: Promise.resolve(),
     };
-    this.rooms.set(roomId, room);
-    return { room, participant };
-  }
-
-  joinRoom(roomId: string, playerName: string): { room: GameRoom; participant: RoomParticipant } {
-    const room = this.getRoom(roomId);
-    if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
-    if (room.participants.size >= MAX_PLAYERS) throw new RoomError(NetworkErrorCode.RoomFull, "The room already has six players.");
-    if (!playerNameIsValid(playerName)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
-    const participant = this.createParticipant(playerName);
-    room.participants.set(participant.playerId, participant);
-    return { room, participant };
-  }
-
-  startRoom(
-    roomId: string,
-    sessionToken: string,
-    playerOrder: readonly string[],
-    firstMapDrawerPlayerId: string,
-    mapConfig?: GridMapConfig,
-  ): GameRoom {
-    const session = this.authenticate(roomId, sessionToken);
-    const room = session.room;
-    if (session.participant.playerId !== room.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host can start the room.");
-    if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
-    if (room.participants.size < MIN_PLAYERS) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "At least two players are required.");
-    const participantIds = [...room.participants.keys()];
-    if (playerOrder.length !== participantIds.length || new Set(playerOrder).size !== playerOrder.length ||
-        playerOrder.some((id) => !room.participants.has(id)) || !playerOrder.includes(firstMapDrawerPlayerId)) {
-      throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Player order must contain each current player exactly once.");
+    try {
+      await this.persist(room);
+      this.rooms.set(roomId, room);
+      return { room, participant: created.participant, sessionToken: created.sessionToken };
+    } finally {
+      this.pendingRoomIds.delete(roomId);
     }
-    const selectedMap = mapConfig ?? room.map;
-    if (!isMapConfigValid(selectedMap)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Map dimensions must be positive integers.");
-    const players = playerOrder.map((id) => ({ id, name: room.participants.get(id)!.name }));
-    let state = createGameState({ gameId: room.roomId, players, startPlayerId: playerOrder[0]! });
-    state = applyAction(state, {
-      type: GameActionType.BeginMapCreation,
-      firstPlayerId: firstMapDrawerPlayerId,
-      map: selectedMap,
-    }, this.context()).state;
-    room.gameState = state;
-    room.map = { width: selectedMap.width, height: selectedMap.height };
-    room.status = "RUNNING";
-    room.revision += 1;
-    return room;
   }
 
-  updateMap(roomId: string, sessionToken: string, map: GridMapConfig): GameRoom {
-    const session = this.authenticate(roomId, sessionToken);
-    const room = session.room;
-    if (session.participant.playerId !== room.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host can configure the map.");
-    if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
-    if (!isMapConfigValid(map)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Map dimensions must be positive integers.");
-    room.map = { width: map.width, height: map.height };
-    room.revision += 1;
-    return room;
+  async joinRoom(roomId: string, playerName: string): Promise<CreatedRoom> {
+    if (!playerNameIsValid(playerName)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
+    const room = this.getRoom(roomId);
+    return this.inRoomQueue(room, async () => {
+      if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
+      if (room.participants.size >= MAX_PLAYERS) throw new RoomError(NetworkErrorCode.RoomFull, "The room already has six players.");
+      const created = this.createParticipant(playerName);
+      const updatedAt = this.now();
+      await this.persist(room, { participants: [...room.participants.values(), created.participant], updatedAt });
+      room.participants.set(created.participant.playerId, created.participant);
+      room.updatedAt = updatedAt;
+      return { room, participant: created.participant, sessionToken: created.sessionToken };
+    });
+  }
+
+  async startRoom(roomId: string, sessionToken: string, playerOrder: readonly string[], firstMapDrawerPlayerId: string, mapConfig?: GridMapConfig): Promise<GameRoom> {
+    const initialSession = this.authenticate(roomId, sessionToken);
+    return this.inRoomQueue(initialSession.room, async () => {
+      const session = this.authenticate(roomId, sessionToken);
+      const room = session.room;
+      if (session.participant.playerId !== room.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host can start the room.");
+      if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
+      if (room.participants.size < MIN_PLAYERS) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "At least two players are required.");
+      const participantIds = [...room.participants.keys()];
+      if (playerOrder.length !== participantIds.length || new Set(playerOrder).size !== playerOrder.length ||
+          playerOrder.some((id) => !room.participants.has(id)) || !playerOrder.includes(firstMapDrawerPlayerId)) {
+        throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Player order must contain each current player exactly once.");
+      }
+      const selectedMap = mapConfig ?? room.map;
+      if (!isMapConfigValid(selectedMap)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Map dimensions must be positive integers.");
+      const players = playerOrder.map((id) => ({ id, name: room.participants.get(id)!.name }));
+      let state = createGameState({ gameId: room.roomId, players, startPlayerId: playerOrder[0]! });
+      state = applyAction(state, { type: GameActionType.BeginMapCreation, firstPlayerId: firstMapDrawerPlayerId, map: selectedMap }, this.context()).state;
+      const revision = room.revision + 1;
+      const updatedAt = this.now();
+      await this.persist(room, { status: "RUNNING", map: selectedMap, gameState: state, revision, updatedAt });
+      room.gameState = state;
+      room.map = copyMap(selectedMap);
+      room.status = "RUNNING";
+      room.revision = revision;
+      room.updatedAt = updatedAt;
+      return room;
+    });
+  }
+
+  async updateMap(roomId: string, sessionToken: string, map: GridMapConfig): Promise<GameRoom> {
+    const initialSession = this.authenticate(roomId, sessionToken);
+    return this.inRoomQueue(initialSession.room, async () => {
+      const session = this.authenticate(roomId, sessionToken);
+      const room = session.room;
+      if (session.participant.playerId !== room.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host can configure the map.");
+      if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
+      if (!isMapConfigValid(map)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Map dimensions must be positive integers.");
+      const revision = room.revision + 1;
+      const updatedAt = this.now();
+      await this.persist(room, { map, revision, updatedAt });
+      room.map = copyMap(map);
+      room.revision = revision;
+      room.updatedAt = updatedAt;
+      return room;
+    });
   }
 
   authenticate(roomId: string, sessionToken: string): Session {
     const room = this.getRoom(roomId);
-    const participant = [...room.participants.values()].find((candidate) => candidate.sessionToken === sessionToken);
+    const participant = [...room.participants.values()].find((candidate) => tokensMatch(candidate.sessionTokenHash, sessionToken));
     if (participant === undefined) throw new RoomError(NetworkErrorCode.InvalidSession, "The session token is invalid.");
     return { room, participant };
   }
@@ -204,8 +312,7 @@ export class RoomManager {
   }
 
   disconnect(roomId: string, playerId: string, connection: RoomConnection): void {
-    const room = this.rooms.get(roomId);
-    const participant = room?.participants.get(playerId);
+    const participant = this.rooms.get(roomId)?.participants.get(playerId);
     if (participant?.connection === connection) {
       delete participant.connection;
       participant.connected = false;
@@ -227,12 +334,8 @@ export class RoomManager {
       roomId: room.roomId,
       status: room.status,
       hostPlayerId: room.hostPlayerId,
-      map: { width: room.map.width, height: room.map.height },
-      players: [...room.participants.values()].map((participant) => ({
-        playerId: participant.playerId,
-        name: participant.name,
-        connected: participant.connected,
-      })),
+      map: copyMap(room.map),
+      players: [...room.participants.values()].map((participant) => ({ playerId: participant.playerId, name: participant.name, connected: participant.connected })),
     };
   }
 
@@ -241,46 +344,98 @@ export class RoomManager {
   }
 
   async processCommand(roomId: string, sessionToken: string, commandId: string, action: GameActionDto): Promise<CommandResult> {
-    const session = this.authenticate(roomId, sessionToken);
-    const room = session.room;
-    const execute = async (): Promise<CommandResult> => {
-      if (room.gameState === undefined || room.status !== "RUNNING") {
-        return this.failure(room, NetworkErrorCode.CommandRejected, "The game is not running.");
-      }
+    const initialSession = this.authenticate(roomId, sessionToken);
+    return this.inRoomQueue(initialSession.room, async () => {
+      const session = this.authenticate(roomId, sessionToken);
+      const room = session.room;
+      if (room.gameState === undefined || room.status !== "RUNNING") return this.failure(room, NetworkErrorCode.CommandRejected, "The game is not running.");
       if (!actionTypeIsKnown(action)) return this.failure(room, NetworkErrorCode.UnknownCommand, "The command is not supported.");
-      if (typeof commandId !== "string" || commandId.trim().length === 0 || commandId.length > 160) {
-        return this.failure(room, NetworkErrorCode.InvalidMessage, "A command ID is required.");
-      }
-      if (session.participant.processedCommandIds.has(commandId)) {
-        return { accepted: true, duplicate: true, revision: room.revision, state: room.gameState };
-      }
-      if (action.playerId !== undefined && action.playerId !== session.participant.playerId) {
-        return this.failure(room, NetworkErrorCode.CommandRejected, "A player may act only for their own session.");
-      }
+      if (typeof commandId !== "string" || commandId.trim().length === 0 || commandId.length > 160) return this.failure(room, NetworkErrorCode.InvalidMessage, "A command ID is required.");
+      const prior = room.acceptedCommands.find((candidate) => candidate.playerId === session.participant.playerId && candidate.commandId === commandId);
+      if (prior !== undefined) return { accepted: true, duplicate: true, revision: prior.revision, state: room.gameState };
+      if (action.playerId !== undefined && action.playerId !== session.participant.playerId) return this.failure(room, NetworkErrorCode.CommandRejected, "A player may act only for their own session.");
       try {
-        const next = applyAction(room.gameState, action as GameAction, this.context());
-        room.gameState = next.state;
-        room.revision += 1;
-        session.participant.processedCommandIds.add(commandId);
-        if (room.gameState.phase === GamePhase.Finished) room.status = "FINISHED";
-        return { accepted: true, duplicate: false, revision: room.revision, state: room.gameState };
+        const state = applyAction(room.gameState, action as GameAction, this.context()).state;
+        const revision = room.revision + 1;
+        const acceptedCommands = [...room.acceptedCommands, { playerId: session.participant.playerId, commandId, revision }].slice(-MAX_ACCEPTED_COMMANDS);
+        const status: RoomStatus = state.phase === GamePhase.Finished ? "FINISHED" : room.status;
+        const updatedAt = this.now();
+        await this.persist(room, { gameState: state, revision, acceptedCommands, status, updatedAt });
+        room.gameState = state;
+        room.revision = revision;
+        room.acceptedCommands.splice(0, room.acceptedCommands.length, ...acceptedCommands);
+        room.status = status;
+        room.updatedAt = updatedAt;
+        return { accepted: true, duplicate: false, revision, state };
       } catch (error) {
+        if (error instanceof RoomError) throw error;
         const code = error instanceof DomainError ? error.code : NetworkErrorCode.CommandRejected;
         return this.failure(room, code, "Die Aktion ist im aktuellen Zustand nicht erlaubt.");
       }
-    };
-    const pending = room.commandQueue.then(execute, execute);
+    });
+  }
+
+  private async inRoomQueue<T>(room: GameRoom, task: () => Promise<T>): Promise<T> {
+    const pending = room.commandQueue.then(task, task);
     room.commandQueue = pending.then(() => undefined, () => undefined);
     return pending;
   }
 
-  private createParticipant(playerName: string): RoomParticipant {
+  private async persist(room: GameRoom, changes: PersistenceChanges = {}): Promise<void> {
+    try {
+      const snapshot = this.toPersisted(room, changes);
+      await this.roomStore.save(snapshot);
+      this.storageHealthy = true;
+    } catch {
+      this.storageHealthy = false;
+      this.options.logger?.("persistence_save_failed", { roomId: room.roomId, revision: changes.revision ?? room.revision });
+      throw new RoomError(NetworkErrorCode.PersistenceFailed, "Der Spielstand konnte nicht sicher gespeichert werden.");
+    }
+  }
+
+  private toPersisted(room: GameRoom, changes: PersistenceChanges): PersistedRoom {
+    const state = changes.gameState === undefined ? room.gameState : changes.gameState;
+    const serializedState = state === undefined ? undefined : deserializeGameState(serializeGameState(state));
+    if (state !== undefined && serializedState === undefined) throw new RoomError(NetworkErrorCode.PersistenceFailed, "Der Spielstand ist nicht speicherbar.");
+    const participants = changes.participants ?? [...room.participants.values()];
     return {
-      playerId: this.playerIdFactory(),
-      name: playerName.trim(),
-      sessionToken: this.sessionTokenFactory(),
-      processedCommandIds: new Set(),
-      connected: false,
+      persistenceVersion: PERSISTENCE_VERSION,
+      roomId: room.roomId,
+      status: changes.status ?? room.status,
+      hostPlayerId: room.hostPlayerId,
+      participants: participants.map(toPersistedParticipant),
+      map: copyMap(changes.map ?? room.map),
+      revision: changes.revision ?? room.revision,
+      ...(serializedState === undefined ? {} : { gameState: serializedState }),
+      acceptedCommands: [...(changes.acceptedCommands ?? room.acceptedCommands)].slice(-MAX_ACCEPTED_COMMANDS),
+      createdAt: room.createdAt,
+      updatedAt: changes.updatedAt ?? room.updatedAt,
+    };
+  }
+
+  private fromPersisted(snapshot: PersistedRoom): GameRoom {
+    return {
+      roomId: snapshot.roomId,
+      status: snapshot.status,
+      hostPlayerId: snapshot.hostPlayerId,
+      map: copyMap(snapshot.map),
+      participants: new Map(snapshot.participants.map((participant) => [participant.playerId, {
+        playerId: participant.playerId, name: participant.name, sessionTokenHash: participant.sessionTokenHash, joinedAt: participant.joinedAt, connected: false,
+      }])),
+      ...(snapshot.gameState === undefined ? {} : { gameState: snapshot.gameState }),
+      acceptedCommands: [...snapshot.acceptedCommands],
+      revision: snapshot.revision,
+      createdAt: snapshot.createdAt,
+      updatedAt: snapshot.updatedAt,
+      commandQueue: Promise.resolve(),
+    };
+  }
+
+  private createParticipant(playerName: string): { readonly participant: RoomParticipant; readonly sessionToken: string } {
+    const sessionToken = this.sessionTokenFactory();
+    return {
+      participant: { playerId: this.playerIdFactory(), name: playerName.trim(), sessionTokenHash: hashSessionToken(sessionToken), joinedAt: this.now(), connected: false },
+      sessionToken,
     };
   }
 
@@ -293,6 +448,15 @@ export class RoomManager {
   }
 }
 
+function toPersistedParticipant(participant: RoomParticipant): PersistedParticipant {
+  return { playerId: participant.playerId, name: participant.name, sessionTokenHash: participant.sessionTokenHash, joinedAt: participant.joinedAt };
+}
+
+function copyMap(map: GridMapConfig): GridMapConfig {
+  return { width: map.width, height: map.height, ...(map.format === undefined ? {} : { format: map.format }) };
+}
+
 function isMapConfigValid(map: GridMapConfig): boolean {
-  return Number.isSafeInteger(map.width) && map.width > 0 && Number.isSafeInteger(map.height) && map.height > 0;
+  return Number.isSafeInteger(map.width) && map.width > 0 && Number.isSafeInteger(map.height) && map.height > 0 &&
+    (map.format === undefined || map.format === "A4" || map.format === "A5");
 }

@@ -113,33 +113,37 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
     }
     const url = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && url.pathname === "/health") {
-      writeJson(response, 200, { status: "ok", protocolVersion: PROTOCOL_VERSION }, origin);
+      writeJson(response, options.roomManager.isStorageHealthy() ? 200 : 503, {
+        status: options.roomManager.isStorageHealthy() ? "ok" : "degraded",
+        storage: options.roomManager.isStorageHealthy() ? "ok" : "error",
+        protocolVersion: PROTOCOL_VERSION,
+      }, origin);
       return;
     }
     try {
       if (request.method === "POST" && url.pathname === "/api/rooms") {
         const body = await readJson(request);
         if (!bodyHasPlayerName(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
-        const { room, participant } = options.roomManager.createRoom(body.playerName);
+        const { room, participant, sessionToken } = await options.roomManager.createRoom(body.playerName);
         log("room_created", { roomId: room.roomId, playerId: participant.playerId });
-        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken: participant.sessionToken }, origin);
+        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, origin);
         return;
       }
       const joinMatch = /^\/api\/rooms\/([^/]+)\/join$/.exec(url.pathname);
       if (request.method === "POST" && joinMatch?.[1] !== undefined) {
         const body = await readJson(request);
         if (!bodyHasPlayerName(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
-        const { room, participant } = options.roomManager.joinRoom(decodeURIComponent(joinMatch[1]), body.playerName);
+        const { room, participant, sessionToken } = await options.roomManager.joinRoom(decodeURIComponent(joinMatch[1]), body.playerName);
         log("player_joined", { roomId: room.roomId, playerId: participant.playerId });
         broadcastRoom(options.roomManager, room);
-        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken: participant.sessionToken }, origin);
+        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, origin);
         return;
       }
       const startMatch = /^\/api\/rooms\/([^/]+)\/start$/.exec(url.pathname);
       if (request.method === "POST" && startMatch?.[1] !== undefined) {
         const body = await readJson(request);
         if (!bodyIsStartRequest(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "Start configuration is invalid.");
-        const room = options.roomManager.startRoom(
+        const room = await options.roomManager.startRoom(
           decodeURIComponent(startMatch[1]), body.sessionToken, body.playerOrder, body.firstMapDrawerPlayerId, body.map,
         );
         log("game_started", { roomId: room.roomId, playerCount: room.participants.size });
@@ -151,7 +155,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
       if (request.method === "POST" && mapMatch?.[1] !== undefined) {
         const body = await readJson(request);
         if (!bodyIsUpdateMapRequest(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "Map configuration is invalid.");
-        const room = options.roomManager.updateMap(decodeURIComponent(mapMatch[1]), body.sessionToken, body.map);
+        const room = await options.roomManager.updateMap(decodeURIComponent(mapMatch[1]), body.sessionToken, body.map);
         broadcastRoom(options.roomManager, room);
         writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, origin);
         return;
@@ -159,7 +163,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
       writeJson(response, 404, { code: NetworkErrorCode.RoomNotFound, message: "Route not found." }, origin);
     } catch (error) {
       const payload = errorPayload(error);
-      const status = payload.code === NetworkErrorCode.RoomNotFound ? 404 :
+      const status = payload.code === NetworkErrorCode.PersistenceFailed ? 500 : payload.code === NetworkErrorCode.RoomNotFound ? 404 :
         payload.code === NetworkErrorCode.RoomAlreadyStarted || payload.code === NetworkErrorCode.RoomFull ? 409 : 400;
       writeJson(response, status, payload, origin);
     }
@@ -214,7 +218,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
             attached.previousConnection.close(4002, NetworkErrorCode.SessionReplaced);
           }
           const { room, participant } = attached.session;
-          socketSessions.set(websocket, { roomId: room.roomId, playerId: participant.playerId, sessionToken: participant.sessionToken, connection });
+          socketSessions.set(websocket, { roomId: room.roomId, playerId: participant.playerId, sessionToken: message.sessionToken, connection });
           log("player_connected", { roomId: room.roomId, playerId: participant.playerId });
           broadcastRoom(options.roomManager, room);
         } catch (error) {
@@ -238,7 +242,15 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         connection.close(4002, NetworkErrorCode.SessionReplaced);
         return;
       }
-      const result = await options.roomManager.processCommand(session.roomId, session.sessionToken, message.commandId, message.action);
+      let result: Awaited<ReturnType<RoomManager["processCommand"]>>;
+      try {
+        result = await options.roomManager.processCommand(session.roomId, session.sessionToken, message.commandId, message.action);
+      } catch (error) {
+        const payload = errorPayload(error);
+        sendError(connection, payload.code, payload.message);
+        log("command_failed", { roomId: session.roomId, playerId: session.playerId, code: payload.code });
+        return;
+      }
       if (result.accepted) {
         connection.send({ type: "COMMAND_ACCEPTED", commandId: message.commandId, revision: result.revision });
         const room = options.roomManager.getRoom(session.roomId);

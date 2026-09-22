@@ -50,13 +50,14 @@ import { suitName, suitSymbol } from "./formatters/suit-label";
 import { DemoCardSource } from "./debug/demo-card-source";
 import { SeededRandomSource } from "./debug/seeded-random-source";
 import { LocalGameController, type GameController } from "./controllers/game-controller";
-import { RemoteGameController, type MultiplayerCredentials } from "./controllers/remote-game-controller";
+import { RemoteGameController, type MultiplayerCredentials, type RemoteConnectionStatus } from "./controllers/remote-game-controller";
 import { mergeDraftEdges } from "./map/setup-draft";
 import type { PublicRoomState } from "@vedras/protocol";
 
 const DEFAULT_SEED = 12345;
 const SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL ?? window.location.origin;
-const MULTIPLAYER_SESSION_KEY = "vedras-reiche-multiplayer-session";
+const MULTIPLAYER_SESSIONS_KEY = "vedras-reiche-multiplayer-sessions";
+const MULTIPLAYER_LAST_ROOM_KEY = "vedras-reiche-last-multiplayer-room";
 const SCENARIOS: readonly { kind: ScenarioKind; label: string; detail: string }[] = [
   { kind: "START_AUCTIONS", label: "Startauktionen", detail: "Zwei Auslagen und verdeckte Startgebote" },
   { kind: "ACTIVATION_PHASE", label: "Aktivierungsphase", detail: "Symbole und Gebietsreihenfolge ausprobieren" },
@@ -97,7 +98,9 @@ interface SetupDraft {
 
 interface NewGamePlayerInput { readonly key: string; readonly name: string; }
 
-interface MultiplayerSession extends MultiplayerCredentials {}
+interface MultiplayerSession extends MultiplayerCredentials {
+  readonly playerName?: string;
+}
 
 function multiplayerSocketUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
@@ -107,25 +110,60 @@ function multiplayerSocketUrl(baseUrl: string): string {
   return url.toString();
 }
 
-function storedMultiplayerSession(): MultiplayerSession | undefined {
+function isMultiplayerSession(value: unknown): value is MultiplayerSession {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Partial<MultiplayerSession>;
+  return typeof candidate.roomId === "string" && typeof candidate.playerId === "string" && typeof candidate.sessionToken === "string" &&
+    (candidate.playerName === undefined || typeof candidate.playerName === "string");
+}
+
+function storedMultiplayerSessions(): Readonly<Record<string, MultiplayerSession>> {
   try {
-    const stored = sessionStorage.getItem(MULTIPLAYER_SESSION_KEY);
-    if (stored === null) return undefined;
-    const parsed = JSON.parse(stored) as Partial<MultiplayerSession>;
-    return typeof parsed.roomId === "string" && typeof parsed.playerId === "string" && typeof parsed.sessionToken === "string"
-      ? { roomId: parsed.roomId, playerId: parsed.playerId, sessionToken: parsed.sessionToken } : undefined;
+    const stored = localStorage.getItem(MULTIPLAYER_SESSIONS_KEY);
+    if (stored === null) return {};
+    const parsed: unknown = JSON.parse(stored);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, session]) => isMultiplayerSession(session))) as Readonly<Record<string, MultiplayerSession>>;
+  } catch {
+    return {};
+  }
+}
+
+function lastStoredMultiplayerSession(sessions = storedMultiplayerSessions()): MultiplayerSession | undefined {
+  try {
+    const roomId = localStorage.getItem(MULTIPLAYER_LAST_ROOM_KEY);
+    return roomId === null ? undefined : sessions[roomId];
   } catch {
     return undefined;
   }
 }
 
-function rememberMultiplayerSession(session: MultiplayerSession | undefined): void {
+function rememberMultiplayerSession(session: MultiplayerSession): Readonly<Record<string, MultiplayerSession>> {
+  const sessions = { ...storedMultiplayerSessions(), [session.roomId]: session };
   try {
-    if (session === undefined) sessionStorage.removeItem(MULTIPLAYER_SESSION_KEY);
-    else sessionStorage.setItem(MULTIPLAYER_SESSION_KEY, JSON.stringify(session));
-  } catch {
-    // Browser storage is optional for local development.
-  }
+    localStorage.setItem(MULTIPLAYER_SESSIONS_KEY, JSON.stringify(sessions));
+    localStorage.setItem(MULTIPLAYER_LAST_ROOM_KEY, session.roomId);
+  } catch { /* Browser storage is optional for local development. */ }
+  return sessions;
+}
+
+function forgetMultiplayerSession(roomId: string): Readonly<Record<string, MultiplayerSession>> {
+  const sessions = { ...storedMultiplayerSessions() };
+  delete sessions[roomId];
+  try {
+    localStorage.setItem(MULTIPLAYER_SESSIONS_KEY, JSON.stringify(sessions));
+    if (localStorage.getItem(MULTIPLAYER_LAST_ROOM_KEY) === roomId) {
+      const replacement = Object.keys(sessions).at(-1);
+      if (replacement === undefined) localStorage.removeItem(MULTIPLAYER_LAST_ROOM_KEY);
+      else localStorage.setItem(MULTIPLAYER_LAST_ROOM_KEY, replacement);
+    }
+  } catch { /* Browser storage is optional for local development. */ }
+  return sessions;
+}
+
+function inviteRoomCode(): string | undefined {
+  const roomId = new URL(window.location.href).searchParams.get("room")?.trim().toUpperCase();
+  return roomId !== undefined && /^[A-Z0-9]{3,32}$/.test(roomId) ? roomId : undefined;
 }
 
 async function postMultiplayer<T>(path: string, body: unknown): Promise<T> {
@@ -648,8 +686,10 @@ export default function App() {
   const [multiplayer, setMultiplayer] = useState<MultiplayerSession | null>(null);
   const [multiplayerRoom, setMultiplayerRoom] = useState<PublicRoomState | undefined>();
   const [multiplayerName, setMultiplayerName] = useState("Anna");
-  const [joinRoomCode, setJoinRoomCode] = useState("");
-  const [showMultiplayer, setShowMultiplayer] = useState(false);
+  const [joinRoomCode, setJoinRoomCode] = useState(() => inviteRoomCode() ?? "");
+  const [showMultiplayer, setShowMultiplayer] = useState(() => inviteRoomCode() !== undefined);
+  const [savedMultiplayerSessions, setSavedMultiplayerSessions] = useState<Readonly<Record<string, MultiplayerSession>>>(() => storedMultiplayerSessions());
+  const [remoteConnectionStatus, setRemoteConnectionStatus] = useState<RemoteConnectionStatus>("DISCONNECTED");
   const [lobbyOrder, setLobbyOrder] = useState<readonly string[]>([]);
   const [firstMultiplayerDrawerId, setFirstMultiplayerDrawerId] = useState<string | undefined>();
   const [lobbyMap, setLobbyMap] = useState({ width: DIGITAL_BOARD_WIDTH, height: DIGITAL_BOARD_HEIGHT });
@@ -670,10 +710,14 @@ export default function App() {
     else {
       setMultiplayer(null);
       setMultiplayerRoom(undefined);
-      rememberMultiplayerSession(undefined);
+      setRemoteConnectionStatus("DISCONNECTED");
     }
     unsubscribeController.current = nextController.subscribe((snapshot) => {
       if (snapshot.view !== undefined) setView(snapshot.view);
+      if (remote && snapshot.connectionStatus !== undefined) {
+        setRemoteConnectionStatus(snapshot.connectionStatus);
+        if (snapshot.connectionStatus !== "CONNECTED") setSetupDraft({ mode: "PEN", strokes: [] });
+      }
       const room = (snapshot as { readonly room?: PublicRoomState }).room;
       if (room !== undefined) {
         setMultiplayerRoom(room);
@@ -690,8 +734,9 @@ export default function App() {
   };
 
   const connectMultiplayer = async (session: MultiplayerSession) => {
-    const remote = new RemoteGameController(session, multiplayerSocketUrl(SERVER_BASE_URL));
-    setMultiplayer(session);
+    const storedSession: MultiplayerSession = { ...session, playerName: session.playerName ?? multiplayerName.trim() };
+    const remote = new RemoteGameController(storedSession, multiplayerSocketUrl(SERVER_BASE_URL));
+    setMultiplayer(storedSession);
     setScenario(null);
     setShowNewGameConfig(false);
     setShowDebugScenarios(false);
@@ -700,26 +745,37 @@ export default function App() {
     setSetupDraft({ mode: "PEN", strokes: [] });
     setSplitDraft(null);
     setMapDraft(null);
-    setPrivacyPlayerId(session.playerId);
+    setPrivacyPlayerId(storedSession.playerId);
     setFactionVisible(false);
-    rememberMultiplayerSession(session);
+    setSavedMultiplayerSessions(rememberMultiplayerSession(storedSession));
     activateController(remote, true);
     await remote.connect();
     setError(null);
   };
 
   useEffect(() => {
-    let disposed = false;
-    const saved = storedMultiplayerSession();
-    if (saved !== undefined) void connectMultiplayer(saved).catch((caught) => {
-      if (!disposed) setError(caught instanceof Error ? caught.message : String(caught));
-    });
     return () => {
-      disposed = true;
       unsubscribeController.current?.();
       controller.current?.dispose();
     };
   }, []);
+
+  const returnToMultiplayerStart = () => {
+    unsubscribeController.current?.();
+    controller.current?.dispose();
+    controller.current = null;
+    setView(null);
+    setMultiplayer(null);
+    setMultiplayerRoom(undefined);
+    setRemoteConnectionStatus("DISCONNECTED");
+    setShowMultiplayer(true);
+    setError(null);
+  };
+
+  const forgetSavedMultiplayerSession = (roomId: string) => {
+    setSavedMultiplayerSessions(forgetMultiplayerSession(roomId));
+    if (multiplayer?.roomId === roomId) returnToMultiplayerStart();
+  };
 
   const loadScenario = (kind: ScenarioKind, chosenSeed: number) => {
     try {
@@ -778,6 +834,7 @@ export default function App() {
   };
   const startMultiplayerRoom = async () => {
     if (multiplayer === null || multiplayerRoom === undefined || firstMultiplayerDrawerId === undefined) return;
+    if (!multiplayerConnected) return;
     try {
       await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/start`, {
         sessionToken: multiplayer.sessionToken,
@@ -797,6 +854,7 @@ export default function App() {
       setError("Breite und Höhe müssen positive ganze Zahlen sein.");
       return;
     }
+    if (!multiplayerConnected) return;
     try {
       await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/map`, {
         sessionToken: multiplayer.sessionToken, map: lobbyMap,
@@ -849,6 +907,10 @@ export default function App() {
   };
   const dispatch = (action: GameAction) => {
     if (!state || controller.current === null) return;
+    if (multiplayer !== null && remoteConnectionStatus !== "CONNECTED") {
+      setError("Die Verbindung wird wiederhergestellt. Aktionen sind vorübergehend gesperrt.");
+      return;
+    }
     void controller.current.dispatch(action).then(() => {
       if (action.type === GameActionType.CommitSetupBoundaryDraft || action.type === GameActionType.CorrectSetupBorders ||
           action.type === GameActionType.PlaceSetupPointOfInterest) {
@@ -877,6 +939,7 @@ export default function App() {
   const editorBase = state ? getMapEditor(state) : undefined;
   const editor = state ? getMapEditor(state, mapDraft && mapDraft.key === editorBase?.key ? mapDraft.keys : undefined) : undefined;
   const toggleMapCell = (cell: GridCell) => {
+    if (!multiplayerConnected) return;
     if (!editor) return;
     if (!editor.selectable.some((candidate) => candidate.x === cell.x && candidate.y === cell.y)) return;
     const key = `${cell.x},${cell.y}`;
@@ -898,7 +961,8 @@ export default function App() {
     return mapCreation.stage === MapCreationStage.DrawTerritories || mapCreation.stage === MapCreationStage.ReadyToFinalize
       ? Object.keys(state.map.cells).map(fromCellKey) : [] as GridCell[];
   })();
-  const setupCanEdit = multiplayer === null || mapCreation?.activePlayerId === multiplayer.playerId;
+  const multiplayerConnected = multiplayer === null || remoteConnectionStatus === "CONNECTED";
+  const setupCanEdit = multiplayerConnected && (multiplayer === null || mapCreation?.activePlayerId === multiplayer.playerId);
   const setupDraftEdges = mergeDraftEdges([...setupDraft.strokes, ...(setupDraft.activeStroke === undefined ? [] : [setupDraft.activeStroke])]);
   const setupPreviewRegions = (() => {
     if (!state?.map || !mapCreation) return undefined;
@@ -954,6 +1018,7 @@ export default function App() {
       originalCardPart: "A",
     } : undefined;
   const toggleSplitCell = (cell: GridCell) => {
+    if (!multiplayerConnected) return;
     if (!currentSplitDraft || split?.stage === "AWAITING_CHOICE") return;
     const key = `${cell.x},${cell.y}`;
     if (!initialSplitCells.some((item) => item.x === cell.x && item.y === cell.y)) return;
@@ -963,7 +1028,7 @@ export default function App() {
     setSplitDraft({ ...currentSplitDraft, partAKeys });
   };
   const setOriginalCardPart = (part: "A" | "B") => {
-    if (currentSplitDraft) setSplitDraft({ ...currentSplitDraft, originalCardPart: part });
+    if (multiplayerConnected && currentSplitDraft) setSplitDraft({ ...currentSplitDraft, originalCardPart: part });
   };
   const scoring = state?.scoring;
   const realmHighlights = scoring ? (() => {
@@ -980,6 +1045,22 @@ export default function App() {
   })() : undefined;
   const scoreHundredthsByTerritoryId = state?.result ? Object.fromEntries(state.result.playerResults.flatMap((player) =>
     player.territoryScores.map((score) => [score.territoryId, score.scoreHundredths]))) : undefined;
+  const invitedRoomId = inviteRoomCode();
+  const savedSessionForInvite = invitedRoomId === undefined ? undefined : savedMultiplayerSessions[invitedRoomId];
+  const resumeSession = savedSessionForInvite ?? lastStoredMultiplayerSession(savedMultiplayerSessions);
+  const copyToClipboard = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setError(null);
+    } catch {
+      setError("Kopieren ist in diesem Browser nicht verfügbar.");
+    }
+  };
+  const inviteLink = multiplayerRoom === undefined ? undefined : (() => {
+    const url = new URL(window.location.href);
+    url.search = `?room=${encodeURIComponent(multiplayerRoom.roomId)}`;
+    return url.toString();
+  })();
 
   return <div className="app-shell">
     {!state ? <main className="welcome-screen">
@@ -996,33 +1077,39 @@ export default function App() {
           {!multiplayer && <button type="button" className="text-button" onClick={() => setShowMultiplayer(false)}>Schließen</button>}</div>
         {multiplayerRoom === undefined ? <div className="config-stack">
           <Field label="Name"><input value={multiplayerName} maxLength={80} onChange={(event) => setMultiplayerName(event.target.value)} /></Field>
-          <div className="button-row"><button type="button" className="primary-button" onClick={() => void createMultiplayerRoom()}>Spiel erstellen</button></div>
+          <div className="button-row"><button type="button" className="primary-button" onClick={() => void createMultiplayerRoom()}>Neues Spiel erstellen</button></div>
           <div className="join-room-row"><Field label="Raumcode"><input value={joinRoomCode} maxLength={8} placeholder="ABC123" onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())} /></Field>
             <button type="button" className="secondary-button" onClick={() => void joinMultiplayerRoom()}>Raum beitreten</button></div>
-          {multiplayer && <p className="muted">Verbindung wird wiederhergestellt …</p>}
+          {resumeSession && <div className="lobby-resume-card"><strong>Letzte Partie: {resumeSession.roomId}</strong>
+            <div className="button-row"><button type="button" className="secondary-button" onClick={() => void connectMultiplayer(resumeSession)}>Partie{resumeSession.playerName ? ` als ${resumeSession.playerName}` : ""} fortsetzen</button>
+              <button type="button" className="text-button" onClick={() => forgetSavedMultiplayerSession(resumeSession.roomId)}>Vergessen</button></div>
+            <small>Vergessen löscht nur diese lokale Spielersitzung.</small></div>}
+          {multiplayer && remoteConnectionStatus !== "CONNECTED" && <p className="muted">{remoteConnectionStatus === "RECONNECTING" ? "Verbindung wird wiederhergestellt …" : "Verbindung wird hergestellt …"}</p>}
         </div> : <div className="config-stack">
-          <p className="room-code">Raumcode: <strong>{multiplayerRoom.roomId}</strong></p>
+          <div className="invite-panel"><strong>Mitspieler einladen</strong><p className="room-code">Raum: <strong>{multiplayerRoom.roomId}</strong></p>
+            <div className="button-row"><button type="button" className="secondary-button" onClick={() => void copyToClipboard(multiplayerRoom.roomId)}>Code kopieren</button>
+              {inviteLink && <button type="button" className="secondary-button" onClick={() => void copyToClipboard(inviteLink)}>Einladungslink kopieren</button>}</div></div>
           <div className="lobby-player-list">{lobbyOrder.map((playerId, index) => {
             const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
             if (player === undefined) return null;
             const host = multiplayerRoom.hostPlayerId === multiplayer?.playerId;
-            return <div key={playerId} className="lobby-player"><span>{index + 1}. {player.name} {player.connected ? "✓" : "○"}</span>
-              {host && <span className="button-row"><button type="button" className="secondary-button" disabled={index === 0} onClick={() => moveLobbyPlayer(playerId, -1)}>↑</button><button type="button" className="secondary-button" disabled={index === lobbyOrder.length - 1} onClick={() => moveLobbyPlayer(playerId, 1)}>↓</button></span>}
+            return <div key={playerId} className="lobby-player"><span>{index + 1}. {player.name} {playerId === multiplayerRoom.hostPlayerId ? "· Host" : ""} · {player.connected ? "verbunden" : "getrennt"}</span>
+              {host && <span className="button-row"><button type="button" className="secondary-button" disabled={!multiplayerConnected || index === 0} onClick={() => moveLobbyPlayer(playerId, -1)}>↑</button><button type="button" className="secondary-button" disabled={!multiplayerConnected || index === lobbyOrder.length - 1} onClick={() => moveLobbyPlayer(playerId, 1)}>↓</button></span>}
             </div>;
           })}</div>
           {multiplayerRoom.hostPlayerId === multiplayer?.playerId ? <>
             <div className="number-fields">
               <Field label="Kartenbreite"><input type="number" min="1" step="1" value={lobbyMap.width}
-                onChange={(event) => setLobbyMap((current) => ({ ...current, width: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
+                disabled={!multiplayerConnected} onChange={(event) => setLobbyMap((current) => ({ ...current, width: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
               <Field label="Kartenhöhe"><input type="number" min="1" step="1" value={lobbyMap.height}
-                onChange={(event) => setLobbyMap((current) => ({ ...current, height: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
+                disabled={!multiplayerConnected} onChange={(event) => setLobbyMap((current) => ({ ...current, height: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
             </div>
             <small>Aktuelle Karte: {lobbyMap.width} × {lobbyMap.height} · Mindestgebiet: {Number.isSafeInteger(lobbyMap.width) && Number.isSafeInteger(lobbyMap.height) && lobbyMap.width > 0 && lobbyMap.height > 0 ? getMinimumTerritoryArea(lobbyMap) : "—"}</small>
-            <Field label="Erster Kartenzeichner"><select value={firstMultiplayerDrawerId ?? ""} onChange={(event) => setFirstMultiplayerDrawerId(event.target.value)}>{lobbyOrder.map((playerId) => {
+            <Field label="Erster Kartenzeichner"><select value={firstMultiplayerDrawerId ?? ""} disabled={!multiplayerConnected} onChange={(event) => setFirstMultiplayerDrawerId(event.target.value)}>{lobbyOrder.map((playerId) => {
               const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
               return player ? <option key={playerId} value={playerId}>{player.name}</option> : null;
             })}</select></Field>
-            <button type="button" className="primary-button" disabled={multiplayerRoom.players.length < 2 || firstMultiplayerDrawerId === undefined} onClick={() => void startMultiplayerRoom()}>Spiel starten</button>
+            <button type="button" className="primary-button" disabled={!multiplayerConnected || multiplayerRoom.players.length < 2 || firstMultiplayerDrawerId === undefined} onClick={() => void startMultiplayerRoom()}>Spiel starten</button>
           </> : <p className="muted">Der Host legt Reihenfolge, Kartengröße und ersten Kartenzeichner fest. Aktuelle Karte: {multiplayerRoom.map.width} × {multiplayerRoom.map.height}.</p>}
         </div>}
       </section>}
@@ -1076,10 +1163,21 @@ export default function App() {
             </Field>
             <button type="button" className="secondary-button" onClick={reset}>Demo zurücksetzen</button>
           </> : <p className="muted">{multiplayer ? `Server-Revision ${controller.current?.getSnapshot().revision ?? 0}` : "Kartenbau und Spielablauf verwenden den echten Game Core."}</p>}
+          {multiplayer && <p className={`connection-status ${remoteConnectionStatus.toLowerCase()}`}>
+            {remoteConnectionStatus === "CONNECTED" ? "● Verbunden" : remoteConnectionStatus === "RECONNECTING" ? "◌ Verbindung wird wiederhergestellt …" :
+              remoteConnectionStatus === "INVALID_SESSION" ? "● Lokale Sitzung ungültig" : remoteConnectionStatus === "ROOM_NOT_FOUND" ? "● Raum nicht gefunden" :
+                remoteConnectionStatus === "SESSION_REPLACED" ? "● Sitzung in anderem Fenster geöffnet" : "◌ Verbindung wird hergestellt …"}
+          </p>}
           {state.phase === GamePhase.Finished && <label className="debug-toggle"><input type="checkbox" checked={showScoreLabels}
             onChange={(event) => setShowScoreLabels(event.target.checked)} /> Wertungsansicht auf der Karte</label>}
         </section>
         {error && <div role="alert" className="error-banner">Aktion nicht möglich: <strong>{error}</strong></div>}
+        {multiplayer && remoteConnectionStatus !== "CONNECTED" && <div role="status" className="connection-banner">
+          <strong>{remoteConnectionStatus === "RECONNECTING" ? "Verbindung verloren" : remoteConnectionStatus === "INVALID_SESSION" ? "Diese lokale Spielersitzung ist nicht mehr gültig." :
+            remoteConnectionStatus === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." : remoteConnectionStatus === "SESSION_REPLACED" ? "Diese Spielersitzung wurde in einem anderen Fenster geöffnet." : "Verbindung wird hergestellt …"}</strong>
+          {remoteConnectionStatus === "RECONNECTING" && <span>Aktionen bleiben gesperrt, bis der Server den aktuellen Stand bestätigt hat.</span>}
+          {(remoteConnectionStatus === "INVALID_SESSION" || remoteConnectionStatus === "ROOM_NOT_FOUND" || remoteConnectionStatus === "SESSION_REPLACED") && <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="text-button" onClick={() => multiplayer && forgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>}
+        </div>}
         <div className="main-grid">
           <div className="board-column panel">
             <div className="panel-heading"><span className="section-kicker">Spielbrett</span><h2>Gebietsübersicht</h2></div>
@@ -1097,13 +1195,13 @@ export default function App() {
           </div>
         </div>
         <div className="lower-grid">
-          <ActionPanel><PhaseControls state={state} selectedTerritoryId={selectedTerritoryId}
-            onSelectTerritory={setSelectedTerritoryId} onAction={dispatch} onStartRound={beginRound}
-            splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
-            onSetOriginalCardPart={setOriginalCardPart} editor={editor} playerName={name}
-            setupDraft={setupDraft} onSetSetupDraft={setSetupDraft} setupValidationIssues={setupValidationIssues} setupCanEdit={setupCanEdit}
-            privacyPlayerId={privacyPlayerId} factionVisible={factionVisible}
-            onSetPrivacyPlayerId={setPrivacyPlayerId} onSetFactionVisible={setFactionVisible} />
+          <ActionPanel><fieldset className="action-lock" disabled={!multiplayerConnected}><PhaseControls state={state} selectedTerritoryId={selectedTerritoryId}
+              onSelectTerritory={setSelectedTerritoryId} onAction={dispatch} onStartRound={beginRound}
+              splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
+              onSetOriginalCardPart={setOriginalCardPart} editor={editor} playerName={name}
+              setupDraft={setupDraft} onSetSetupDraft={setSetupDraft} setupValidationIssues={setupValidationIssues} setupCanEdit={setupCanEdit}
+              privacyPlayerId={privacyPlayerId} factionVisible={factionVisible}
+              onSetPrivacyPlayerId={setPrivacyPlayerId} onSetFactionVisible={setFactionVisible} /></fieldset>
             <RecentWarResult state={state} /></ActionPanel>
           <div className="panel"><EventLog events={state.events} playerName={name} /></div>
         </div>

@@ -99,7 +99,9 @@ npm run dev:multiplayer
 
 Öffne [http://localhost:5173](http://localhost:5173) in zwei Browser-Tabs. Im ersten Tab `Mehrspieler` wählen, einen Namen eingeben und `Spiel erstellen` wählen. Den angezeigten Raumcode im zweiten Tab zusammen mit einem Namen eingeben und `Raum beitreten` wählen. Der Host legt Sitzreihenfolge, Kartengröße und ersten Kartenzeichner fest und startet anschließend die Partie. Die Größe gehört zum öffentlichen Raumzustand und wird beim Start vom Server an den Core übergeben.
 
-Ein Browser-Refresh verbindet mit der in dieser Browser-Sitzung gespeicherten Room-Session wieder. Rooms liegen nur im Speicher des Servers; nach einem Serverneustart sind sie nicht mehr vorhanden. Für andere Entwicklungs-Origins kann der Server mit `WEB_ORIGIN=http://host:port` gestartet werden; `PORT` setzt den Server-Port.
+Der Browser speichert Room-ID, Spieler-ID und Session-Token lokal und bietet beim Öffnen des Mehrspielerbereichs die letzte Partie zum Fortsetzen an. Invite-Links enthalten nur den Roomcode. Die Lobby kann Code und Einladungslink kopieren, ohne ein Token preiszugeben.
+
+Der Server legt jeden Room als atomaren JSON-Snapshot unter `data/rooms/` ab; `data/` wird nicht committed. Beim Neustart lädt er WAITING-, RUNNING- und FINISHED-Rooms wieder ein. Zum Testen eines Neustarts `npm run dev:multiplayer` beenden, erneut starten und die gespeicherte Partie im Browser fortsetzen. `VEDRAS_DATA_DIR=/pfad/zum/volume` setzt das Datenverzeichnis; ohne Angabe gilt `./data`. Für andere Entwicklungs-Origins kann der Server mit `WEB_ORIGIN=http://host:port` gestartet werden; `PORT` setzt den Server-Port.
 
 ## AP4: Rastergeometrie und Gebietsteilung
 
@@ -138,4 +140,4 @@ Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen Core-R
 
 ## Weitere Arbeitspakete
 
-Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Persistente Savegames und Wiederherstellung nach Serverneustart bleiben spätere Arbeitspakete.
+Der Core validiert Aktionen und gibt einen neuen Zustand mit Domain-Ereignissen zurück; ungültige Aktionen ändern den Eingangszustand nicht. Die dateibasierte Room-Persistenz ist für einen einzelnen kleinen Server gedacht; bei späterem Hosting mit mehreren Instanzen ist ein gemeinsamer persistenter Store sinnvoll.
