@@ -63,7 +63,7 @@ export function validateBorderAdvance(
   const cells = { ...map.cells };
   for (const key of keys) cells[key] = winnerId;
   const changed = { ...map, cells };
-  const minimumArea = getMinimumTerritoryArea(map.format);
+  const minimumArea = getMinimumTerritoryArea(map);
   if (getTerritoryCells(changed, loserId).length < minimumArea ||
       getTerritoryCells(changed, winnerId).length < minimumArea) {
     return { valid: false, reason: "BELOW_MINIMUM_AREA", corridor };
@@ -76,6 +76,28 @@ export function validateBorderAdvance(
 }
 
 /**
+ * Produces a large legal default for an interactive border move. The core still
+ * validates the submitted selection, while clients can start from a usable
+ * maximum-front proposal and remove individual cells.
+ */
+export function getMaximumLegalBorderAdvance(
+  map: GridMapState, winnerId: TerritoryId, loserId: TerritoryId,
+  originalBorder: SharedBorder, maximumDepth: number,
+): GridCell[] {
+  let candidate = getCellsWithinBorderDepth(map, loserId, originalBorder, maximumDepth);
+  while (candidate.length > 0 && !validateBorderAdvance(map, winnerId, loserId, originalBorder, maximumDepth, candidate).valid) {
+    let fallback: GridCell[] | undefined;
+    for (let index = 0; index < candidate.length; index += 1) {
+      const reduced = candidate.filter((_, currentIndex) => currentIndex !== index);
+      if (validateBorderAdvance(map, winnerId, loserId, originalBorder, maximumDepth, reduced).valid) return reduced;
+      fallback ??= reduced;
+    }
+    candidate = fallback ?? [];
+  }
+  return candidate;
+}
+
+/**
  * Assesses the complete original front independently of the winner's selected
  * cells. The BFS corridor is the rule-defined theoretical full advance.
  */
@@ -85,7 +107,7 @@ export function assessBorderAdvanceLimitation(
 ): BorderAdvanceLimitation {
   const completeFront = getCellsWithinBorderDepth(map, loserId, originalBorder, maximumDepth);
   const remainingArea = getTerritoryCells(map, loserId).length - completeFront.length;
-  const limitedByMinimumArea = remainingArea < getMinimumTerritoryArea(map.format);
+  const limitedByMinimumArea = remainingArea < getMinimumTerritoryArea(map);
 
   const cells = { ...map.cells };
   for (const cell of completeFront) cells[toCellKey(cell)] = winnerId;

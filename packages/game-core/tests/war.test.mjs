@@ -5,7 +5,7 @@ import {
   DomainErrorCode, GameActionType, GameEventType, GamePhase,
   getCellsWithinBorderDepth, getPointOfInterestTerritory, getSharedBorder,
   getTerritoryArea, PointOfInterestType, Suit, validateBorderAdvance,
-  assessBorderAdvanceLimitation,
+  assessBorderAdvanceLimitation, getMaximumLegalBorderAdvance,
 } from "../dist/index.js";
 
 const timestamp = "2026-09-18T15:00:00.000Z";
@@ -80,7 +80,10 @@ test("normal win uses a 2-cell corridor and a completed border move ends the act
   assert.equal(fought.pendingWar.combat.difference, 2);
   const war = fought.pendingWar;
   const corridor = getCellsWithinBorderDepth(fought.map, "B", war.originalSharedBorder, 2);
+  const defaultAdvance = getMaximumLegalBorderAdvance(fought.map, "A", "B", war.originalSharedBorder, 2);
   assert.equal(corridor.length, 10);
+  assert.ok(defaultAdvance.length > 0);
+  assert.equal(validateBorderAdvance(fought.map, "A", "B", war.originalSharedBorder, 2, defaultAdvance).valid, true);
   const invalid = { type: GameActionType.ProposeBorderAdvance, warId: war.id, playerId: "P", claimedCells: [{ x: 10, y: 0 }] };
   assert.throws(() => act(fought, invalid), (error) => error.code === DomainErrorCode.CellOutsideWarCorridor);
   assert.equal(fought.map.cells["10,0"], "B");
@@ -103,7 +106,7 @@ test("empty gain is legal at minimum area; claiming a cell there is rejected", (
 });
 
 function mapFromCells(width, height, entries) {
-  return createGridMap({ width, height }, Object.fromEntries(entries.map(({ x, y, territoryId }) => [`${x},${y}`, territoryId])));
+  return createGridMap({ width, height, format: "A4" }, Object.fromEntries(entries.map(({ x, y, territoryId }) => [`${x},${y}`, territoryId])));
 }
 
 test("complete front depth weakens only when it would reduce the loser below twenty cells", () => {
@@ -180,6 +183,7 @@ test("spade bonuses use geometry, only one effect per player, and fortresses sta
     playerId: "P", spadeActivationId: "local" }).state;
   const opponentView = createGameViewForPlayer(first, "Q");
   assert.equal(opponentView.pendingWar.spadeChoices.P, "LOCKED");
+  assert.equal(JSON.stringify(opponentView.pendingWar.spadeChoices).includes("local"), false);
   assert.equal(createGameViewForPlayer(first, "P").pendingWar.spadeChoices.P, "local");
   assert.throws(() => act(first, { type: GameActionType.SetWarSpadeChoice, warId: started.pendingWar.id,
     playerId: "P", spadeActivationId: "far" }), (error) => error.code === DomainErrorCode.SpadeChoiceAlreadyLocked);
@@ -313,6 +317,7 @@ test("war cut duplicates only the printed card when all 48 cards are used", () =
 test("neutral diamond pauses activation until a validated geometric change", () => {
   const base = fixture();
   const state = { ...base, phase: GamePhase.ActivationPhase,
+    activationNumbers: [2, 5, 9],
     activation: { pendingTerritoryIds: ["A"], resolvedTerritoryIds: [] },
     territories: base.territories.map((territory) => territory.id === "B" ? { ...territory, ownerId: null } : territory) };
   const activated = act(state, { type: GameActionType.ActivateTerritory, playerId: "P", territoryId: "A",

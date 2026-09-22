@@ -112,6 +112,25 @@ export function analyzeSetupPartitionChange(before: readonly SetupRegion[], afte
     unchangedRegionIds: unchanged, validSingleSplit };
 }
 
+/**
+ * Retains only submitted draft edges that actually separate derived regions.
+ * Open or redundant branches are useful while drawing, but never become part
+ * of the authoritative setup boundary graph.
+ */
+export function getActualSetupBoundaryKeys(
+  candidateKeys: readonly SetupBorderEdgeKey[],
+  regions: readonly SetupRegion[],
+): SetupBorderEdgeKey[] {
+  const regionByCell = new Map<string, SetupRegionId>();
+  for (const region of regions) {
+    for (const cell of region.cells) regionByCell.set(toCellKey(cell), region.id);
+  }
+  return candidateKeys.filter((key) => {
+    const edge = setupBorderEdgeFromKey(key);
+    return regionByCell.get(toCellKey(edge.from)) !== regionByCell.get(toCellKey(edge.to));
+  });
+}
+
 /** Materializes temporary IDs solely for rendering and cell-bound setup features. */
 export function materializeSetupRegionMap(map: GridMapState, regions: readonly SetupRegion[]): GridMapState {
   const cells: Record<string, string> = {};

@@ -104,7 +104,7 @@ export function setWarSpadeChoice(
     if (loser.weakened) outcome = "CONQUEST";
     else if (difference <= 2) outcome = "BORDER_ADVANCE";
     else if (winnerArea * 2 < loserArea) outcome = "STRONG_ADVANCE";
-    else outcome = loserArea >= getBreakthroughThreshold(state.map.format) ? "CUT_AND_CHOOSE" : "CONQUEST";
+    else outcome = loserArea >= getBreakthroughThreshold(state.map) ? "CUT_AND_CHOOSE" : "CONQUEST";
   }
   const combat: CombatResult = {
     attackerRoll, defenderRoll, attackerSpadeBonus, defenderSpadeBonus, defenderFortressBonus,

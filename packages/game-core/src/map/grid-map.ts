@@ -263,7 +263,7 @@ export function validateTerritorySplit(
   map: GridMapState,
   originalTerritoryId: TerritoryId,
   partACells: readonly GridCell[],
-  minimumArea = getMinimumTerritoryArea(map.format),
+  minimumArea = getMinimumTerritoryArea(map),
 ): TerritorySplitValidation {
   const originalCells = getTerritoryCells(map, originalTerritoryId);
   const originalKeys = new Set(originalCells.map(toCellKey));

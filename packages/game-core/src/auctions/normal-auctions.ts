@@ -214,6 +214,7 @@ export function submitNormalAuctionBid(
     });
     const target = state.territories.find((territory) => territory.id === auction.territoryId)!;
     const localInfluenceCleared = target.localInfluenceByPlayerId ?? {};
+    const hasLocalInfluence = Object.values(localInfluenceCleared).some((amount) => amount > 0);
     const territories = state.territories.map((territory) => territory.id === auction.territoryId
       ? { ...territory, ownerId: winnerId, localInfluenceByPlayerId: {} }
       : territory);
@@ -222,9 +223,11 @@ export function submitNormalAuctionBid(
       { type: GameEventType.TerritoryOwnerChanged, actorId: winnerId, payload: { territoryId: auction.territoryId, previousOwnerId: null, ownerId: winnerId } },
       { type: GameEventType.BasicBidExhausted, actorId: winnerId, payload: { auctionId: auction.id, playerId: winnerId, basicBid: winningBid.basicBid } },
       { type: GameEventType.GlobalInfluenceSpent, actorId: winnerId, payload: { auctionId: auction.id, playerId: winnerId, amount: winningBid.globalInfluence } },
-      { type: GameEventType.LocalInfluenceSpent, actorId: winnerId, payload: { auctionId: auction.id, territoryId: auction.territoryId, playerId: winnerId, amount: winningBid.localInfluence } },
-      { type: GameEventType.LocalInfluenceCleared, payload: { territoryId: auction.territoryId, influenceByPlayerId: localInfluenceCleared } },
     );
+    if (winningBid.localInfluence > 0) descriptions.push({ type: GameEventType.LocalInfluenceSpent, actorId: winnerId,
+      payload: { auctionId: auction.id, territoryId: auction.territoryId, playerId: winnerId, amount: winningBid.localInfluence } });
+    if (hasLocalInfluence) descriptions.push({ type: GameEventType.LocalInfluenceCleared,
+      payload: { territoryId: auction.territoryId, influenceByPlayerId: localInfluenceCleared } });
     if (refreshed) {
       descriptions.push({ type: GameEventType.BasicBidsRefreshed, actorId: winnerId, payload: { playerId: winnerId, availableBasicBids: BASIC_BIDS } });
     }

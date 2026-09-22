@@ -7,6 +7,7 @@ import {
   type ClientMessage,
   type CreateRoomRequest,
   type JoinRoomRequest,
+  type UpdateRoomMapRequest,
   type RoomSnapshotMessage,
   type ServerErrorMessage,
   type StartRoomRequest,
@@ -81,6 +82,12 @@ function bodyIsStartRequest(body: unknown): body is StartRoomRequest {
     "firstMapDrawerPlayerId" in body && typeof body.firstMapDrawerPlayerId === "string";
 }
 
+function bodyIsUpdateMapRequest(body: unknown): body is UpdateRoomMapRequest {
+  return body !== null && typeof body === "object" && "sessionToken" in body && typeof body.sessionToken === "string" &&
+    "map" in body && body.map !== null && typeof body.map === "object" &&
+    "width" in body.map && typeof body.map.width === "number" && "height" in body.map && typeof body.map.height === "number";
+}
+
 function errorPayload(error: unknown): { code: NetworkErrorCode; message: string } {
   if (error instanceof RoomError) return { code: error.code, message: error.message };
   return { code: NetworkErrorCode.InvalidMessage, message: "The request could not be processed." };
@@ -133,9 +140,18 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         const body = await readJson(request);
         if (!bodyIsStartRequest(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "Start configuration is invalid.");
         const room = options.roomManager.startRoom(
-          decodeURIComponent(startMatch[1]), body.sessionToken, body.playerOrder, body.firstMapDrawerPlayerId,
+          decodeURIComponent(startMatch[1]), body.sessionToken, body.playerOrder, body.firstMapDrawerPlayerId, body.map,
         );
         log("game_started", { roomId: room.roomId, playerCount: room.participants.size });
+        broadcastRoom(options.roomManager, room);
+        writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, origin);
+        return;
+      }
+      const mapMatch = /^\/api\/rooms\/([^/]+)\/map$/.exec(url.pathname);
+      if (request.method === "POST" && mapMatch?.[1] !== undefined) {
+        const body = await readJson(request);
+        if (!bodyIsUpdateMapRequest(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "Map configuration is invalid.");
+        const room = options.roomManager.updateMap(decodeURIComponent(mapMatch[1]), body.sessionToken, body.map);
         broadcastRoom(options.roomManager, room);
         writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, origin);
         return;

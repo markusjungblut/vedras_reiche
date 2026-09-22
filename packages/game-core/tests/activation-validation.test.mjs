@@ -111,3 +111,25 @@ test("symbol selection and effect targets are validated before an activation is 
   assert.equal(selectedSecondSuit.state.territories[0].settlement, "SETTLEMENT");
   assert.equal(selectedSecondSuit.state.players[0].globalInfluence, 6);
 });
+
+test("activation must match a current rolled number, including an additional number", () => {
+  const state = makeState();
+  const forgedPending = { ...state, activationNumbers: [2, 5, 9], territories: state.territories.map((territory) => territory.id === "a-unmatched"
+    ? { ...territory, card: { ...territory.card, activationNumber: 7 } } : territory), activation: {
+    ...state.activation, pendingTerritoryIds: [...state.activation.pendingTerritoryIds, "a-unmatched"],
+  } };
+  rejectsWithoutMutation(forgedPending,
+    action("A", "a-unmatched", { type: "CLUB_BUILD_SETTLEMENT", targetTerritoryId: "a-unmatched" }),
+    DomainErrorCode.TerritoryNotActivated);
+
+  const additionalMatch = {
+    ...forgedPending,
+    territories: forgedPending.territories.map((territory) => territory.id === "a-unmatched"
+      ? { ...territory, card: { suit: Suit.Clubs, activationNumber: 7, additionalSuit: Suit.Hearts, additionalActivationNumber: 5 } }
+      : territory),
+    activation: { ...state.activation, pendingTerritoryIds: [...state.activation.pendingTerritoryIds, "a-unmatched"] },
+  };
+  const activated = run(additionalMatch,
+    action("A", "a-unmatched", { type: "HEART_GLOBAL_INFLUENCE" }, Suit.Hearts));
+  assert.equal(activated.state.players.find((player) => player.id === "A").globalInfluence, 7);
+});

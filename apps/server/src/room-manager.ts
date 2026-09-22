@@ -10,6 +10,7 @@ import {
   type CardSource,
   type GameAction,
   type GameState,
+  type GridMapConfig,
   type PlayerGameView,
   type RandomSource,
 } from "@vedras/game-core";
@@ -39,6 +40,7 @@ export interface GameRoom {
   readonly roomId: string;
   status: RoomStatus;
   readonly hostPlayerId: string;
+  map: GridMapConfig;
   readonly participants: Map<string, RoomParticipant>;
   gameState?: GameState;
   revision: number;
@@ -123,6 +125,7 @@ export class RoomManager {
       roomId,
       status: "WAITING",
       hostPlayerId: participant.playerId,
+      map: { ...DIGITAL_MAP_CONFIG },
       participants: new Map([[participant.playerId, participant]]),
       revision: 0,
       commandQueue: Promise.resolve(),
@@ -146,6 +149,7 @@ export class RoomManager {
     sessionToken: string,
     playerOrder: readonly string[],
     firstMapDrawerPlayerId: string,
+    mapConfig?: GridMapConfig,
   ): GameRoom {
     const session = this.authenticate(roomId, sessionToken);
     const room = session.room;
@@ -157,15 +161,29 @@ export class RoomManager {
         playerOrder.some((id) => !room.participants.has(id)) || !playerOrder.includes(firstMapDrawerPlayerId)) {
       throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Player order must contain each current player exactly once.");
     }
+    const selectedMap = mapConfig ?? room.map;
+    if (!isMapConfigValid(selectedMap)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Map dimensions must be positive integers.");
     const players = playerOrder.map((id) => ({ id, name: room.participants.get(id)!.name }));
     let state = createGameState({ gameId: room.roomId, players, startPlayerId: playerOrder[0]! });
     state = applyAction(state, {
       type: GameActionType.BeginMapCreation,
       firstPlayerId: firstMapDrawerPlayerId,
-      map: DIGITAL_MAP_CONFIG,
+      map: selectedMap,
     }, this.context()).state;
     room.gameState = state;
+    room.map = { width: selectedMap.width, height: selectedMap.height };
     room.status = "RUNNING";
+    room.revision += 1;
+    return room;
+  }
+
+  updateMap(roomId: string, sessionToken: string, map: GridMapConfig): GameRoom {
+    const session = this.authenticate(roomId, sessionToken);
+    const room = session.room;
+    if (session.participant.playerId !== room.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host can configure the map.");
+    if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
+    if (!isMapConfigValid(map)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Map dimensions must be positive integers.");
+    room.map = { width: map.width, height: map.height };
     room.revision += 1;
     return room;
   }
@@ -209,6 +227,7 @@ export class RoomManager {
       roomId: room.roomId,
       status: room.status,
       hostPlayerId: room.hostPlayerId,
+      map: { width: room.map.width, height: room.map.height },
       players: [...room.participants.values()].map((participant) => ({
         playerId: participant.playerId,
         name: participant.name,
@@ -272,4 +291,8 @@ export class RoomManager {
   private failure(room: GameRoom, code: NetworkErrorCode | string, message: string): CommandFailure {
     return { accepted: false, code, message, revision: room.revision };
   }
+}
+
+function isMapConfigValid(map: GridMapConfig): boolean {
+  return Number.isSafeInteger(map.width) && map.width > 0 && Number.isSafeInteger(map.height) && map.height > 0;
 }

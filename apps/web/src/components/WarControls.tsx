@@ -1,6 +1,6 @@
 import {
   areCellsOrthogonallyConnected, GameActionType, getAvailableWarSpades,
-  getCellsWithinBorderDepth, getMinimumTerritoryArea, getSharedBorder, getTerritoryCells,
+  getCellsWithinBorderDepth, getMaximumLegalBorderAdvance, getMinimumTerritoryArea, getSharedBorder, getTerritoryCells,
   validateBorderAdvance, validateTerritorySplit,
   type GameAction, type GameState, type GridCell,
 } from "@vedras/game-core";
@@ -13,22 +13,25 @@ export interface MapEditor {
   readonly selected: readonly GridCell[];
 }
 
-export function getMapEditor(state: GameState, selectedKeys: readonly string[]): MapEditor | undefined {
+export function getMapEditor(state: GameState, selectedKeys?: readonly string[]): MapEditor | undefined {
   const map = state.map;
   if (!map) return undefined;
   const war = state.pendingWar;
   if (war?.stage === "AWAITING_BORDER_ADVANCE" && war.combat?.loserTerritoryId &&
       war.maximumDepth && war.combat.winnerTerritoryId) {
+    const selectable = getCellsWithinBorderDepth(map, war.combat.loserTerritoryId, war.originalSharedBorder, war.maximumDepth);
     return {
       key: `${war.id}:${war.stage}`, mode: "CLAIM", targetId: war.combat.loserTerritoryId,
-      selectable: getCellsWithinBorderDepth(map, war.combat.loserTerritoryId, war.originalSharedBorder, war.maximumDepth),
-      selected: selectedKeys.map(parseKey),
+      selectable,
+      selected: selectedKeys === undefined
+        ? getMaximumLegalBorderAdvance(map, war.combat.winnerTerritoryId, war.combat.loserTerritoryId, war.originalSharedBorder, war.maximumDepth)
+        : selectedKeys.map(parseKey),
     };
   }
   if (war?.stage === "AWAITING_CUT_DIVISION" && war.combat?.loserTerritoryId) {
     const cells = getTerritoryCells(map, war.combat.loserTerritoryId);
     return { key: `${war.id}:${war.stage}`, mode: "CUT", targetId: war.combat.loserTerritoryId,
-      selectable: cells, selected: selectedKeys.length > 0 ? selectedKeys.map(parseKey) : cells.slice(0, Math.floor(cells.length / 2)) };
+      selectable: cells, selected: selectedKeys === undefined ? cells.slice(0, Math.floor(cells.length / 2)) : selectedKeys.map(parseKey) };
   }
   if (war?.stage === "AWAITING_CUT_CHOICE" && war.combat?.loserTerritoryId && war.proposal) {
     return { key: `${war.id}:${war.stage}`, mode: "CUT", targetId: war.combat.loserTerritoryId,
@@ -38,15 +41,18 @@ export function getMapEditor(state: GameState, selectedKeys: readonly string[]):
     const [first, second] = war.cutTerritoryIds;
     const recipient = state.territories.find((territory) => territory.id === first)?.ownerId === war.borderMark.playerId ? first : second;
     const donor = recipient === first ? second : first;
-    return { key: `${war.id}:${war.stage}`, mode: "CLAIM", targetId: donor,
-      selectable: getCellsWithinBorderDepth(map, donor, getSharedBorder(map, recipient, donor), 1),
-      selected: selectedKeys.map(parseKey) };
+    const border = getSharedBorder(map, recipient, donor);
+    const selectable = getCellsWithinBorderDepth(map, donor, border, 1);
+    return { key: `${war.id}:${war.stage}`, mode: "CLAIM", targetId: donor, selectable,
+      selected: selectedKeys === undefined ? getMaximumLegalBorderAdvance(map, recipient, donor, border, 1) : selectedKeys.map(parseKey) };
   }
   const effect = state.pendingDiamondBorderChanges[0];
-  if (effect) return { key: effect.id, mode: "CLAIM", targetId: effect.neutralTerritoryId,
-    selectable: getCellsWithinBorderDepth(map, effect.neutralTerritoryId,
-      getSharedBorder(map, effect.sourceTerritoryId, effect.neutralTerritoryId), 2),
-    selected: selectedKeys.map(parseKey) };
+  if (effect) {
+    const border = getSharedBorder(map, effect.sourceTerritoryId, effect.neutralTerritoryId);
+    const selectable = getCellsWithinBorderDepth(map, effect.neutralTerritoryId, border, 2);
+    return { key: effect.id, mode: "CLAIM", targetId: effect.neutralTerritoryId, selectable,
+      selected: selectedKeys === undefined ? getMaximumLegalBorderAdvance(map, effect.sourceTerritoryId, effect.neutralTerritoryId, border, 2) : selectedKeys.map(parseKey) };
+  }
   return undefined;
 }
 
@@ -143,14 +149,14 @@ export function WarControls({ state, editor, onAction }: {
     {war.stage === "AWAITING_BORDER_ADVANCE" && editor && validation && winnerId && loserId && <>
       <h4>Grenze verschieben · maximal {war.maximumDepth} Kästchen Tiefe</h4>
       {war.borderMark && <p>♦ Grenzmarkierung aktiv · Standard {war.maximumDepth! - (war.borderMark.playerId === winnerPlayerId ? 1 : -1)} → {war.maximumDepth}</p>}
-      <p>Gewinner: {getTerritoryCells(map, winnerId).length + editor.selected.length} · Verlierer: {getTerritoryCells(map, loserId).length - editor.selected.length} · Mindestfläche {getMinimumTerritoryArea(map.format)}</p>
+      <p>Übernahme: {editor.selected.length} Kästchen · Gewinner: {getTerritoryCells(map, winnerId).length + editor.selected.length} · Verlierer: {getTerritoryCells(map, loserId).length - editor.selected.length} · Mindestfläche {getMinimumTerritoryArea(map)}</p>
       <p>{validation.valid ? "Zusammenhang und Mindestfläche ✓" : `Ungültig: ${validation.reason}`}</p>
       <button className="primary-button" disabled={!validation.valid} onClick={() => onAction({ type: GameActionType.ProposeBorderAdvance,
         warId: war.id, playerId: winnerPlayerId, claimedCells: editor.selected })}>Grenzgewinn bestätigen</button>
     </>}
     {war.stage === "AWAITING_CUT_DIVISION" && editor && splitValidation && <>
       <h4>Gewinner zieht die Grenze</h4>
-      <p>Teil A {editor.selected.length} · Teil B {splitValidation.partBCells.length} · Mindestfläche {getMinimumTerritoryArea(map.format)}</p>
+      <p>Teil A {editor.selected.length} · Teil B {splitValidation.partBCells.length} · Mindestfläche {getMinimumTerritoryArea(map)}</p>
       <p>Zusammenhang A {areCellsOrthogonallyConnected(editor.selected) ? "✓" : "✗"} · B {areCellsOrthogonallyConnected(splitValidation.partBCells) ? "✓" : "✗"}</p>
       <p>Der Verlierer wählt zuerst. Sein Teil behält automatisch die ursprüngliche Karte.</p>
       <button className="primary-button" disabled={!splitValidation.valid} onClick={() => onAction({ type: GameActionType.ProposeWarCut,
@@ -165,6 +171,7 @@ export function WarControls({ state, editor, onAction }: {
     {war.stage === "AWAITING_DIAMOND_CORRECTION" && war.borderMark && editor && <>
       <h4>♦ Korrektur für <Name state={state} id={war.borderMark.playerId}/></h4>
       <p>Bis zu ein Kästchen entlang der neuen Teilungsgrenze.</p>
+      <p>Übernahme: {editor.selected.length} Kästchen</p>
       {correctionValidation && <p>{correctionValidation.valid ? "Zusammenhang und Mindestfläche ✓" : `Ungültig: ${correctionValidation.reason}`}</p>}
       <div className="button-row">
         <button className="primary-button" disabled={!correctionValidation?.valid} onClick={() => onAction({ type: GameActionType.ResolveDiamondCorrection,

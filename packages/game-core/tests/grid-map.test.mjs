@@ -71,7 +71,7 @@ test("split validation derives the exact complement and minimum size", () => {
   ]));
   const map = createGridMap({ width: 8, height: 5, format: "A4" }, cells);
   const partA = Array.from({ length: 20 }, (_, index) => ({ x: index % 8, y: Math.floor(index / 8) }));
-  const valid = validateTerritorySplit(map, "A", partA, getMinimumTerritoryArea("A4"));
+  const valid = validateTerritorySplit(map, "A", partA, getMinimumTerritoryArea(map));
   assert.equal(valid.valid, true);
   assert.equal(valid.partBCells.length, 20);
   const invalid = validateTerritorySplit(map, "A", partA.slice(0, 19), 20);

@@ -75,6 +75,12 @@ export function activateTerritory(
   if (!state.activation.pendingTerritoryIds.includes(action.territoryId) || territory.card === undefined) {
     throw new DomainError(DomainErrorCode.TerritoryNotActivated);
   }
+  const rolledNumbers = new Set(state.activationNumbers);
+  if (!rolledNumbers.has(territory.card.activationNumber) &&
+      (territory.card.additionalActivationNumber === undefined ||
+        !rolledNumbers.has(territory.card.additionalActivationNumber))) {
+    throw new DomainError(DomainErrorCode.TerritoryNotActivated);
+  }
 
   const { suit, additionalSuit } = territory.card;
   if (additionalSuit !== undefined && action.selectedSuit === undefined) {

@@ -49,11 +49,17 @@ export interface PublicRoomPlayer {
   readonly connected: boolean;
 }
 
+export interface MapDimensionsDto {
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface PublicRoomState {
   readonly roomId: string;
   readonly status: "WAITING" | "RUNNING" | "FINISHED";
   readonly players: readonly PublicRoomPlayer[];
   readonly hostPlayerId: string;
+  readonly map: MapDimensionsDto;
 }
 
 export interface RoomSnapshotMessage {
@@ -114,4 +120,10 @@ export interface StartRoomRequest {
   readonly sessionToken: string;
   readonly playerOrder: readonly string[];
   readonly firstMapDrawerPlayerId: string;
+  readonly map?: MapDimensionsDto;
+}
+
+export interface UpdateRoomMapRequest {
+  readonly sessionToken: string;
+  readonly map: MapDimensionsDto;
 }

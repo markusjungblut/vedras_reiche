@@ -127,6 +127,21 @@ test("unique winner pays own influence, exhausts own basic bid, and clears all l
   assert.ok(final.events.some((event) => event.type === GameEventType.LocalInfluenceCleared));
 });
 
+test("global influence does not create a local-influence clearing event", () => {
+  let base = stateWith(["A", "B"]);
+  base = { ...base, territories: base.territories.map((territory) => territory.id === "X"
+    ? { ...territory, localInfluenceByPlayerId: {} } : territory) };
+  let state = open(base).state;
+  state = submit(state, "A", 1).state;
+  const result = submit(state, "B", 2, 2);
+  assert.equal(result.events.some((event) => event.type === GameEventType.LocalInfluenceCleared), false);
+
+  state = open(stateWith(["A", "B"])).state;
+  state = submit(state, "A", 1).state;
+  const localResult = submit(state, "B", 2, 0, 2);
+  assert.equal(localResult.events.some((event) => event.type === GameEventType.LocalInfluenceCleared), true);
+});
+
 test("winning with the last available basic bid immediately refreshes all three", () => {
   let base = stateWith();
   base = { ...base, players: base.players.map((player) => player.id === "B"

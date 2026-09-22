@@ -98,6 +98,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .map-cell.map-cell-part-a, .map-cell.map-cell-part-a:hover { fill: #a97234; }
 .map-cell.map-cell-part-b, .map-cell.map-cell-part-b:hover { fill: #3674a4; }
 .map-cell-setup-available { fill: #233d68 !important; cursor: crosshair; }
+.map-cell-setup-locked { cursor: not-allowed; }
 .map-cell-setup-selected, .map-cell-setup-selected:hover { fill: #d08a42 !important; }
 .map-cell-realm-candidate-0 { fill: #735eaf !important; }
 .map-cell-realm-candidate-1 { fill: #2f7a85 !important; }
@@ -107,9 +108,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .raster-map.is-splitting .map-cell-part-a, .raster-map.is-splitting .map-cell-part-b { cursor: crosshair; }
 .map-grid-line { stroke: #496083; stroke-width: .025; pointer-events: none; opacity: .55; }
 .map-territory-border { stroke: #aebbd5; stroke-width: .075; pointer-events: none; }
+.map-setup-draft-border { stroke: #ffce77; stroke-width: .16; pointer-events: none; filter: drop-shadow(0 0 .08px #d87b31); }
 .map-split-border { stroke: #fff1c9; stroke-width: .14; pointer-events: none; }
 .map-shared-border { stroke: #ffd18a; stroke-width: .11; pointer-events: none; }
 .map-territory-label { fill: #e8edf7; font-size: .38px; font-weight: 750; pointer-events: none; paint-order: stroke; stroke: #14223a; stroke-width: .055; }
+.map-setup-region-label { fill: #fff1cf; }
 .map-poi { fill: #ffe0a9; font-size: .7px; text-anchor: middle; pointer-events: none; }
 .map-poi-selected { fill: #fff; font-size: .9px; }
 .map-settlement { fill: #c8f2d0; font-size: .72px; text-anchor: middle; pointer-events: none; }

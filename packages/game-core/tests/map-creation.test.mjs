@@ -18,6 +18,8 @@ import {
   PointOfInterestType,
   Suit,
   DIGITAL_MAP_CONFIG,
+  getMinimumTerritoryArea,
+  getBreakthroughThreshold,
 } from "../dist/index.js";
 
 const timestamp = "2026-09-21T12:00:00.000Z";
@@ -63,6 +65,23 @@ function box(x, y, width, height) {
   ];
 }
 
+function assertCompletePartition(map, borders, expectedAreas) {
+  const regions = deriveSetupRegions(map, borders);
+  const cells = regions.flatMap((region) => region.cells);
+  assert.equal(cells.length, map.width * map.height, "every map cell belongs to a setup region");
+  assert.equal(new Set(cells.map((cell) => `${cell.x},${cell.y}`)).size, map.width * map.height,
+    "no map cell belongs to more than one setup region");
+  assert.equal(regions.reduce((sum, region) => sum + region.cells.length, 0), map.width * map.height);
+  if (expectedAreas !== undefined) assert.deepEqual(regions.map((region) => region.cells.length).sort((a, b) => a - b), expectedAreas);
+  return regions;
+}
+
+function jaggedVerticalBarrier() {
+  // A wall from the top edge to the bottom edge with one leftward kink at y = 16.
+  // Each item remains an edge between two cells; the kink itself owns no cell.
+  return [...vertical(25, 0, 16), ...horizontal(16, 24, 25), ...vertical(24, 16, 50)];
+}
+
 function commit(state, edges) {
   return applyAction(state, {
     type: GameActionType.CommitSetupBoundaryDraft,
@@ -102,20 +121,34 @@ test("starts with one fully assigned 50 by 50 setup region", () => {
   assert.equal(state.mapCreation.regionCount, 1);
   assert.equal(Object.values(state.map.cells).filter((id) => id === null).length, 0);
   assert.equal(Object.values(state.map.cells).filter((id) => id === "R01").length, 2500);
-  assert.equal(deriveSetupRegions(state.map, state.mapCreation.borders)[0].cells.length, 2500);
+  assertCompletePartition(state.map, state.mapCreation.borders, [2500]);
 });
 
-test("a border from edge to edge creates exactly two setup regions", () => {
-  const state = commit(started(), vertical(25));
+test("a vertical center border from edge to edge creates two 1250-cell regions", () => {
+  const state = started();
+  assertCompletePartition(state.map, { edgeKeys: vertical(25).map((edge) => `${edge.from.x},${edge.from.y}|${edge.to.x},${edge.to.y}`) }, [1250, 1250]);
+  const committed = commit(state, vertical(25));
+  assert.equal(committed.mapCreation.regionCount, 2);
+  assert.equal(committed.mapCreation.stage, MapCreationStage.PlaceLandmarks);
+  assertCompletePartition(committed.map, committed.mapCreation.borders, [1250, 1250]);
+});
+
+test("a horizontal center border from edge to edge creates two 1250-cell regions", () => {
+  const state = commit(started(), horizontal(25));
   assert.equal(state.mapCreation.regionCount, 2);
   assert.equal(state.mapCreation.stage, MapCreationStage.PlaceLandmarks);
-  assert.deepEqual(deriveSetupRegions(state.map, state.mapCreation.borders).map((region) => region.cells.length), [1250, 1250]);
+  assertCompletePartition(state.map, state.mapCreation.borders, [1250, 1250]);
 });
 
-test("a closed border loop creates one additional region", () => {
-  const state = commit(started(), box(10, 10, 5, 5));
+test("a closed 10 by 10 border loop creates 100 and 2400-cell regions", () => {
+  const state = commit(started(), box(10, 10, 10, 10));
   assert.equal(state.mapCreation.regionCount, 2);
-  assert.deepEqual(deriveSetupRegions(state.map, state.mapCreation.borders).map((region) => region.cells.length).sort((a, b) => a - b), [25, 2475]);
+  assertCompletePartition(state.map, state.mapCreation.borders, [100, 2400]);
+});
+
+test("an incomplete edge path remains one complete region", () => {
+  const state = started();
+  assertCompletePartition(state.map, { edgeKeys: vertical(25, 0, 25).map((edge) => `${edge.from.x},${edge.from.y}|${edge.to.x},${edge.to.y}`) }, [2500]);
 });
 
 test("a split below the minimum setup size is rejected", () => {
@@ -128,11 +161,39 @@ test("a split below the minimum setup size is rejected", () => {
 test("several draft strokes can together make one split", () => {
   const state = commit(started(), [...vertical(25, 0, 25), ...vertical(25, 25, 50)]);
   assert.equal(state.mapCreation.regionCount, 2);
+  assertCompletePartition(state.map, state.mapCreation.borders, [1250, 1250]);
+});
+
+test("committing a split drops open draft branches instead of preserving ghost borders", () => {
+  const state = commit(started(), [
+    ...vertical(25),
+    ...horizontal(10, 25, 28),
+    ...horizontal(20, 30, 33),
+    ...horizontal(35, 35, 38),
+  ]);
+  assert.equal(state.mapCreation.regionCount, 2);
+  assert.equal(state.mapCreation.borders.edgeKeys.length, 50);
+  assert.deepEqual(state.mapCreation.borders.edgeKeys, vertical(25).map((edge) => `${edge.from.x},${edge.from.y}|${edge.to.x},${edge.to.y}`).sort());
+  const next = placeRequiredPois(state);
+  assert.throws(() => commit(next, horizontal(10, 25, 28)),
+    (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidSetupBoundaryDraft);
+  assert.equal(next.mapCreation.regionCount, 2);
+});
+
+test("minimum territory size and breakthrough threshold follow the configured board area", () => {
+  assert.equal(getMinimumTerritoryArea({ width: 50, height: 50 }), 25);
+  assert.equal(getMinimumTerritoryArea({ width: 100, height: 50 }), 50);
+  assert.equal(getMinimumTerritoryArea({ width: 50, height: 25 }), 13);
+  assert.equal(getBreakthroughThreshold({ width: 50, height: 50 }), 50);
+  assert.equal(getBreakthroughThreshold({ width: 100, height: 50 }), 100);
+  assert.equal(getBreakthroughThreshold({ width: 50, height: 25 }), 26);
 });
 
 test("a three-way draft is rejected without consuming the setup turn", () => {
   const state = started();
-  assert.throws(() => commit(state, [...vertical(16), ...vertical(33)]),
+  const edges = [...vertical(16), ...vertical(33)];
+  assertCompletePartition(state.map, { edgeKeys: edges.map((edge) => `${edge.from.x},${edge.from.y}|${edge.to.x},${edge.to.y}`) }, [800, 850, 850]);
+  assert.throws(() => commit(state, edges),
     (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidSetupBoundaryDraft);
   assert.equal(state.mapCreation.regionCount, 1);
   assert.equal(state.mapCreation.activePlayerId, "P1");
@@ -141,9 +202,34 @@ test("a three-way draft is rejected without consuming the setup turn", () => {
 test("one draft cannot split two existing regions", () => {
   let state = commit(started(), vertical(25));
   state = placeRequiredPois(state);
-  assert.throws(() => commit(state, horizontal(25)),
+  const edges = horizontal(25);
+  assertCompletePartition(state.map, { edgeKeys: [...state.mapCreation.borders.edgeKeys,
+    ...edges.map((edge) => `${edge.from.x},${edge.from.y}|${edge.to.x},${edge.to.y}`)] }, [625, 625, 625, 625]);
+  assert.throws(() => commit(state, edges),
     (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidSetupBoundaryDraft);
   assert.equal(state.mapCreation.regionCount, 2);
+});
+
+test("a real one-cell loop is recognized as geometry and then rejected by the minimum size rule", () => {
+  const state = started();
+  const edges = box(10, 10, 1, 1);
+  const edgeKeys = edges.map((edge) => `${edge.from.x},${edge.from.y}|${edge.to.x},${edge.to.y}`);
+  assertCompletePartition(state.map, { edgeKeys }, [1, 2499]);
+  assert.throws(() => commit(state, edges),
+    (error) => error instanceof DomainError && error.code === DomainErrorCode.MinimumTerritorySizeViolated);
+  assert.equal(state.mapCreation.regionCount, 1);
+});
+
+test("a kinked edge path creates no artificial one-cell line region", () => {
+  const state = started();
+  const edges = jaggedVerticalBarrier();
+  const edgeKeys = edges.map((edge) => `${edge.from.x},${edge.from.y}|${edge.to.x},${edge.to.y}`);
+  const regions = assertCompletePartition(state.map, { edgeKeys });
+  assert.equal(regions.length, 2);
+  assert.equal(regions.some((region) => region.cells.length === 1), false);
+  const committed = commit(state, edges);
+  assert.equal(committed.mapCreation.regionCount, 2);
+  assertCompletePartition(committed.map, committed.mapCreation.borders);
 });
 
 test("a correction preserves the region count while a normal draft does not accept it", () => {
@@ -152,6 +238,12 @@ test("a correction preserves the region count while a normal draft does not acce
   const partial = vertical(10, 0, 10);
   assert.throws(() => commit(state, partial),
     (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidSetupBoundaryDraft);
+  assert.throws(() => applyAction(state, {
+    type: GameActionType.CorrectSetupBorders,
+    playerId: state.mapCreation.activePlayerId,
+    addEdges: partial,
+  }, context()), (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidMapCreationState);
+  state = { ...state, mapCreation: { ...state.mapCreation, stage: MapCreationStage.ReadyToFinalize } };
   state = applyAction(state, {
     type: GameActionType.CorrectSetupBorders,
     playerId: state.mapCreation.activePlayerId,

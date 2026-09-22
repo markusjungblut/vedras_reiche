@@ -13,6 +13,7 @@ import type { GridMapState } from "../map/grid-map.js";
 import {
   analyzeSetupPartitionChange,
   deriveSetupRegions,
+  getActualSetupBoundaryKeys,
   materializeSetupRegionMap,
   normalizeSetupBorderEdges,
   type SetupBorderEdge,
@@ -113,7 +114,7 @@ function setupMap(state: GameState, regions: readonly SetupRegion[]): GridMapSta
 }
 
 function assertMinimumSetupAreas(map: GridMapState, regions: readonly SetupRegion[]): void {
-  const minimum = getMinimumTerritoryArea(map.format);
+  const minimum = getMinimumTerritoryArea(map);
   const tooSmall = regions.find((region) => region.cells.length < minimum);
   if (tooSmall !== undefined) {
     throw new DomainError(DomainErrorCode.MinimumTerritorySizeViolated,
@@ -170,7 +171,15 @@ export function commitSetupBoundaryDraft(state: GameState, action: CommitSetupBo
   const addedKeys = keys.filter((key) => !oldKeys.has(key));
   if (addedKeys.length === 0) throw new DomainError(DomainErrorCode.InvalidSetupBoundaryDraft, "The draft contains no new boundary segment.");
   const before = setupRegions(state, mapCreation);
-  const borders = { edgeKeys: [...new Set([...mapCreation.borders.edgeKeys, ...addedKeys])].sort() as SetupBorderEdgeKey[] };
+  const previewBorders = { edgeKeys: [...new Set([...mapCreation.borders.edgeKeys, ...addedKeys])].sort() as SetupBorderEdgeKey[] };
+  const previewRegions = deriveSetupRegions(state.map!, previewBorders);
+  const previewChange = analyzeSetupPartitionChange(before, previewRegions);
+  if (!previewChange.validSingleSplit) {
+    throw new DomainError(DomainErrorCode.InvalidSetupBoundaryDraft,
+      previewChange.regionCountDelta > 1 ? "Dieser Zug würde mehr als ein neues Gebiet erzeugen." : "Ein Zeichenzug muss genau eine bestehende Region in zwei Regionen teilen.");
+  }
+  const actualAddedKeys = getActualSetupBoundaryKeys(addedKeys, previewRegions);
+  const borders = { edgeKeys: [...new Set([...mapCreation.borders.edgeKeys, ...actualAddedKeys])].sort() as SetupBorderEdgeKey[] };
   const after = deriveSetupRegions(state.map!, borders);
   const change = analyzeSetupPartitionChange(before, after);
   if (!change.validSingleSplit) {
@@ -183,7 +192,7 @@ export function commitSetupBoundaryDraft(state: GameState, action: CommitSetupBo
   const nextMapCreation: MapCreationState = { ...mapCreation, borders, regionCount, stage,
     activePlayerId: nextPlayer(state, action.playerId), lastSetupPlayerId: action.playerId };
   const descriptions: EventDescription[] = [{ type: GameEventType.SetupBoundaryCommitted, actorId: action.playerId,
-    payload: { regionCount, segmentCount: addedKeys.length, splitSourceRegionId: change.splitSourceRegionId } }];
+    payload: { regionCount, segmentCount: actualAddedKeys.length, splitSourceRegionId: change.splitSourceRegionId } }];
   const poiDescription = poiPhaseDescription(state, stage);
   if (poiDescription !== undefined) descriptions.push(poiDescription);
   return result({ ...state, map: setupMap(state, after), mapCreation: nextMapCreation,
@@ -194,8 +203,8 @@ export function commitSetupBoundaryDraft(state: GameState, action: CommitSetupBo
 export function correctSetupBorders(state: GameState, action: CorrectSetupBordersAction, timestamp: string): ActionResult {
   const mapCreation = requireMapCreation(state);
   assertActive(mapCreation, action.playerId);
-  if (mapCreation.stage !== MapCreationStage.DrawTerritories && mapCreation.stage !== MapCreationStage.ReadyToFinalize) {
-    throw new DomainError(DomainErrorCode.InvalidMapCreationState, "Borders can be corrected only between POI placements.");
+  if (mapCreation.stage !== MapCreationStage.ReadyToFinalize) {
+    throw new DomainError(DomainErrorCode.InvalidMapCreationState, "Borders can be corrected only before finalizing the map.");
   }
   const add = changedBorderKeys(state.map!, action.addEdges ?? []);
   const remove = changedBorderKeys(state.map!, action.removeEdges ?? []);
@@ -240,7 +249,7 @@ export function placeSetupPointOfInterest(state: GameState, action: PlaceSetupPo
 function setupValidationIssues(state: GameState, mapCreation: MapCreationState): MapValidationIssue[] {
   const regions = setupRegions(state, mapCreation);
   const map = setupMap(state, regions);
-  const minimum = getMinimumTerritoryArea(map.format);
+  const minimum = getMinimumTerritoryArea(map);
   const issues: MapValidationIssue[] = [];
   const covered = regions.reduce((count, region) => count + region.cells.length, 0);
   if (covered !== map.width * map.height) issues.push({ territoryId: "KARTE", code: "UNASSIGNED_CELL", message: "Karte: Setup-Regionen bedecken nicht jede Zelle." });
@@ -257,7 +266,7 @@ function setupValidationIssues(state: GameState, mapCreation: MapCreationState):
 export function getSetupMapValidationIssues(state: GameState): MapValidationIssue[] {
   if (state.map === undefined) return [{ territoryId: "KARTE", code: "DISCONNECTED", message: "Keine Rasterkarte vorhanden." }];
   if (state.mapCreation !== undefined && state.territories.length === 0) return setupValidationIssues(state, state.mapCreation);
-  const minimum = getMinimumTerritoryArea(state.map.format);
+  const minimum = getMinimumTerritoryArea(state.map);
   const issues: MapValidationIssue[] = [];
   const unassignedCount = Object.values(state.map.cells).filter((territoryId) => territoryId === null).length;
   if (unassignedCount > 0) issues.push({ territoryId: "KARTE", code: "UNASSIGNED_CELL", message: `Karte: ${unassignedCount} freie Rasterzelle${unassignedCount === 1 ? "" : "n"}.` });

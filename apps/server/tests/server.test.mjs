@@ -6,7 +6,7 @@ import { WebSocket } from "ws";
 import { CryptoCardSource } from "../dist/random.js";
 import { RoomManager } from "../dist/room-manager.js";
 import { createVedrasServer, broadcastRoom } from "../dist/server.js";
-import { GameActionType, GamePhase, Suit, createGameState } from "@vedras/game-core";
+import { GameActionType, GamePhase, Suit, createGameState, getMinimumTerritoryArea } from "@vedras/game-core";
 import { NetworkErrorCode } from "@vedras/protocol";
 
 class FixedRandomSource {
@@ -41,6 +41,10 @@ function vertical(cut) {
   }));
 }
 
+function tripleSplit() {
+  return [...vertical(16), ...vertical(33)];
+}
+
 test("room lifecycle enforces player count, host authority, and start state", () => {
   const rooms = manager();
   const host = rooms.createRoom("Anna");
@@ -65,6 +69,25 @@ test("room lifecycle enforces player count, host authority, and start state", ()
     (error) => error.code === NetworkErrorCode.RoomAlreadyStarted);
   assert.throws(() => rooms.joinRoom(host.room.roomId, "Gabi"), (error) => error.code === NetworkErrorCode.RoomAlreadyStarted);
   assert.throws(() => rooms.authenticate(host.room.roomId, "not-a-token"), (error) => error.code === NetworkErrorCode.InvalidSession);
+});
+
+test("the host configures the authoritative lobby map before the game starts", () => {
+  const rooms = manager();
+  const host = rooms.createRoom("Anna");
+  const guest = rooms.joinRoom(host.room.roomId, "Ben");
+  assert.throws(() => rooms.updateMap(host.room.roomId, guest.participant.sessionToken, { width: 100, height: 50 }),
+    (error) => error.code === NetworkErrorCode.NotHost);
+  assert.throws(() => rooms.updateMap(host.room.roomId, host.participant.sessionToken, { width: 0, height: 50 }),
+    (error) => error.code === NetworkErrorCode.InvalidStartConfiguration);
+  rooms.updateMap(host.room.roomId, host.participant.sessionToken, { width: 100, height: 50 });
+  assert.deepEqual(rooms.getPublicRoomState(host.room).map, { width: 100, height: 50 });
+  rooms.startRoom(host.room.roomId, host.participant.sessionToken,
+    [host.participant.playerId, guest.participant.playerId], host.participant.playerId);
+  assert.equal(host.room.gameState.map.width, 100);
+  assert.equal(host.room.gameState.map.height, 50);
+  assert.equal(getMinimumTerritoryArea(host.room.gameState.map), 50);
+  assert.throws(() => rooms.updateMap(host.room.roomId, host.participant.sessionToken, { width: 50, height: 50 }),
+    (error) => error.code === NetworkErrorCode.RoomAlreadyStarted);
 });
 
 test("commands are authoritative, serialized, identity-bound, and deduplicated", async () => {
@@ -105,6 +128,62 @@ test("commands are authoritative, serialized, identity-bound, and deduplicated",
   assert.equal(duplicate.accepted, true);
   assert.equal(duplicate.duplicate, true);
   assert.equal(room.revision, revision + 1);
+});
+
+test("multiplayer setup commits are server-validated and broadcast the same two-region revision", async () => {
+  const rooms = manager();
+  const { room, participant: anna, guest } = startTwoPlayers(rooms);
+  const revision = room.revision;
+  const annaMessages = [];
+  const benMessages = [];
+  rooms.attachConnection(room.roomId, anna.sessionToken, { send: (message) => annaMessages.push(message), close: () => {} });
+  rooms.attachConnection(room.roomId, guest.participant.sessionToken, { send: (message) => benMessages.push(message), close: () => {} });
+
+  const inactive = await rooms.processCommand(room.roomId, guest.participant.sessionToken, "guest-split", {
+    type: GameActionType.CommitSetupBoundaryDraft,
+    playerId: guest.participant.playerId,
+    edges: vertical(25),
+  });
+  assert.equal(inactive.accepted, false);
+  assert.equal(room.revision, revision);
+
+  const malicious = await rooms.processCommand(room.roomId, anna.sessionToken, "three-way", {
+    type: GameActionType.CommitSetupBoundaryDraft,
+    playerId: anna.playerId,
+    edges: tripleSplit(),
+  });
+  assert.equal(malicious.accepted, false);
+  assert.equal(room.revision, revision);
+  assert.equal(room.gameState.mapCreation.regionCount, 1);
+
+  const accepted = await rooms.processCommand(room.roomId, anna.sessionToken, "midline", {
+    type: GameActionType.CommitSetupBoundaryDraft,
+    playerId: anna.playerId,
+    edges: vertical(25),
+  });
+  assert.equal(accepted.accepted, true);
+  assert.equal(room.revision, revision + 1);
+  assert.equal(room.gameState.mapCreation.regionCount, 2);
+
+  broadcastRoom(rooms, room);
+  const annaSnapshot = annaMessages.at(-1);
+  const benSnapshot = benMessages.at(-1);
+  assert.equal(annaSnapshot.type, "ROOM_SNAPSHOT");
+  assert.equal(benSnapshot.type, "ROOM_SNAPSHOT");
+  assert.equal(annaSnapshot.revision, revision + 1);
+  assert.equal(benSnapshot.revision, revision + 1);
+  const annaView = annaSnapshot.gameView;
+  const benView = benSnapshot.gameView;
+  assert.equal(annaView.mapCreation.regionCount, 2);
+  assert.equal(benView.mapCreation.regionCount, 2);
+  assert.deepEqual(Object.values(annaView.map.cells).reduce((counts, id) => {
+    counts[id] = (counts[id] ?? 0) + 1; return counts;
+  }, {}), Object.values(benView.map.cells).reduce((counts, id) => {
+    counts[id] = (counts[id] ?? 0) + 1; return counts;
+  }, {}));
+  assert.deepEqual(Object.values(annaView.map.cells).reduce((counts, id) => {
+    counts[id] = (counts[id] ?? 0) + 1; return counts;
+  }, {}), { R01: 1250, R02: 1250 });
 });
 
 test("reconnecting a session replaces the connection and receives the current player view", () => {

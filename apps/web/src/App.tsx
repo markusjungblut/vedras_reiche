@@ -8,7 +8,6 @@ import {
   DIGITAL_BOARD_HEIGHT,
   DIGITAL_BOARD_WIDTH,
   DIGITAL_MAP_CONFIG,
-  DIGITAL_MIN_TERRITORY_AREA,
   getSetupMapValidationIssues,
   getSetupPoiRequirements,
   MapCreationStage,
@@ -52,6 +51,7 @@ import { DemoCardSource } from "./debug/demo-card-source";
 import { SeededRandomSource } from "./debug/seeded-random-source";
 import { LocalGameController, type GameController } from "./controllers/game-controller";
 import { RemoteGameController, type MultiplayerCredentials } from "./controllers/remote-game-controller";
+import { mergeDraftEdges } from "./map/setup-draft";
 import type { PublicRoomState } from "@vedras/protocol";
 
 const DEFAULT_SEED = 12345;
@@ -86,12 +86,13 @@ interface SplitDraft {
   readonly originalCardPart: "A" | "B";
 }
 
-type SetupMode = "PEN" | "BRUSH" | "CORRECTION";
+type SetupMode = "PEN" | "ERASER" | "CORRECTION";
 
 interface SetupDraft {
   readonly mode: SetupMode;
-  /** Cell paths are UI input only; the core receives derived grid edges. */
-  readonly strokes: readonly (readonly string[])[];
+  /** Local, zero-area border edges. The authoritative state changes only at commit. */
+  readonly strokes: readonly (readonly SetupBorderEdge[])[];
+  readonly activeStroke?: readonly SetupBorderEdge[] | undefined;
 }
 
 interface NewGamePlayerInput { readonly key: string; readonly name: string; }
@@ -172,6 +173,7 @@ interface ControlProps {
   readonly playerName: (id: string) => string;
   readonly setupDraft?: SetupDraft | undefined;
   readonly onSetSetupDraft?: (draft: SetupDraft) => void;
+  readonly setupCanEdit?: boolean;
   readonly setupValidationIssues?: ReturnType<typeof getSetupMapValidationIssues>;
   readonly privacyPlayerId?: string | undefined;
   readonly factionVisible?: boolean;
@@ -271,7 +273,7 @@ function SplitEditor({ state, onAction, splitDraft, onToggleSplitCell, onSetOrig
     const [x, y] = key.split(",").map(Number);
     return { x, y } as GridCell;
   });
-  const minimum = getMinimumTerritoryArea(map.format);
+  const minimum = getMinimumTerritoryArea(map);
   const validation = validateTerritorySplit(map, original.id, partA, minimum);
   const partAConnected = areCellsOrthogonallyConnected(partA);
   const partBConnected = areCellsOrthogonallyConnected(validation.partBCells);
@@ -461,60 +463,13 @@ function ActionControls({ state, selectedTerritoryId, onSelectTerritory, onActio
   </section>;
 }
 
-function setupEdges(strokes: readonly (readonly string[])[], mapWidth: number, mapHeight: number): SetupBorderEdge[] {
-  const edges: SetupBorderEdge[] = [];
-  for (const stroke of strokes) {
-    const cells = stroke.map(fromCellKey);
-    if (cells.length < 2) continue;
-
-    const first = cells[0]!;
-    if (cells.every((cell) => cell.x === first.x)) {
-      const boundaryX = first.x === 0 ? 0 : first.x - 1;
-      const drawnMinY = Math.min(...cells.map((cell) => cell.y));
-      const minY = drawnMinY <= 1 ? 0 : drawnMinY;
-      const drawnMaxY = Math.max(...cells.map((cell) => cell.y));
-      const maxY = drawnMaxY >= mapHeight - 2 ? mapHeight - 1 : drawnMaxY;
-      for (let y = minY; y <= maxY; y += 1) {
-        edges.push({ from: { x: boundaryX, y }, to: { x: boundaryX + 1, y } });
-      }
-      continue;
-    }
-
-    if (cells.every((cell) => cell.y === first.y)) {
-      const boundaryY = first.y === 0 ? 0 : first.y - 1;
-      const drawnMinX = Math.min(...cells.map((cell) => cell.x));
-      const minX = drawnMinX <= 1 ? 0 : drawnMinX;
-      const drawnMaxX = Math.max(...cells.map((cell) => cell.x));
-      const maxX = drawnMaxX >= mapWidth - 2 ? mapWidth - 1 : drawnMaxX;
-      for (let x = minX; x <= maxX; x += 1) {
-        edges.push({ from: { x, y: boundaryY }, to: { x, y: boundaryY + 1 } });
-      }
-      continue;
-    }
-
-    for (let index = 1; index < cells.length; index += 1) {
-      let current = cells[index - 1]!;
-      const target = cells[index]!;
-      while (current.x !== target.x) {
-        const next = { x: current.x + Math.sign(target.x - current.x), y: current.y };
-        edges.push({ from: current, to: next }); current = next;
-      }
-      while (current.y !== target.y) {
-        const next = { x: current.x, y: current.y + Math.sign(target.y - current.y) };
-        edges.push({ from: current, to: next }); current = next;
-      }
-    }
-  }
-  return edges;
-}
-
 function SetupControls(props: ControlProps) {
-  const { state, onAction, playerName: name, setupDraft, onSetSetupDraft, setupValidationIssues = [] } = props;
+  const { state, onAction, playerName: name, setupDraft, onSetSetupDraft, setupValidationIssues = [], setupCanEdit = true } = props;
   const mapCreation = state.mapCreation;
   const map = state.map;
   if (!mapCreation || !map || !onSetSetupDraft) return <p>Der Kartenbauzustand ist nicht verfügbar.</p>;
   const draft = setupDraft ?? { mode: "PEN" as const, strokes: [] };
-  const edges = setupEdges(draft.strokes, map.width, map.height);
+  const edges = mergeDraftEdges([...draft.strokes, ...(draft.activeStroke === undefined ? [] : [draft.activeStroke])]);
   const stagePoiType: Partial<Record<MapCreationStage, PointOfInterestType>> = {
     [MapCreationStage.PlaceLandmarks]: PointOfInterestType.Landmark,
     [MapCreationStage.PlaceJunctions]: PointOfInterestType.Junction,
@@ -535,6 +490,7 @@ function SetupControls(props: ControlProps) {
   }
 
   let previewCount = mapCreation.regionCount;
+  let previewAreas = deriveSetupRegions(map, mapCreation.borders).map((region) => region.cells.length);
   let previewValid = false;
   let previewMessage = "Zeichne einen oder mehrere Grenzstriche.";
   try {
@@ -549,7 +505,8 @@ function SetupControls(props: ControlProps) {
       : [...new Set([...mapCreation.borders.edgeKeys, ...keys])];
     const after = deriveSetupRegions(map, { edgeKeys });
     previewCount = after.length;
-    const minimum = getMinimumTerritoryArea(map.format);
+    previewAreas = after.map((region) => region.cells.length);
+    const minimum = getMinimumTerritoryArea(map);
     const tooSmall = after.find((region) => region.cells.length < minimum);
     if (tooSmall !== undefined) previewMessage = "Ungültig: " + tooSmall.id + " hätte nur " + tooSmall.cells.length + " / " + minimum + " Kästchen.";
     else if (draft.mode === "CORRECTION") {
@@ -558,20 +515,19 @@ function SetupControls(props: ControlProps) {
     } else {
       const change = analyzeSetupPartitionChange(current, after);
       previewValid = edges.length > 0 && change.validSingleSplit;
-      previewMessage = previewValid ? "Gültig: Genau eine Region wird geteilt." : previewCount > mapCreation.regionCount + 1
-        ? "Ungültige Teilung: Ein Zeichenzug darf nur ein zusätzliches Gebiet erzeugen."
-        : "Der Entwurf muss genau eine Region in zwei Regionen teilen.";
+      previewMessage = previewValid ? "✓ Gültige Teilung" : previewCount > mapCreation.regionCount + 1
+        ? "Ungültig: Dieser Entwurf würde zwei neue Gebiete erzeugen. Pro Zeichenzug ist nur ein neues Gebiet erlaubt."
+        : previewCount === mapCreation.regionCount ? "Noch keine vollständige Teilung"
+          : "Der Entwurf muss genau eine Region in zwei Regionen teilen.";
     }
   } catch {
     previewMessage = "Ungültige Grenzsegmente.";
   }
 
-  const clear = () => onSetSetupDraft({ mode: draft.mode, strokes: [] });
   const undo = () => onSetSetupDraft({
     ...draft,
-    strokes: draft.strokes.length === 0 ? [] : draft.strokes[draft.strokes.length - 1]!.length > 1
-      ? [...draft.strokes.slice(0, -1), draft.strokes[draft.strokes.length - 1]!.slice(0, -1)]
-      : draft.strokes.slice(0, -1),
+    activeStroke: undefined,
+    strokes: draft.strokes.slice(0, -1),
   });
   const correction = draft.mode === "CORRECTION";
   const commit = () => {
@@ -591,8 +547,8 @@ function SetupControls(props: ControlProps) {
       <p>{setupValidationIssues.length === 0 ? "✓ Alle Regionen erfüllen Fläche, Zusammenhang und Nachbarschaft." : "Die Karte benötigt noch Korrekturen:"}</p>
       {setupValidationIssues.length > 0 && <ul className="validation-list">{setupValidationIssues.map((issue, index) => <li key={String(issue.territoryId) + "-" + index}>✗ {issue.message}</li>)}</ul>}
       <div className="button-row">
-        <button type="button" className="secondary-button" onClick={() => onSetSetupDraft({ mode: "CORRECTION", strokes: [] })}>Korrektur</button>
-        <button type="button" className="primary-button" disabled={setupValidationIssues.length > 0}
+        <button type="button" className="secondary-button" disabled={!setupCanEdit} onClick={() => onSetSetupDraft({ mode: "CORRECTION", strokes: [] })}>Korrektur</button>
+        <button type="button" className="primary-button" disabled={!setupCanEdit || setupValidationIssues.length > 0}
           onClick={() => onAction({ type: GameActionType.FinalizeMapCreation, playerId: mapCreation.activePlayerId })}>Karte abschließen</button>
       </div>
     </section>;
@@ -601,20 +557,20 @@ function SetupControls(props: ControlProps) {
   return <section className="control-section" aria-label="Kartenbau">
     <div className="section-kicker">Kartenbau</div>
     <h3>Gebiete: {mapCreation.regionCount} / {mapCreation.targetTerritoryCount}</h3>
-    <p>Aktiver Spieler: {name(mapCreation.activePlayerId)} · Mindestgröße: {getMinimumTerritoryArea(map.format)} Kästchen</p>
+    <p>Aktiver Spieler: {name(mapCreation.activePlayerId)} · Mindestgröße: {getMinimumTerritoryArea(map)} Kästchen</p>
     <p>Nächster Meilenstein: {mapCreation.regionCount < state.players.length ? "Wahrzeichen" : mapCreation.regionCount < state.players.length * 2 ? "Knotenpunkte" : mapCreation.regionCount < state.players.length * 3 ? "Festungen" : mapCreation.regionCount < state.players.length * 4 ? "Relikte" : "Karte abschließen"}</p>
     <div className="button-row">
-      <button type="button" className={draft.mode === "PEN" ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "PEN", strokes: [] })}>Grenzstift</button>
-      <button type="button" className={draft.mode === "BRUSH" ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "BRUSH", strokes: [] })}>Pinsel</button>
-      <button type="button" className={correction ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "CORRECTION", strokes: [] })}>Korrektur</button>
+      <button type="button" disabled={!setupCanEdit} className={draft.mode === "PEN" ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "PEN", strokes: [] })}>Grenzstift</button>
+      {!correction && <button type="button" disabled={!setupCanEdit} className={draft.mode === "ERASER" ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "ERASER", strokes: draft.strokes })}>Radiergummi</button>}
     </div>
-    <p>Draft: {mapCreation.regionCount} → {previewCount} Gebiete · {previewMessage}</p>
-    <small>{draft.mode === "BRUSH" ? "Der Pinsel zeichnet denselben gerasterten Kantenpfad mit großzügiger Drag-Eingabe." : "Zum Zeichnen auf der Karte ziehen. Diagonale Bewegungen werden in orthogonale Rasterkanten zerlegt."}</small>
+    {!setupCanEdit && <p className="muted">Du bist nicht am Zug. Der Server akzeptiert nur Aktionen des aktiven Spielers.</p>}
+    <p>Gebiete aktuell: {mapCreation.regionCount} · Nach diesem Entwurf: {previewCount} · {previewMessage}</p>
+    <small>Bestätigte Kanten: {mapCreation.borders.edgeKeys.length} · Draft-Kanten: {edges.length} · Vorschauflächen: {previewAreas.join(" + ")} = {previewAreas.reduce((sum, area) => sum + area, 0)}</small>
+    <small>{draft.mode === "ERASER" ? "Der Radiergummi entfernt nur Kanten aus dem aktuellen lokalen Entwurf." : "Der Grenzstift snappt präzise auf Rastervertices und erzeugt nur Kanten zwischen Zellen."}</small>
     <div className="button-row">
-      <button type="button" className="secondary-button" disabled={edges.length === 0} onClick={undo}>Rückgängig</button>
-      <button type="button" className="secondary-button" disabled={edges.length === 0} onClick={clear}>Draft löschen</button>
-      <button type="button" className="primary-button" disabled={!previewValid} onClick={commit}>{correction ? "Korrektur übernehmen" : "Teilung bestätigen"}</button>
-      {correction && mapCreation.stage === MapCreationStage.ReadyToFinalize && <button type="button" className="secondary-button" onClick={() => onSetSetupDraft({ mode: "PEN", strokes: [] })}>Korrektur schließen</button>}
+      <button type="button" className="secondary-button" disabled={!setupCanEdit || edges.length === 0} onClick={undo}>Rückgängig</button>
+      <button type="button" className="primary-button" disabled={!setupCanEdit || !previewValid} onClick={commit}>{correction ? "Korrektur übernehmen" : "Teilung bestätigen"}</button>
+      {correction && mapCreation.stage === MapCreationStage.ReadyToFinalize && <button type="button" className="secondary-button" disabled={!setupCanEdit} onClick={() => onSetSetupDraft({ mode: "PEN", strokes: [] })}>Korrektur schließen</button>}
     </div>
   </section>;
 }
@@ -696,6 +652,7 @@ export default function App() {
   const [showMultiplayer, setShowMultiplayer] = useState(false);
   const [lobbyOrder, setLobbyOrder] = useState<readonly string[]>([]);
   const [firstMultiplayerDrawerId, setFirstMultiplayerDrawerId] = useState<string | undefined>();
+  const [lobbyMap, setLobbyMap] = useState({ width: DIGITAL_BOARD_WIDTH, height: DIGITAL_BOARD_HEIGHT });
   const runtime = useRef<Runtime | null>(null);
   const controller = useRef<GameController | null>(null);
   const unsubscribeController = useRef<(() => void) | null>(null);
@@ -720,6 +677,7 @@ export default function App() {
       const room = (snapshot as { readonly room?: PublicRoomState }).room;
       if (room !== undefined) {
         setMultiplayerRoom(room);
+        setLobbyMap({ width: room.map.width, height: room.map.height });
         setLobbyOrder((current) => {
           const playerIds = room.players.map((player) => player.playerId);
           const retained = current.filter((id) => playerIds.includes(id));
@@ -825,6 +783,23 @@ export default function App() {
         sessionToken: multiplayer.sessionToken,
         playerOrder: lobbyOrder,
         firstMapDrawerPlayerId: firstMultiplayerDrawerId,
+        map: lobbyMap,
+      });
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+  const updateMultiplayerMap = async () => {
+    if (multiplayer === null || multiplayerRoom === undefined ||
+        !Number.isSafeInteger(lobbyMap.width) || lobbyMap.width <= 0 ||
+        !Number.isSafeInteger(lobbyMap.height) || lobbyMap.height <= 0) {
+      setError("Breite und Höhe müssen positive ganze Zahlen sein.");
+      return;
+    }
+    try {
+      await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/map`, {
+        sessionToken: multiplayer.sessionToken, map: lobbyMap,
       });
       setError(null);
     } catch (caught) {
@@ -899,8 +874,8 @@ export default function App() {
   const highlightedIds = state?.phase === GamePhase.ActivationPhase
     ? getAvailableActivationTerritoryIds(state) : [];
   const split = state?.pendingSplit;
-  const editorBase = state ? getMapEditor(state, []) : undefined;
-  const editor = state ? getMapEditor(state, mapDraft && mapDraft.key === editorBase?.key ? mapDraft.keys : []) : undefined;
+  const editorBase = state ? getMapEditor(state) : undefined;
+  const editor = state ? getMapEditor(state, mapDraft && mapDraft.key === editorBase?.key ? mapDraft.keys : undefined) : undefined;
   const toggleMapCell = (cell: GridCell) => {
     if (!editor) return;
     if (!editor.selectable.some((candidate) => candidate.x === cell.x && candidate.y === cell.y)) return;
@@ -923,25 +898,53 @@ export default function App() {
     return mapCreation.stage === MapCreationStage.DrawTerritories || mapCreation.stage === MapCreationStage.ReadyToFinalize
       ? Object.keys(state.map.cells).map(fromCellKey) : [] as GridCell[];
   })();
+  const setupCanEdit = multiplayer === null || mapCreation?.activePlayerId === multiplayer.playerId;
+  const setupDraftEdges = mergeDraftEdges([...setupDraft.strokes, ...(setupDraft.activeStroke === undefined ? [] : [setupDraft.activeStroke])]);
+  const setupPreviewRegions = (() => {
+    if (!state?.map || !mapCreation) return undefined;
+    try {
+      const keys = normalizeSetupBorderEdges(state.map, setupDraftEdges);
+      const previewKeys = new Set(mapCreation.borders.edgeKeys);
+      for (const key of keys) {
+        if (setupDraft.mode === "CORRECTION" && previewKeys.has(key)) previewKeys.delete(key);
+        else previewKeys.add(key);
+      }
+      return deriveSetupRegions(state.map, { edgeKeys: [...previewKeys].sort() });
+    } catch {
+      return undefined;
+    }
+  })();
   const setupEditor = mapCreation && state?.map ? {
     mode: setupPoiType[mapCreation.stage] ? "POI" as const : setupDraft.mode,
     selectable: setupSelectable,
-    selected: setupDraft.strokes.flat().map(fromCellKey),
+    draftEdges: setupDraftEdges,
+    previewRegions: setupPreviewRegions,
+    editable: setupCanEdit,
   } : undefined;
-  const selectSetupCell = (cell: GridCell, additive: boolean) => {
+  const selectSetupCell = (cell: GridCell) => {
     if (!state || !mapCreation) return;
     const poiType = setupPoiType[mapCreation.stage];
     if (poiType !== undefined) {
+      if (!setupCanEdit) return;
       dispatch({ type: GameActionType.PlaceSetupPointOfInterest, playerId: mapCreation.activePlayerId, poiType, position: cell });
-      return;
     }
-    const key = String(cell.x) + "," + cell.y;
-    setSetupDraft((current) => {
-      if (!additive || current.strokes.length === 0) return { ...current, strokes: [...current.strokes, [key]] };
-      const last = current.strokes[current.strokes.length - 1]!;
-      return last[last.length - 1] === key ? current : { ...current, strokes: [...current.strokes.slice(0, -1), [...last, key]] };
-    });
-  };  const setupValidationIssues = state?.phase === GamePhase.MapCreation ? getSetupMapValidationIssues(state) : [];
+  };
+  const previewSetupStroke = (edges: readonly SetupBorderEdge[]) => {
+    if (!setupCanEdit) return;
+    setSetupDraft((current) => ({ ...current, activeStroke: edges }));
+  };
+  const commitSetupStroke = (edges: readonly SetupBorderEdge[]) => {
+    if (!setupCanEdit || edges.length === 0) return;
+    setSetupDraft((current) => ({ ...current, activeStroke: undefined, strokes: [...current.strokes, edges] }));
+  };
+  const eraseSetupStroke = (edges: readonly SetupBorderEdge[]) => {
+    if (!setupCanEdit || edges.length === 0) return;
+    const removed = new Set(edges.map((edge) => toSetupBorderEdgeKey(edge.from, edge.to)));
+    setSetupDraft((current) => ({ ...current, activeStroke: undefined,
+      strokes: current.strokes.map((stroke) => stroke.filter((edge) => !removed.has(toSetupBorderEdgeKey(edge.from, edge.to))))
+        .filter((stroke) => stroke.length > 0) }));
+  };
+  const setupValidationIssues = state?.phase === GamePhase.MapCreation ? getSetupMapValidationIssues(state) : [];
   const initialSplitCells = split && state?.map
     ? getTerritoryCells(state.map, split.originalTerritoryId) : [];
   const currentSplitDraft: SplitDraft | undefined = split ? splitDraft?.splitId === split.id
@@ -1008,12 +1011,19 @@ export default function App() {
             </div>;
           })}</div>
           {multiplayerRoom.hostPlayerId === multiplayer?.playerId ? <>
+            <div className="number-fields">
+              <Field label="Kartenbreite"><input type="number" min="1" step="1" value={lobbyMap.width}
+                onChange={(event) => setLobbyMap((current) => ({ ...current, width: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
+              <Field label="Kartenhöhe"><input type="number" min="1" step="1" value={lobbyMap.height}
+                onChange={(event) => setLobbyMap((current) => ({ ...current, height: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
+            </div>
+            <small>Aktuelle Karte: {lobbyMap.width} × {lobbyMap.height} · Mindestgebiet: {Number.isSafeInteger(lobbyMap.width) && Number.isSafeInteger(lobbyMap.height) && lobbyMap.width > 0 && lobbyMap.height > 0 ? getMinimumTerritoryArea(lobbyMap) : "—"}</small>
             <Field label="Erster Kartenzeichner"><select value={firstMultiplayerDrawerId ?? ""} onChange={(event) => setFirstMultiplayerDrawerId(event.target.value)}>{lobbyOrder.map((playerId) => {
               const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
               return player ? <option key={playerId} value={playerId}>{player.name}</option> : null;
             })}</select></Field>
             <button type="button" className="primary-button" disabled={multiplayerRoom.players.length < 2 || firstMultiplayerDrawerId === undefined} onClick={() => void startMultiplayerRoom()}>Spiel starten</button>
-          </> : <p className="muted">Der Host legt Reihenfolge und ersten Kartenzeichner fest.</p>}
+          </> : <p className="muted">Der Host legt Reihenfolge, Kartengröße und ersten Kartenzeichner fest. Aktuelle Karte: {multiplayerRoom.map.width} × {multiplayerRoom.map.height}.</p>}
         </div>}
       </section>}
       {showNewGameConfig && <section className="new-game-config panel">
@@ -1035,7 +1045,7 @@ export default function App() {
             const key = `seat-${newSeatIndex.current++}`; setNewGamePlayers((current) => [...current, { key, name: `Spieler ${current.length + 1}` }]);
           }}>Spieler hinzufügen</button>
           <div className="config-grid">
-            <div className="digital-profile" aria-label="Digitales Regelprofil"><strong>Digitales Spielfeld</strong><span>{DIGITAL_BOARD_WIDTH} × {DIGITAL_BOARD_HEIGHT} Kästchen</span><small>Mindestgebiet: {DIGITAL_MIN_TERRITORY_AREA} Kästchen</small></div>
+            <div className="digital-profile" aria-label="Digitales Regelprofil"><strong>Digitales Spielfeld</strong><span>{DIGITAL_BOARD_WIDTH} × {DIGITAL_BOARD_HEIGHT} Kästchen</span><small>Mindestgebiet: {getMinimumTerritoryArea(DIGITAL_MAP_CONFIG)} Kästchen</small></div>
             <Field label="Wer beginnt mit dem Kartenzeichnen?"><select value={firstMapDrawerKey} onChange={(event) => setFirstMapDrawerKey(event.target.value)}>{newGamePlayers.map((player) => <option key={player.key} value={player.key}>{player.name || "Ohne Namen"}</option>)}</select></Field>
           </div>
           <Field label="Lokaler Seed (für reproduzierbare Ziehungen)"><input type="number" min="0" step="1" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} /></Field>
@@ -1078,7 +1088,8 @@ export default function App() {
               splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
               editor={editor} onToggleMapCell={toggleMapCell} realmHighlights={realmHighlights}
               scoreHundredthsByTerritoryId={scoreHundredthsByTerritoryId} showScoreLabels={showScoreLabels}
-              setupEditor={setupEditor} onSetupSelectCell={selectSetupCell} />
+              setupEditor={setupEditor} onSetupSelectCell={selectSetupCell}
+              onSetupStrokePreview={previewSetupStroke} onSetupStrokeCommit={commitSetupStroke} onSetupStrokeErase={eraseSetupStroke} />
           </div>
           <div className="sidebar-column">
             <div className="panel"><PlayerPanel state={state} playerName={name} /></div>
@@ -1090,7 +1101,7 @@ export default function App() {
             onSelectTerritory={setSelectedTerritoryId} onAction={dispatch} onStartRound={beginRound}
             splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
             onSetOriginalCardPart={setOriginalCardPart} editor={editor} playerName={name}
-            setupDraft={setupDraft} onSetSetupDraft={setSetupDraft} setupValidationIssues={setupValidationIssues}
+            setupDraft={setupDraft} onSetSetupDraft={setSetupDraft} setupValidationIssues={setupValidationIssues} setupCanEdit={setupCanEdit}
             privacyPlayerId={privacyPlayerId} factionVisible={factionVisible}
             onSetPrivacyPlayerId={setPrivacyPlayerId} onSetFactionVisible={setFactionVisible} />
             <RecentWarResult state={state} /></ActionPanel>

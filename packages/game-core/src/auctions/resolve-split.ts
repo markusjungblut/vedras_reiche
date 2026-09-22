@@ -56,7 +56,7 @@ function splitRoles(split: PendingTerritorySplit): {
 
 function splitValidation(state: GameState, split: PendingTerritorySplit, cells: readonly GridCell[]): TerritorySplitValidation {
   if (state.map === undefined) invalid();
-  const minimum = getMinimumTerritoryArea(state.map.format);
+  const minimum = getMinimumTerritoryArea(state.map);
   return validateTerritorySplit(state.map, split.originalTerritoryId, cells, minimum);
 }
 
@@ -198,7 +198,7 @@ function resolveTerritorySplitInternal(
   }
   if (action.resolution === "SPLIT_NOT_POSSIBLE") {
     if (state.map === undefined) invalid();
-    const minimum = getMinimumTerritoryArea(state.map.format);
+    const minimum = getMinimumTerritoryArea(state.map);
     const area = getTerritoryCells(state.map, split.originalTerritoryId).length;
     if (area >= 2 * minimum) {
       throw new DomainError(DomainErrorCode.InvalidSplitResolution,
@@ -272,18 +272,17 @@ function resolveTerritorySplitInternal(
         payload: { auctionId: split.auctionId, playerId, basicBid: bid.basicBid } },
       { type: GameEventType.GlobalInfluenceSpent, actorId: playerId,
         payload: { auctionId: split.auctionId, playerId, amount: bid.globalInfluence } },
-      { type: GameEventType.LocalInfluenceSpent, actorId: playerId,
-        payload: { auctionId: split.auctionId, territoryId: original.id, playerId, amount: bid.localInfluence } },
     );
+    if (bid.localInfluence > 0) descriptions.push({ type: GameEventType.LocalInfluenceSpent, actorId: playerId,
+      payload: { auctionId: split.auctionId, territoryId: original.id, playerId, amount: bid.localInfluence } });
     if (refreshedPlayerIds.includes(playerId)) {
       descriptions.push({ type: GameEventType.BasicBidsRefreshed, actorId: playerId,
         payload: { playerId, availableBasicBids: BASIC_BIDS } });
     }
   }
-  descriptions.push(
-    { type: GameEventType.LocalInfluenceCleared,
-      payload: { territoryId: original.id, influenceByPlayerId: clearedInfluence } },
-    { type: GameEventType.AuctionResolved,
+  if (Object.values(clearedInfluence).some((amount) => amount > 0)) descriptions.push({ type: GameEventType.LocalInfluenceCleared,
+    payload: { territoryId: original.id, influenceByPlayerId: clearedInfluence } });
+  descriptions.push({ type: GameEventType.AuctionResolved,
       payload: { auctionId: split.auctionId, result: "SPLIT_WON", winnerIds: split.tiedPlayerIds } },
   );
   return appendEvents(state, timestamp, {
