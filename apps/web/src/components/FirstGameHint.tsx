@@ -12,7 +12,7 @@ function relevantHint(state: GameReadModel, viewerPlayerId: string | undefined, 
     step: "mapCreation", title: "Dein erster Kartenbauzug", text: "Ziehe mit dem Grenzstift eine Linie, die genau ein bestehendes Gebiet in zwei gültige Gebiete teilt.", topic: "mapCreation",
   };
   if (state.phase === GamePhase.MapCreation && ownTurn && mapStage !== MapCreationStage.DrawTerritories && mapStage !== MapCreationStage.ReadyToFinalize && !progress.seen.pois) return {
-    step: "pois", title: "POI platzieren", text: "Wähle eine freie Rasterzelle. Der POI bleibt auf dieser Zelle, auch wenn sich Grenzen später ändern.", topic: "pois",
+    step: "pois", title: "Strategischen Punkt platzieren", text: "Wähle eine freie Rasterzelle. Der Strategische Punkt bleibt auf dieser Zelle, auch wenn sich Grenzen später ändern.", topic: "pois",
   };
   if (state.phase === GamePhase.Setup && !progress.seen.factions) return {
     step: "factions", title: "Deine geheime Fraktion", text: "Sie gibt am Ende +25 % für deine Gebietskarten mit ihrem ursprünglichen Symbol. Zeige sie nur dir selbst an.", topic: "factions",

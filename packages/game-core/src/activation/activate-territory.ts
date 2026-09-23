@@ -2,8 +2,6 @@ import type { ActionResult } from "../actions/action-result.js";
 import { GameActionType, type ActivateTerritoryAction, type GameAction } from "../actions/game-action.js";
 import { createEvents, type EventDescription } from "../events/create-events.js";
 import { GameEventType } from "../events/game-event.js";
-import type { PlayerId, TerritoryId } from "../model/ids.js";
-import { getPlayerOrderFromStartPlayer } from "../rules/player-order.js";
 import { GamePhase } from "../state/game-phase.js";
 import type { GameState } from "../state/game-state.js";
 import { beginActionPhase } from "../state/action-phase.js";
@@ -33,21 +31,6 @@ export interface ActivationContext {
   readonly randomSource: RandomSource;
   readonly cardSource?: CardSource;
   readonly timestamp: string;
-}
-
-function nextPlayerWithPending(
-  state: GameState,
-  pendingTerritoryIds: readonly TerritoryId[],
-): PlayerId | undefined {
-  const pending = new Set(pendingTerritoryIds);
-  const owners = new Set(
-    state.territories.filter((territory) => pending.has(territory.id)).map((territory) => territory.ownerId),
-  );
-  const order = getPlayerOrderFromStartPlayer(
-    state.players.map((player) => player.id),
-    state.startPlayerId,
-  );
-  return order.find((playerId) => owners.has(playerId));
 }
 
 export function activateTerritory(
@@ -109,8 +92,9 @@ export function activateTerritory(
   }
   const pendingTerritoryIds = state.activation.pendingTerritoryIds.filter((id) => id !== action.territoryId);
   const resolvedTerritoryIds = [...state.activation.resolvedTerritoryIds, action.territoryId];
-  const activePlayerId = nextPlayerWithPending(effect.state, pendingTerritoryIds);
-  const finished = activePlayerId === undefined;
+  const activePlayerHasPending = effect.state.territories.some((candidate) =>
+    candidate.ownerId === action.playerId && pendingTerritoryIds.includes(candidate.id));
+  const finished = pendingTerritoryIds.length === 0;
   const descriptions: EventDescription[] = [
     {
       type: GameEventType.TerritoryActivationStarted,
@@ -132,10 +116,10 @@ export function activateTerritory(
     ...effect.state,
     phase: GamePhase.ActivationPhase,
     activation: { pendingTerritoryIds, resolvedTerritoryIds },
-    activePlayerId,
+    activePlayerId: action.playerId,
     events: [...state.events, ...newEvents],
   };
-  if (finished) {
+  if (!activePlayerHasPending) {
     const actionPhase = beginActionPhase(nextState, context.timestamp);
     return { state: actionPhase.state, events: [...newEvents, ...actionPhase.events] };
   }
@@ -165,8 +149,9 @@ export function resolveNeutralDiamond(
   const base = reconcileMapBoundFeatures({ ...state, map: validation.map,
     pendingDiamondBorderChanges: state.pendingDiamondBorderChanges.filter((item) => item.id !== effect.id),
   });
-  const nextPlayer = nextPlayerWithPending(base, pendingTerritoryIds);
-  const finished = nextPlayer === undefined;
+  const activePlayerHasPending = base.territories.some((candidate) =>
+    candidate.ownerId === action.playerId && pendingTerritoryIds.includes(candidate.id));
+  const finished = pendingTerritoryIds.length === 0;
   const descriptions: EventDescription[] = [
     { type: GameEventType.DiamondNeutralBorderChanged, actorId: action.playerId,
       payload: { effectId: effect.id, sourceTerritoryId: source.id, neutralTerritoryId: target.id,
@@ -179,8 +164,8 @@ export function resolveNeutralDiamond(
   if (finished) descriptions.push({ type: GameEventType.ActivationPhaseFinished, payload: { round: state.round } });
   const events = createEvents(state, timestamp, descriptions);
   const nextState: GameState = { ...base, activation: { pendingTerritoryIds, resolvedTerritoryIds },
-    activePlayerId: nextPlayer, events: [...state.events, ...events] };
-  if (finished) {
+    activePlayerId: action.playerId, events: [...state.events, ...events] };
+  if (!activePlayerHasPending) {
     const nextPhase = beginActionPhase(nextState, timestamp);
     return { state: nextPhase.state, events: [...events, ...nextPhase.events] };
   }

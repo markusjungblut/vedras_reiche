@@ -54,6 +54,22 @@ test("a territory remains selectable after viewport interaction", async ({ page 
   await expect(page.locator(".map-summary")).not.toHaveText("Gebiet auswählen");
 });
 
+test("map modes and strategic-point effects are available in the player view", async ({ page }) => {
+  await openWithoutIntroduction(page, "/?developer=1");
+  await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Aktivierungsphase" }).click();
+
+  for (const name of ["Gebiete", "Mein Reich", "Reiche", "Boni"]) {
+    await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
+  }
+  const bonusMode = page.getByRole("button", { name: "Boni", exact: true });
+  await bonusMode.click();
+  await expect(bonusMode).toHaveClass(/selected-button/);
+
+  await page.getByRole("button", { name: /Wahrzeichen ★/ }).click();
+  await expect(page.getByRole("status")).toContainText("+25 % Wertung für dieses Gebiet");
+});
+
 test("the border editor shows direct and automatic transfer previews", async ({ page }) => {
   await openWithoutIntroduction(page, "/?developer=1");
   await page.getByRole("button", { name: "Debug-Szenarien" }).click();

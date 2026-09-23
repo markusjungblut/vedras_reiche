@@ -38,8 +38,8 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
     case GameEventType.MapCreationStarted: return "Kartenbau begonnen.";
     case GameEventType.SetupBoundaryCommitted: return `Grenze bestätigt: ${field(event, "regionCount")} Regionen.`;
     case GameEventType.SetupBordersCorrected: return "Setup-Grenze korrigiert.";
-    case GameEventType.PoiPlacementStarted: return "POI-Platzierung beginnt.";
-    case GameEventType.PoiPlaced: return "POI auf der Karte platziert.";
+    case GameEventType.PoiPlacementStarted: return "Platzierung Strategischer Punkte beginnt.";
+    case GameEventType.PoiPlaced: return "Strategischer Punkt auf der Karte platziert.";
     case GameEventType.MapCreationCompleted: return "Karte erfolgreich geprüft.";
     case GameEventType.TerritoryCardsAssigned: return "Gebietskarten verteilt.";
     case GameEventType.SecretFactionsAssigned: return "Geheime Fraktionen vergeben.";

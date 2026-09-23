@@ -32,7 +32,7 @@ export interface PotentialWarTarget {
   readonly defenderTerritoryId: TerritoryId;
 }
 
-/** Returns only pairs that may still fight this round. */
+/** Returns only pairs which may still fight in this round. */
 export function getPotentialWarTargets(state: ActionTargetReadState, playerId: PlayerId): PotentialWarTarget[] {
   const own = state.territories.filter((territory) => territory.ownerId === playerId && !territory.participatedInWarThisRound);
   const opponents = state.territories.filter((territory) => territory.ownerId !== null && territory.ownerId !== playerId && !territory.participatedInWarThisRound);
@@ -48,60 +48,19 @@ export function getPotentialBasicActions(state: ActionTargetReadState, playerId:
   };
 }
 
-function advancePastUnavailablePlayers(
-  state: GameState,
-  descriptions: EventDescription[],
-): GameState {
-  if (state.actionPhase === undefined) {
-    throw new DomainError(DomainErrorCode.InvalidPhase);
-  }
-  const order = getPlayerOrderFromStartPlayer(state.players.map((player) => player.id), state.startPlayerId);
-  const completed = [...state.actionPhase.completedPlayerIds];
-  let next = order.find((playerId) => !completed.includes(playerId));
-  while (next !== undefined) {
-    const potential = getPotentialBasicActions(state, next);
-    if (potential.canOpenAuction || potential.canStartWar) break;
-    completed.push(next);
-    descriptions.push({
-      type: GameEventType.ActionForfeited,
-      actorId: next,
-      payload: { round: state.round, playerId: next, reason: "NO_LEGAL_BASIC_ACTION" },
-    });
-    next = order.find((playerId) => !completed.includes(playerId));
-  }
-
-  if (next === undefined) {
-    descriptions.push(
-      { type: GameEventType.ActionPhaseFinished, payload: { round: state.round } },
-      { type: GameEventType.RoundFinished, payload: { round: state.round } },
-    );
-    const finalRound = state.round === state.maxRounds;
-    if (finalRound) descriptions.push({ type: GameEventType.ScoringStarted, payload: { round: state.round } });
-    return {
-      ...state,
-      phase: finalRound ? GamePhase.Scoring : GamePhase.RoundReady,
-      activePlayerId: undefined,
-      actionPhase: {
-        completedPlayerIds: completed,
-        auctionsOpenedByActivePlayer: 0,
-        secondAuctionAvailable: false,
-      },
-      spadeActivations: [],
-    };
-  }
-
-  return {
-    ...state,
-    activePlayerId: next,
-    actionPhase: {
-      completedPlayerIds: completed,
-      auctionsOpenedByActivePlayer: 0,
-      secondAuctionAvailable: false,
-    },
+function actionPhaseFor(state: GameState) {
+  return state.actionPhase ?? {
+    completedPlayerIds: [],
+    auctionsOpenedByActivePlayer: 0 as const,
+    secondAuctionAvailable: false,
   };
 }
 
-/** Records phase events before entering the automatic or choice-driven scoring workflow. */
+function playerHasPendingActivation(state: GameState, playerId: PlayerId): boolean {
+  const pending = new Set(state.activation?.pendingTerritoryIds ?? []);
+  return state.territories.some((territory) => territory.ownerId === playerId && pending.has(territory.id));
+}
+
 function finalizeAdvancedState(
   previous: GameState,
   advanced: GameState,
@@ -115,89 +74,150 @@ function finalizeAdvancedState(
   return { state: scoring.state, events: [...events, ...scoring.events] };
 }
 
-/** Called only when all territory activations are resolved. */
+/**
+ * Completes a player's regular action and hands the turn to the next player's
+ * personal activation. A player without a matching card immediately receives
+ * their regular action instead.
+ */
+function advanceToNextPlayer(
+  state: GameState,
+  timestamp: string,
+  descriptions: readonly EventDescription[],
+): ActionResult {
+  const actionPhase = actionPhaseFor(state);
+  const order = getPlayerOrderFromStartPlayer(state.players.map((player) => player.id), state.startPlayerId);
+  const nextPlayerId = order.find((playerId) => !actionPhase.completedPlayerIds.includes(playerId));
+  if (nextPlayerId === undefined) {
+    const finalRound = state.round === state.maxRounds;
+    const next = {
+      ...state,
+      phase: finalRound ? GamePhase.Scoring : GamePhase.RoundReady,
+      activePlayerId: undefined,
+      actionPhase: {
+        completedPlayerIds: actionPhase.completedPlayerIds,
+        auctionsOpenedByActivePlayer: 0 as const,
+        secondAuctionAvailable: false,
+      },
+      spadeActivations: [],
+    };
+    return finalizeAdvancedState(state, next, timestamp, [
+      ...descriptions,
+      { type: GameEventType.ActionPhaseFinished, payload: { round: state.round } },
+      { type: GameEventType.RoundFinished, payload: { round: state.round } },
+      ...(finalRound ? [{ type: GameEventType.ScoringStarted, payload: { round: state.round } }] : []),
+    ]);
+  }
+
+  const next = {
+    ...state,
+    phase: GamePhase.ActivationPhase,
+    activePlayerId: nextPlayerId,
+    actionPhase: {
+      completedPlayerIds: actionPhase.completedPlayerIds,
+      auctionsOpenedByActivePlayer: 0 as const,
+      secondAuctionAvailable: false,
+    },
+  };
+  const transitioned = finalizeAdvancedState(state, next, timestamp, descriptions);
+  if (playerHasPendingActivation(transitioned.state, nextPlayerId)) return transitioned;
+  const action = beginActionPhase(transitioned.state, timestamp);
+  return { state: action.state, events: [...transitioned.events, ...action.events] };
+}
+
+/**
+ * Starts the active player's regular action after only that player's pending
+ * activations have resolved. The shared round action state remains intact
+ * while players alternate between activation and basic action.
+ */
 export function beginActionPhase(state: GameState, timestamp: string): ActionResult {
-  if (state.phase !== GamePhase.ActivationPhase ||
-      state.activation?.pendingTerritoryIds.length !== 0 || state.pendingDiamondBorderChanges.length !== 0 ||
-      state.auction !== undefined || state.pendingSplit !== undefined) {
+  if (state.phase !== GamePhase.ActivationPhase || state.activePlayerId === undefined ||
+      state.pendingDiamondBorderChanges.length !== 0 || state.auction !== undefined || state.pendingSplit !== undefined ||
+      playerHasPendingActivation(state, state.activePlayerId)) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
-  const descriptions: EventDescription[] = [
-    { type: GameEventType.ActionPhaseStarted, payload: { round: state.round, startPlayerId: state.startPlayerId } },
-  ];
+  const playerId = state.activePlayerId;
+  const actionPhase = actionPhaseFor(state);
+  if (actionPhase.completedPlayerIds.includes(playerId)) throw new DomainError(DomainErrorCode.ActionAlreadyCompleted);
   const provisional: GameState = {
     ...state,
     phase: GamePhase.ActionPhase,
-    activePlayerId: state.startPlayerId,
     actionPhase: {
-      completedPlayerIds: [],
+      completedPlayerIds: actionPhase.completedPlayerIds,
       auctionsOpenedByActivePlayer: 0,
       secondAuctionAvailable: false,
     },
   };
-  const advanced = advancePastUnavailablePlayers(provisional, descriptions);
-  return finalizeAdvancedState(state, advanced, timestamp, descriptions);
+  const descriptions: EventDescription[] = [
+    { type: GameEventType.ActionPhaseStarted, actorId: playerId, payload: { round: state.round, playerId } },
+  ];
+  const potential = getPotentialBasicActions(provisional, playerId);
+  if (potential.canOpenAuction || potential.canStartWar) return finalizeAdvancedState(state, provisional, timestamp, descriptions);
+  const completed: GameState = {
+    ...provisional,
+    actionPhase: {
+      ...provisional.actionPhase!,
+      completedPlayerIds: [...actionPhase.completedPlayerIds, playerId],
+    },
+  };
+  return advanceToNextPlayer(completed, timestamp, [...descriptions, {
+    type: GameEventType.ActionForfeited,
+    actorId: playerId,
+    payload: { round: state.round, playerId, reason: "NO_LEGAL_BASIC_ACTION" },
+  }]);
 }
 
-/** Completes the opener's one basic action after every pending auction step is resolved. */
+/** Completes the active player's regular action after all resulting choices resolve. */
 export function finishCurrentBasicAction(state: GameState, timestamp: string): ActionResult {
-  if (state.phase !== GamePhase.ActionPhase || state.actionPhase === undefined ||
-      state.activePlayerId === undefined) {
+  if (state.phase !== GamePhase.ActionPhase || state.actionPhase === undefined || state.activePlayerId === undefined) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
   if (state.auction !== undefined || state.pendingSplit !== undefined || state.pendingWar !== undefined) {
     throw new DomainError(DomainErrorCode.AuctionAlreadyActive);
   }
   const playerId = state.activePlayerId;
-  if (state.actionPhase.completedPlayerIds.includes(playerId)) {
-    throw new DomainError(DomainErrorCode.ActionAlreadyCompleted);
-  }
+  if (state.actionPhase.completedPlayerIds.includes(playerId)) throw new DomainError(DomainErrorCode.ActionAlreadyCompleted);
   if (state.actionPhase.currentActionKind === undefined && state.actionPhase.auctionsOpenedByActivePlayer === 0) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
-  const descriptions: EventDescription[] = [
-    { type: GameEventType.ActionCompleted, actorId: playerId, payload: { round: state.round, playerId } },
-  ];
-  const provisional: GameState = {
+  const completed: GameState = {
     ...state,
     actionPhase: {
       ...state.actionPhase,
       completedPlayerIds: [...state.actionPhase.completedPlayerIds, playerId],
     },
   };
-  const advanced = advancePastUnavailablePlayers(provisional, descriptions);
-  return finalizeAdvancedState(state, advanced, timestamp, descriptions);
+  return advanceToNextPlayer(completed, timestamp, [{
+    type: GameEventType.ActionCompleted,
+    actorId: playerId,
+    payload: { round: state.round, playerId },
+  }]);
 }
 
 /** For a player who has neither an auction target nor a potential war target. */
 export function forfeitCurrentBasicAction(state: GameState, timestamp: string): ActionResult {
-  if (state.phase !== GamePhase.ActionPhase || state.activePlayerId === undefined ||
-      state.actionPhase === undefined || state.auction !== undefined ||
-      state.pendingSplit !== undefined || state.pendingWar !== undefined) {
+  if (state.phase !== GamePhase.ActionPhase || state.activePlayerId === undefined || state.actionPhase === undefined ||
+      state.auction !== undefined || state.pendingSplit !== undefined || state.pendingWar !== undefined) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
   const playerId = state.activePlayerId;
   const potential = getPotentialBasicActions(state, playerId);
-  if (potential.canOpenAuction || potential.canStartWar) {
-    throw new DomainError(DomainErrorCode.LegalActionAvailable);
-  }
-  const descriptions: EventDescription[] = [
-    { type: GameEventType.ActionForfeited, actorId: playerId, payload: { round: state.round, playerId, reason: "NO_LEGAL_BASIC_ACTION" } },
-  ];
-  const provisional: GameState = {
+  if (potential.canOpenAuction || potential.canStartWar) throw new DomainError(DomainErrorCode.LegalActionAvailable);
+  const completed: GameState = {
     ...state,
     actionPhase: {
       ...state.actionPhase,
       completedPlayerIds: [...state.actionPhase.completedPlayerIds, playerId],
     },
   };
-  const advanced = advancePastUnavailablePlayers(provisional, descriptions);
-  return finalizeAdvancedState(state, advanced, timestamp, descriptions);
+  return advanceToNextPlayer(completed, timestamp, [{
+    type: GameEventType.ActionForfeited,
+    actorId: playerId,
+    payload: { round: state.round, playerId, reason: "NO_LEGAL_BASIC_ACTION" },
+  }]);
 }
 
 export function startPendingWar(state: GameState, action: StartWarAction, timestamp: string): ActionResult {
-  if (state.phase !== GamePhase.ActionPhase || state.actionPhase === undefined ||
-      state.activePlayerId !== action.playerId) {
+  if (state.phase !== GamePhase.ActionPhase || state.actionPhase === undefined || state.activePlayerId !== action.playerId) {
     throw new DomainError(DomainErrorCode.NotActivePlayer);
   }
   if (state.auction !== undefined || state.pendingSplit !== undefined || state.pendingWar !== undefined ||
@@ -206,26 +226,19 @@ export function startPendingWar(state: GameState, action: StartWarAction, timest
   }
   const attacker = state.territories.find((territory) => territory.id === action.attackerTerritoryId);
   const defender = state.territories.find((territory) => territory.id === action.defenderTerritoryId);
-  if (attacker?.ownerId !== action.playerId || defender?.ownerId === null ||
-      defender?.ownerId === undefined || defender.ownerId === action.playerId ||
-      !areStateTerritoriesAdjacent(state, attacker.id, defender.id)) {
+  if (attacker?.ownerId !== action.playerId || defender?.ownerId === null || defender?.ownerId === undefined ||
+      defender.ownerId === action.playerId || !areStateTerritoriesAdjacent(state, attacker.id, defender.id)) {
     throw new DomainError(DomainErrorCode.InvalidWarTarget);
   }
-  if (attacker.participatedInWarThisRound || defender.participatedInWarThisRound) {
+  if (attacker.participatedInWarThisRound || defender.participatedInWarThisRound || state.map === undefined) {
     throw new DomainError(DomainErrorCode.TerritoryAlreadyInWar);
   }
-  if (state.map === undefined) throw new DomainError(DomainErrorCode.InvalidWarTarget);
   const mark = state.borderMarks.find((item) => item.territoryIds.includes(attacker.id) && item.territoryIds.includes(defender.id));
   const warId = `${state.gameId}:war:${state.events.length + 1}`;
   const events = createEvents(state, timestamp, [{
     type: GameEventType.WarStarted,
     actorId: action.playerId,
-    payload: {
-      playerId: action.playerId,
-      attackerTerritoryId: attacker.id,
-      defenderTerritoryId: defender.id,
-      warId,
-    },
+    payload: { playerId: action.playerId, attackerTerritoryId: attacker.id, defenderTerritoryId: defender.id, warId },
   }]);
   return {
     state: {

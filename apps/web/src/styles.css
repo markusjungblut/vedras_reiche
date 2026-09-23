@@ -278,6 +278,7 @@ button:disabled { opacity: .48; }
 .map-cell.owner-map-3:hover, .map-cell.owner-map-3.map-cell-selected { fill: var(--player-3); }.map-cell.owner-map-4:hover, .map-cell.owner-map-4.map-cell-selected { fill: var(--player-4); }.map-cell.owner-map-5:hover, .map-cell.owner-map-5.map-cell-selected { fill: var(--player-5); }
 .map-cell:hover { stroke: #ecf5ff; stroke-width: .065; }.map-cell.map-cell-selected { stroke: #fff5c8; stroke-width: .13; }
 .map-cell.map-cell-activated { filter: none; stroke: #ffdd82; stroke-width: .11; }.map-cell.map-cell-neighbor { fill: #5477ad; }
+.map-cell.map-cell-war-changed { stroke: #fff0a8; stroke-width: .17; filter: brightness(1.35); }
 .map-cell.map-cell-war-attacker { stroke: #ffdb84; stroke-width: .13; }.map-cell.map-cell-war-defender { stroke: #ff9692; stroke-width: .13; }
 .map-cell.map-cell-part-a, .map-cell.map-cell-part-a:hover { fill: #cc8843; }.map-cell.map-cell-part-b, .map-cell.map-cell-part-b:hover { fill: #5c98c5; }.map-cell.map-cell-part-selected { filter: none; stroke: #fff9df; stroke-width: .15; }
 .map-cell-corridor { fill: #e6c883 !important; }.map-cell-annexed, .map-cell-annexed:hover { fill: #68a9b5 !important; stroke: #d6ffff; stroke-width: .09; }
@@ -286,6 +287,10 @@ button:disabled { opacity: .48; }
 .map-territory-label { fill: #f7fbff; font-size: .42px; stroke: #101e35; stroke-width: .07; }.raster-map.is-zoomed-out .map-territory-label.is-compact { opacity: .62; }
 .map-poi { paint-order: stroke; stroke: #111e34; stroke-width: .07; }.map-poi-landmark { fill: #ffd57f; }.map-poi-junction { fill: #a8e0ff; }.map-poi-fortress { fill: #f2b7a6; }.map-poi-relic { fill: #c5b0f6; }.map-settlement { fill: #bce9c7; stroke: #102037; stroke-width: .05; paint-order: stroke; }.map-border-mark { fill: #ffdc80; stroke: #39220d; stroke-width: .04; paint-order: stroke; }
 .map-summary, .map-legend { color: #b8cce8; }.map-controls { min-height: 34px; }
+.map-view-modes { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }.map-view-modes button { padding: 6px 9px; font-size: 12px; }
+.map-view-my_realm .map-cell-not-own { opacity: .26; filter: grayscale(.8); }.map-view-bonuses .map-cell { opacity: .72; }.map-view-bonuses .map-poi { font-size: .88px; }
+.map-poi { pointer-events: auto; cursor: help; outline: none; }.map-poi:focus { stroke: #fff5c8; stroke-width: .13; }
+.map-poi-tooltip { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid #6e86b3; border-radius: 9px; background: #132541; color: #eaf3ff; font-size: 12px; }.map-poi-tooltip span { color: #c0d1e8; }
 .owner-0 .owner-dot { background: var(--player-0); }.owner-1 .owner-dot { background: var(--player-1); }.owner-2 .owner-dot { background: var(--player-2); }.owner-3 .owner-dot { background: var(--player-3); }.owner-4 .owner-dot { background: var(--player-4); }.owner-5 .owner-dot { background: var(--player-5); }
 .player-card { border-color: var(--line-soft); background: #121f36; }.player-card.is-active { border-color: var(--accent); box-shadow: inset 4px 0 var(--accent); }.player-card.is-viewer { border-color: #b6d8ff; box-shadow: inset 4px 0 #b6d8ff; }
 .detail-card-face { border: 1px solid #465f8b; background: linear-gradient(135deg, #20385f, #172641); }.detail-card-symbols { align-items: center; }.details-list div { border-color: rgba(113, 144, 190, .24); }

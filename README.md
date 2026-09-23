@@ -51,11 +51,11 @@ In jeder Startauktionsrunde erhält jeder Spieler die Gebote `0` bis `Spielerzah
 
 ## Runden und Aktivierungen
 
-Eine Runde beginnt mit der Aktivierungsphase und geht danach in die Aktionsphase über. Der erste Startspieler wird über die eingespeiste `RandomSource` bestimmt. Nach jeder vollständig abgeschlossenen Runde wandert diese Rolle in der festgelegten Spielerreihenfolge im Uhrzeigersinn weiter. Der Zustand hält die aktuelle Runde und die für die Spielerzahl geltende Höchstzahl fest.
+Eine Runde beginnt beim Startspieler. Jede Person erledigt ihre persönlichen Aktivierungen und führt direkt danach eine Grundaktion aus, bevor die nächste Person folgt. Der erste Startspieler wird über die eingespeiste `RandomSource` bestimmt. Nach jeder vollständig abgeschlossenen Runde wandert diese Rolle in der festgelegten Spielerreihenfolge im Uhrzeigersinn weiter. Der Zustand hält die aktuelle Runde und die für die Spielerzahl geltende Höchstzahl fest.
 
 Zu Beginn der Aktivierungsphase entstehen genau drei verschiedene Zahlen zwischen 1 und 12. Jede Zahl wird mit zwei W6 bestimmt: Der erste Würfel wählt eines der Paare `1/2` bis `11/12`; der zweite wählt bei `1–3` die niedrigere und bei `4–6` die höhere Zahl. Doppelte Ergebnisse werden neu gewürfelt. Der Core verwendet dafür kein direktes `Math.random()`, sodass Tests die Würfelfolge genau vorgeben können.
 
-Alle kontrollierten Gebiete mit mindestens einer passenden Aktivierungszahl werden je einmal aktiviert; neutrale Gebiete bleiben aus. Die Spieler sind vom Startspieler aus im Uhrzeigersinn an der Reihe. Hat ein Spieler mehrere offene Gebiete, wählt er deren Reihenfolge selbst durch einzelne Aktivierungsaktionen. Jede Aktion enthält die nötige Symbol- und Zielwahl. Nach einem gültigen Effekt wird das Gebiet als abgehandelt markiert. Spieler ohne offene Gebiete werden übersprungen. Sobald alle Aktivierungen erledigt sind, wechselt der Zustand in die Aktionsphase.
+Alle kontrollierten Gebiete mit mindestens einer passenden Aktivierungszahl werden je einmal aktiviert; neutrale Gebiete bleiben aus. Die Spieler sind vom Startspieler aus im Uhrzeigersinn an der Reihe. Hat ein Spieler mehrere offene Gebiete, wählt er deren Reihenfolge selbst durch einzelne Aktivierungsaktionen. Jede Aktion enthält die nötige Symbol- und Zielwahl. Nach einem gültigen Effekt wird das Gebiet als abgehandelt markiert. Danach führt dieselbe Person ihre Grundaktion aus; Spieler ohne offene Gebiete beginnen direkt damit.
 
 Die offenen Aktivierungen werden zu Beginn der Phase ermittelt. Erhält ein Gebiet währenddessen durch ♣ eine zweite Zahl, kann diese erst ab der nächsten Runde eine Aktivierung auslösen.
 
@@ -70,7 +70,7 @@ Nachbarschaften und Flächen werden aus der Rasterkarte berechnet. ♦-Grenzvers
 
 ## Aktionsphase und normale Auktionen
 
-Die Aktionsphase beginnt beim Startspieler und läuft im Uhrzeigersinn. Jeder Spieler führt genau eine Grundaktion aus: Auktion oder Krieg. Der aktuelle Spieler kann eine Auktion für ein unmittelbar angrenzendes neutrales Gebiet eröffnen oder mit einem eigenen Gebiet einen angrenzenden Gegner angreifen. Nur wenn beides unmöglich ist, verfällt die Grundaktion. Ein Gebiet, das ein Spieler in der Auktion eines anderen gewinnt, verbraucht seine eigene Grundaktion nicht.
+Nach den persönlichen Aktivierungen führt jede Person genau eine Grundaktion aus: Auktion oder Krieg. Der aktuelle Spieler kann eine Auktion für ein unmittelbar angrenzendes neutrales Gebiet eröffnen oder mit einem eigenen Gebiet einen angrenzenden Gegner angreifen. Nur wenn beides unmöglich ist, verfällt die Grundaktion. Ein Gebiet, das ein Spieler in der Auktion eines anderen gewinnt, verbraucht seine eigene Grundaktion nicht.
 
 Bei einer normalen Auktion müssen alle Spieler verdeckt bieten, auch ohne Nachbarschaft zum Gebiet. Ein Gebot besteht aus einem verfügbaren Grundgebot `1`, `2` oder `3`, ganzzahligem globalem Einfluss und gegebenenfalls eigenem lokalem Einfluss auf dem versteigerten Gebiet. Der Core wertet erst aus, wenn alle Gebote vorliegen. Erfolgreiche Erwerber bezahlen Einfluss und erschöpfen ihr Grundgebot. Bei einem unaufgelösten Höchstgleichstand bleibt der Einfluss erhalten, aber die beteiligten Höchstbieter erschöpfen ihr verwendetes Grundgebot. Nach Erschöpfung aller drei Grundgebote steht sofort ein neuer vollständiger Satz zur Verfügung. Wird das Gebiet vergeben, verfällt sämtlicher dort verbliebener lokaler Einfluss.
 
@@ -82,7 +82,7 @@ Die Endwertung leitet Fläche, Nachbarschaften sowie die aktuelle Zugehörigkeit
 
 Für das größte zusammenhängende Reich erhält eine eindeutige größte Komponente automatisch ihren Bonus. Bei mehreren gleich großen Komponenten wählt der betreffende Spieler eine davon. Sobald alle nötigen Entscheidungen vorliegen, erzeugt der Core ein unveränderliches `GameResult`, bestimmt alle punktgleichen Sieger und wechselt nach `FINISHED`. Weitere reguläre Aktionen sind dann gesperrt. Die Siegerehrung rundet nur die angezeigten Gesamtpunkte, ermittelt Platzierungen aber anhand der exakten Hundertstel und deckt alle Fraktionen auf.
 
-Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor Spielende gegnerische Gebotshöhen, geheime Fraktionssymbole und noch nicht gemeinsam ausgewertete gegnerische ♠-Entscheidungen. Bei `FINISHED` werden alle Fraktionen für die Siegerehrung öffentlich. Der Multiplayer-Server sendet ausschließlich diese serverseitig redigierte Spieleransicht an Clients.
+Gebote liegen bis zur gemeinsamen Aufdeckung verdeckt im Game-Core-Zustand. `createGameViewForPlayer` entfernt vor Spielende gegnerische Gebotshöhen, fremde verbleibende Startgebote, geheime Fraktionssymbole und noch nicht gemeinsam ausgewertete gegnerische ♠-Entscheidungen. Die Projektion enthält einen persönlichen Eingabezustand für Aktion, abgegebene Eingabe oder Warten. Bei `FINISHED` werden alle Fraktionen für die Siegerehrung öffentlich. Der Multiplayer-Server sendet ausschließlich diese serverseitig redigierte Spieleransicht an Clients.
 
 ## Lokaler Client und Debug-Szenarien
 

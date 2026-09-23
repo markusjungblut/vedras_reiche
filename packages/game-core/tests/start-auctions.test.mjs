@@ -51,25 +51,26 @@ function bid(state, playerId, value, random = new SequenceRandomSource([])) {
   }, random, timestamp);
 }
 
-function open(state) { return openNextStartAuction(state, timestamp).state; }
+function open(state) { return state.auction ? state : openNextStartAuction(state, timestamp).state; }
 
 test("two start auction rounds use disjoint P+1 displays and end with two territories per player", () => {
   const random = new SequenceRandomSource(Array(6).fill(0));
   let state = beginStartAuctions(makeSetup(), "B", random, timestamp).state;
   assert.equal(state.phase, GamePhase.StartAuctions);
+  assert.equal(state.auction?.territoryId, "t1");
   assert.deepEqual(state.startAuctions.displayTerritoryIds, ["t1", "t2", "t3"]);
   assert.equal(state.startAuctions.auctioneerPlayerId, "A");
   assert.deepEqual(state.startAuctions.availableBidsByPlayerId.A, [0, 1, 2]);
 
   state = open(state);
   assert.equal(state.auction.territoryId, "t1");
-  const firstBid = bid(state, "A", 1);
+  const firstBid = bid(state, "B", 0);
   assert.equal(firstBid.events[0].type, GameEventType.AuctionBidSubmitted);
   assert.deepEqual(firstBid.events[0].payload, {
-    auctionId: state.auction.id, playerId: "A",
+    auctionId: state.auction.id, playerId: "B",
   });
   assert.equal(firstBid.events.some((event) => event.type === GameEventType.AuctionBidsRevealed), false);
-  state = bid(firstBid.state, "B", 0).state;
+  state = bid(firstBid.state, "A", 1).state;
   assert.equal(state.territories[0].ownerId, "A");
   assert.equal(state.startAuctions.auctioneerPlayerId, "B");
   assert.deepEqual(state.startAuctions.availableBidsByPlayerId.A, [0, 2]);
@@ -123,7 +124,7 @@ test("a raster start auction tie uses divider proposal and chooser decision", ()
     splitId: state.pendingSplit.id, playerId: "A", partACells, originalCardPart: "A" }, timestamp).state;
   state = chooseSplitPart(state, { type: GameActionType.ChooseSplitPart,
     splitId: state.pendingSplit.id, playerId: "B", chosenPart: "B" }, random, timestamp).state;
-  const other = state.territories.find((territory) => territory.id.startsWith("t1:split:"));
+  const other = state.territories.find((territory) => territory.id.startsWith("Gebiet "));
   assert.equal(state.territories.find((territory) => territory.id === "t1").ownerId, "A");
   assert.equal(other.ownerId, "B");
   assert.equal(state.territories.find((territory) => territory.id === "t1").card.suit, Suit.Hearts);
@@ -205,7 +206,7 @@ test("split roles follow auctioneer and clockwise order, and successful split aw
   };
   state = completeStartAuctionAfterSplit(state, ["A", "B"], new SequenceRandomSource([]), timestamp).state;
   assert.equal(state.pendingSplit, undefined);
-  assert.equal(state.auction, undefined);
+  assert.ok(state.auction);
   assert.equal(state.startAuctions.auctioneerPlayerId, "D");
   assert.deepEqual(state.startAuctions.awardedPlayerIds, ["A", "B"]);
   state = open(state);
@@ -286,7 +287,7 @@ test("split resolution keeps the start auction pending until controlled map part
   assert.equal(result.state.startAuctions.round, 2);
   assert.equal(result.state.pendingSplit, undefined);
   assert.equal(result.state.territories.find((territory) => territory.id === "t1").ownerId, "A");
-  assert.equal(result.state.territories.find((territory) => territory.id.startsWith("t1:split:")).ownerId, "B");
+  assert.equal(result.state.territories.find((territory) => territory.id.startsWith("Gebiet ")).ownerId, "B");
   assert.equal(result.events.some((event) => event.type === GameEventType.TerritorySplitResolved), true);
 });
 

@@ -71,7 +71,7 @@ function startSplit() {
       card: index === 0 ? originalCard : { suit: Suit.Clubs, activationNumber: index },
     })),
   }, "B", random, timestamp).state;
-  state = openNextStartAuction(state, timestamp).state;
+  state = state.auction ? state : openNextStartAuction(state, timestamp).state;
   for (const playerId of ["A", "B"]) {
     state = submitStartAuctionBid(state, {
       type: GameActionType.SubmitAuctionBid,
@@ -116,7 +116,7 @@ function legalRasterChoice(state, cardSource = { drawAndReplace: () => newCard }
 }
 
 function newPart(state, originalId) {
-  return state.territories.find((territory) => territory.id.startsWith(`${originalId}:split:`));
+  return state.territories.find((territory) => territory.id === "new" || territory.id.startsWith("Gebiet "));
 }
 
 function reduceOriginalArea(state, territoryId, area) {
@@ -233,7 +233,7 @@ test("start auction legal split awards both tied players and advances to round t
   const pending = startSplit();
   const resolved = legalRasterChoice(pending);
   assert.equal(resolved.state.pendingSplit, undefined);
-  assert.equal(resolved.state.auction, undefined);
+  assert.ok(resolved.state.auction);
   assert.equal(resolved.state.startAuctions.round, 2);
   assert.equal(resolved.state.territories.find((territory) => territory.id === pending.pendingSplit.originalTerritoryId).ownerId, "A");
   assert.equal(newPart(resolved.state, pending.pendingSplit.originalTerritoryId).ownerId, "B");
@@ -250,10 +250,9 @@ test("impossible start split leaves start bids consumed and continues the displa
     resolution: "SPLIT_NOT_POSSIBLE",
   }, random, timestamp);
   assert.equal(resolved.state.pendingSplit, undefined);
-  assert.equal(resolved.state.auction, undefined);
+  assert.ok(resolved.state.auction);
   assert.equal(resolved.state.territories.find((territory) => territory.id === pending.pendingSplit.originalTerritoryId).ownerId, null);
   assert.deepEqual(resolved.state.startAuctions.availableBidsByPlayerId, availableBefore);
   assert.equal(resolved.state.startAuctions.round, 1);
-  const next = openNextStartAuction(resolved.state, timestamp);
-  assert.ok(next.state.auction);
+  assert.ok(resolved.state.auction);
 });

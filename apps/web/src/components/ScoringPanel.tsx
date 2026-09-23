@@ -6,6 +6,7 @@ interface ScoringPanelProps {
   readonly state: GameReadModel;
   readonly playerName: (id: string) => string;
   readonly onAction: (action: GameAction) => void;
+  readonly viewerPlayerId?: string | undefined;
 }
 
 function BonusLine({ label, value }: { readonly label: string; readonly value: number }) {
@@ -29,7 +30,7 @@ function TerritoryBreakdown({ score }: { readonly score: TerritoryScoreBreakdown
 }
 
 /** Thin presentation of the core-owned largest-realm choice. */
-export function ScoringPanel({ state, playerName, onAction }: ScoringPanelProps) {
+export function ScoringPanel({ state, playerName, onAction, viewerPlayerId }: ScoringPanelProps) {
   const scoring = state.scoring;
   if (!scoring || scoring.pendingLargestRealmPlayerIds.length === 0) {
     return <section className="control-section"><div className="section-kicker">Endwertung</div><h3>Wertung wird abgeschlossen</h3></section>;
@@ -38,7 +39,7 @@ export function ScoringPanel({ state, playerName, onAction }: ScoringPanelProps)
     <div className="section-kicker">Endwertung</div>
     <h3>Größtes Reich auswählen</h3>
     <p>Gleich große Reiche sind auf der Karte farbig markiert. Die gewählte Komponente erhält für jedes ihrer Gebiete +25 %.</p>
-    {scoring.pendingLargestRealmPlayerIds.map((playerId) => {
+    {scoring.pendingLargestRealmPlayerIds.filter((playerId) => viewerPlayerId === undefined || playerId === viewerPlayerId).map((playerId) => {
       const candidateIds = scoring.largestRealmCandidateIdsByPlayerId[playerId] ?? [];
       return <div className="realm-choice" key={playerId}>
         <strong>{playerName(playerId)}</strong>
@@ -52,6 +53,7 @@ export function ScoringPanel({ state, playerName, onAction }: ScoringPanelProps)
         })}</div>
       </div>;
     })}
+    {viewerPlayerId !== undefined && !scoring.pendingLargestRealmPlayerIds.includes(viewerPlayerId) && <p className="winner-message">Warte auf die Auswahl zum größten Reich.</p>}
   </section>;
 }
 

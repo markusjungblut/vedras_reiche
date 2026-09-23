@@ -63,7 +63,6 @@ function beginAuctions(seed: number): DemoScenario {
   const cardSource = new DemoCardSource();
   let state = createDemoGame(seed);
   state = dispatch(state, { type: GameActionType.BeginStartAuctions, lastSetupPlayerId: "clara" }, randomSource, cardSource);
-  state = dispatch(state, { type: GameActionType.OpenNextStartAuction }, randomSource, cardSource);
   return { state, randomSource, cardSource };
 }
 
@@ -74,9 +73,6 @@ function completeStartAuctions(scenario: DemoScenario): DemoScenario {
   let steps = 0;
   while (state.phase === GamePhase.StartAuctions) {
     if (++steps > 12) throw new Error("Der Startauktions-Debuglauf kam nicht zum Abschluss.");
-    if (state.auction === undefined) {
-      state = dispatch(state, { type: GameActionType.OpenNextStartAuction }, randomSource, cardSource);
-    }
     const auction = state.auction;
     const start = state.startAuctions;
     if (auction === undefined || start === undefined) throw new Error("Startauktion ohne Zustand.");

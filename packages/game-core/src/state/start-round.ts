@@ -1,28 +1,14 @@
 import type { ActionResult } from "../actions/action-result.js";
 import { createEvents, type EventDescription } from "../events/create-events.js";
 import { GameEventType } from "../events/game-event.js";
-import type { PlayerId, TerritoryId } from "../model/ids.js";
 import { getActivatedTerritories } from "../rules/activated-territories.js";
-import { getNextPlayer, getPlayerOrderFromStartPlayer, selectInitialStartPlayer } from "../rules/player-order.js";
+import { getNextPlayer, selectInitialStartPlayer } from "../rules/player-order.js";
 import { rollActivationNumbers } from "../rules/activation-numbers.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
 import { GamePhase } from "./game-phase.js";
 import type { GameState } from "./game-state.js";
 import { beginActionPhase } from "./action-phase.js";
-
-function firstPlayerWithPendingTerritory(
-  state: GameState,
-  pendingTerritoryIds: readonly TerritoryId[],
-  startPlayerId: PlayerId,
-): PlayerId | undefined {
-  const pending = new Set(pendingTerritoryIds);
-  const owners = new Set(
-    state.territories.filter((territory) => pending.has(territory.id)).map((territory) => territory.ownerId),
-  );
-  const order = getPlayerOrderFromStartPlayer(state.players.map((player) => player.id), startPlayerId);
-  return order.find((playerId) => owners.has(playerId));
-}
 
 /**
  * Begins a round only after start auctions or the previous full action phase is complete.
@@ -61,7 +47,6 @@ export function startRound(
   );
   const provisionalState: GameState = { ...state, territories };
   const pendingTerritoryIds = getActivatedTerritories(provisionalState, activationNumbers);
-  const activePlayerId = firstPlayerWithPendingTerritory(provisionalState, pendingTerritoryIds, startPlayerId);
   const nextRound = state.round + 1;
   const descriptions: EventDescription[] = [
     {
@@ -75,7 +60,7 @@ export function startRound(
     { type: GameEventType.ActivationPhaseStarted, payload: { round: nextRound, pendingTerritoryIds } },
   ];
 
-  if (activePlayerId === undefined) {
+  if (pendingTerritoryIds.length === 0) {
     descriptions.push({ type: GameEventType.ActivationPhaseFinished, payload: { round: nextRound } });
   }
 
@@ -88,13 +73,22 @@ export function startRound(
     territories,
     activationNumbers,
     activation: { pendingTerritoryIds, resolvedTerritoryIds: [] },
+    actionPhase: {
+      completedPlayerIds: [],
+      auctionsOpenedByActivePlayer: 0,
+      secondAuctionAvailable: false,
+    },
     spadeActivations: [],
     lastWarResult: undefined,
     events: [...state.events, ...newEvents],
-    ...(activePlayerId === undefined ? { activePlayerId: undefined } : { activePlayerId }),
+    activePlayerId: startPlayerId,
   };
 
-  if (activePlayerId === undefined) {
+  // The start player either resolves their personal activations or receives
+  // their regular action immediately when none of their cards match.
+  const startPlayerHasPending = provisionalState.territories.some((territory) =>
+    territory.ownerId === startPlayerId && pendingTerritoryIds.includes(territory.id));
+  if (!startPlayerHasPending) {
     const actionPhase = beginActionPhase(nextState, timestamp);
     return { state: actionPhase.state, events: [...newEvents, ...actionPhase.events] };
   }

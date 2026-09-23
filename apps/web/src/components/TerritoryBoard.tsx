@@ -16,12 +16,40 @@ import { createPenStroke, setupBorderEdgeToSegment, type GridVertex } from "../m
 import { getCellLabelAnchor } from "../map/territory-label-anchor";
 import type { GameReadModel } from "../game-read-model";
 
+export type MapViewMode = "TERRITORIES" | "MY_REALM" | "REALMS" | "BONUSES";
+
+const TERRITORY_COLORS = ["#4b7197", "#806598", "#3d817a", "#9a7048", "#5d79a7", "#8a5e6f", "#4c8a62", "#936f92", "#63836f", "#826f4a", "#537f95", "#977e5a"];
+
+function stableColor(id: string): string {
+  let hash = 2166136261;
+  for (const character of id) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  return TERRITORY_COLORS[(hash >>> 0) % TERRITORY_COLORS.length]!;
+}
+
+function poiDescription(state: GameReadModel, poi: GameReadModel["pointsOfInterest"][number], territoryId: string | undefined): string {
+  if (poi.type === "LANDMARK") return "Wahrzeichen ★ · +25 % Wertung für dieses Gebiet.";
+  if (poi.type === "FORTRESS") return "Festung ▲ · +1 Verteidigung im Kampf für dieses Gebiet.";
+  if (poi.type === "JUNCTION") {
+    const adjacent = territoryId === undefined || state.map === undefined ? 0
+      : state.territories.filter((territory) => territory.id !== territoryId
+        && getSharedBorder(state.map!, territoryId, territory.id).segments.length > 0).length;
+    return `Knotenpunkt ◎ · aktuell +${Math.min(50, adjacent * 10)} % Wertung für dieses Gebiet (${adjacent} Nachbargebiete, höchstens +50 %).`;
+  }
+  const ownerId = territoryId === undefined ? undefined : state.territories.find((territory) => territory.id === territoryId)?.ownerId;
+  const controlledRelics = ownerId === undefined || ownerId === null ? 0 : state.pointsOfInterest.filter((item) => {
+    const itemTerritoryId = getPointOfInterestTerritory(state, item);
+    return item.type === "RELIC" && state.territories.find((territory) => territory.id === itemTerritoryId)?.ownerId === ownerId;
+  }).length;
+  return `Relikt ◆ · ${controlledRelics >= 2 ? "+25 % Wertung für dieses Gebiet aktiv." : `noch nicht aktiv (${controlledRelics}/2 Relikte im eigenen Reich).`}`;
+}
+
 interface TerritoryBoardProps {
   state: GameReadModel;
   selectedId: string | undefined;
   onSelect: (territoryId: string) => void;
   onClearSelection: () => void;
   highlightedIds: readonly string[];
+  changedCellKeys?: readonly string[] | undefined;
   viewerPlayerId?: string | undefined;
   focusTerritoryId?: string | undefined;
   partChoice?: {
@@ -102,8 +130,9 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
   );
 }
 
-export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, highlightedIds, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
+export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, highlightedIds, changedCellKeys, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
   realmHighlights, scoreHundredthsByTerritoryId, showScoreLabels, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: TerritoryBoardProps) {
+  const [viewMode, setViewMode] = useState<MapViewMode>("TERRITORIES");
   const highlighted = new Set(highlightedIds);
   const activated = new Set(state.activation?.pendingTerritoryIds ?? []);
   const marked = new Set(state.borderMarks.flatMap((mark) => mark.territoryIds));
@@ -116,14 +145,22 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
   return (
     <section className="panel board-panel" aria-labelledby="board-title">
       <div className="panel-heading"><div><p className="eyebrow">Rasterkarte{state.map ? ` · ${state.map.width} × ${state.map.height}` : ""}</p><h2 id="board-title">Gebietsübersicht</h2></div><span className="panel-count">{state.mapCreation ? state.mapCreation.regionCount : state.territories.length} {state.mapCreation ? "Regionen" : "Gebiete"}</span></div>
+      {!state.mapCreation && <div className="map-view-modes" aria-label="Kartenansicht">
+        {(["TERRITORIES", "MY_REALM", "REALMS", "BONUSES"] as const).map((mode) => <button key={mode} type="button"
+          className={viewMode === mode ? "selected-button" : "secondary-button"} onClick={() => setViewMode(mode)}>
+          {mode === "TERRITORIES" ? "Gebiete" : mode === "MY_REALM" ? "Mein Reich" : mode === "REALMS" ? "Reiche" : "Boni"}
+        </button>)}
+      </div>}
       {map ? <RasterMap state={state} selectedId={selectedId} onSelect={onSelect} onClearSelection={onClearSelection} neighborIds={neighborIds} highlightedIds={highlightedIds}
+        changedCellKeys={changedCellKeys}
         viewerPlayerId={viewerPlayerId} focusTerritoryId={focusTerritoryId} partChoice={partChoice} playerName={playerName}
         splitDraft={splitDraft} onToggleSplitCell={onToggleSplitCell} editor={editor} onToggleMapCell={onToggleMapCell}
         realmHighlights={realmHighlights} scoreHundredthsByTerritoryId={scoreHundredthsByTerritoryId} showScoreLabels={showScoreLabels}
+        viewMode={viewMode}
         setupEditor={setupEditor} onSetupSelectCell={onSetupSelectCell} onSetupStrokePreview={onSetupStrokePreview}
         onSetupStrokeCommit={onSetupStrokeCommit} onSetupStrokeErase={onSetupStrokeErase} /> : <p className="panel-hint">Keine Karte im Setup.</p>}
       <p className="panel-hint">{setupEditor ? setupEditor.mode === "POI"
-        ? "POI platzieren: Klicke ein beliebiges Kästchen an."
+        ? "Strategischen Punkt platzieren: Klicke ein beliebiges Kästchen an."
         : setupEditor.mode === "ERASER" ? "Radiergummi: Ziehe über lokale Entwurfskanten, um sie zu entfernen."
           : "Kartenbau: Ziehe von Rastervertex zu Rastervertex. Es entstehen ausschließlich Grenzkanten zwischen Zellen."
         : editor ? editor.mode === "CUT"
@@ -164,6 +201,7 @@ interface RasterMapProps {
   readonly onClearSelection: () => void;
   readonly neighborIds: readonly string[];
   readonly highlightedIds: readonly string[];
+  readonly changedCellKeys?: readonly string[] | undefined;
   readonly viewerPlayerId?: string | undefined;
   readonly focusTerritoryId?: string | undefined;
   readonly partChoice?: TerritoryBoardProps["partChoice"];
@@ -175,6 +213,7 @@ interface RasterMapProps {
   readonly realmHighlights?: readonly { readonly componentId: string; readonly territoryIds: readonly string[]; readonly selected: boolean }[] | undefined;
   readonly scoreHundredthsByTerritoryId?: Readonly<Record<string, number>> | undefined;
   readonly showScoreLabels?: boolean | undefined;
+  readonly viewMode: MapViewMode;
   readonly setupEditor?: TerritoryBoardProps["setupEditor"];
   readonly onSetupSelectCell?: TerritoryBoardProps["onSetupSelectCell"];
   readonly onSetupStrokePreview?: TerritoryBoardProps["onSetupStrokePreview"];
@@ -182,12 +221,13 @@ interface RasterMapProps {
   readonly onSetupStrokeErase?: TerritoryBoardProps["onSetupStrokeErase"];
 }
 
-function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds, highlightedIds, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
-  realmHighlights, scoreHundredthsByTerritoryId, showScoreLabels, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: RasterMapProps) {
+function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds, highlightedIds, changedCellKeys, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
+  realmHighlights, scoreHundredthsByTerritoryId, showScoreLabels, viewMode, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: RasterMapProps) {
   const map = state.map!;
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [hovered, setHovered] = useState<string>();
+  const [activePoiId, setActivePoiId] = useState<string>();
   const svgRef = useRef<SVGSVGElement>(null);
   const panPointer = useRef<{ readonly pointerId: number; readonly clientX: number; readonly clientY: number; readonly pan: { readonly x: number; readonly y: number } } | undefined>(undefined);
   const setupPointer = useRef<{ readonly pointerId: number; readonly points: GridVertex[] } | undefined>(undefined);
@@ -235,6 +275,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
     ].filter((edge) => edge.neighbor !== territoryId);
   }), [cellEntries, map.cells]);
   const split = state.pendingSplit;
+  const changedCells = useMemo(() => new Set(changedCellKeys ?? []), [changedCellKeys]);
   const overlayTerritoryId = partChoice?.territoryId ?? split?.originalTerritoryId;
   const splitAKeys = useMemo(() => partChoice?.partAKeys ?? split?.proposal?.partACells.map((cell) => `${cell.x},${cell.y}`) ?? splitDraft?.partAKeys ?? [], [partChoice, split, splitDraft]);
   const splitA = useMemo(() => new Set(splitAKeys), [splitAKeys]);
@@ -341,7 +382,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       <button type="button" className="secondary-button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Auf Karte einpassen</button>
       <span className="map-legend">{Math.round(zoom * 100)} % · mittlere Maustaste zum Verschieben{activeId ? ` · ${activeId}${hovered ? " Hover" : " ausgewählt"}` : ""}</span>
     </div>
-    <svg ref={svgRef} className={`raster-map ${split || editor || setupEditor ? "is-splitting" : ""} ${zoom <= 1.1 ? "is-zoomed-out" : ""}`}
+    <svg ref={svgRef} className={`raster-map map-view-${viewMode.toLowerCase()} ${split || editor || setupEditor ? "is-splitting" : ""} ${zoom <= 1.1 ? "is-zoomed-out" : ""}`}
       viewBox={`${viewX} ${viewY} ${viewportWidth} ${viewportHeight}`}
       preserveAspectRatio="xMidYMid meet"
       role="img" aria-label="Vedras Rasterkarte"
@@ -407,8 +448,12 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         const ownedByViewer = territory?.ownerId !== null && territory?.ownerId === viewerPlayerId;
         const setupRegionIndex = state.mapCreation ? previewRegionIndexByCell.get(key) : undefined;
         const ownerClass = setupRegionIndex !== undefined ? `map-cell-setup-region-${setupRegionIndex}`
-          : territory?.ownerId === null || territory === undefined
-            ? "map-cell-neutral" : `owner-map-${Math.max(0, playerIndexById.get(territory.ownerId) ?? -1)}`;
+          : viewMode === "TERRITORIES"
+            ? territory?.ownerId === null || territory === undefined ? "map-cell-neutral" : "map-cell-territory"
+            : territory?.ownerId === null || territory === undefined
+              ? "map-cell-neutral" : `owner-map-${Math.max(0, playerIndexById.get(territory.ownerId) ?? -1)}`;
+        const territoryFill = setupRegionIndex === undefined && viewMode === "TERRITORIES" && territoryId !== null
+          ? stableColor(territoryId) : undefined;
         const splitPart = hasSplitOverlay && territoryId === splitId
           ? splitA.has(key) ? "map-cell-part-a" : "map-cell-part-b" : "";
         const editPart = editor && territoryId === editor.targetId
@@ -419,7 +464,8 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         const realm = territoryId === null ? undefined : realmByTerritoryId.get(territoryId);
         const realmClass = realm === undefined ? "" : realm.selected ? "map-cell-largest-realm" : `map-cell-realm-candidate-${realm.index % 4}`;
         return <rect key={key} x={cell.x} y={cell.y} width="1" height="1"
-          className={`map-cell ${ownerClass} ${ownedByViewer ? "map-cell-own" : ""} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${isHighlighted ? "map-cell-activated" : ""} ${splitPart} ${editPart} ${annexedPart} ${setupPart} ${realmClass} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""} ${partChoice?.selectedPart === (splitA.has(key) ? "A" : "B") && territoryId === partChoice.territoryId ? "map-cell-part-selected" : ""}`}
+          style={territoryFill === undefined ? undefined : { fill: territoryFill }}
+          className={`map-cell ${ownerClass} ${viewMode === "MY_REALM" && !ownedByViewer ? "map-cell-not-own" : ""} ${ownedByViewer ? "map-cell-own" : ""} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${isHighlighted ? "map-cell-activated" : ""} ${changedCells.has(key) ? "map-cell-war-changed" : ""} ${splitPart} ${editPart} ${annexedPart} ${setupPart} ${realmClass} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""} ${partChoice?.selectedPart === (splitA.has(key) ? "A" : "B") && territoryId === partChoice.territoryId ? "map-cell-part-selected" : ""}`}
           onClick={() => {
             if (setupEditor !== undefined) {
               if (setupEditor.mode === "POI" && setupEditor.editable && setupAllowed.has(key)) onSetupSelectCell?.(cell);
@@ -448,8 +494,11 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         const edgeY = edge.cell.y + (!vertical && edge.neighbor.y > edge.cell.y ? 1 : 0);
         return <line key={`border-${index}`} x1={edgeX} y1={edgeY} x2={edgeX + (vertical ? 0 : 1)} y2={edgeY + (vertical ? 1 : 0)} className="map-shared-border" />;
       })}
-      {poiEntries.map(({ poi, territoryId }) => <text key={poi.id} x={poi.position.x + .5} y={poi.position.y + .72} className={`map-poi map-poi-${poi.type.toLowerCase()} ${territoryId === selectedId ? "map-poi-selected" : ""}`}>
-        <title>{poi.type === "LANDMARK" ? "Wahrzeichen · +25 % Wertung" : poi.type === "JUNCTION" ? "Knotenpunkt · Gebietsbonus" : poi.type === "FORTRESS" ? "Festung · Verteidigungsbonus" : "Relikt · Wertungsbonus"}</title>{poi.type === "LANDMARK" ? "★" : poi.type === "JUNCTION" ? "◎" : poi.type === "FORTRESS" ? "▲" : "◆"}</text>)}
+      {poiEntries.map(({ poi, territoryId }) => <text key={poi.id} x={poi.position.x + .5} y={poi.position.y + .72}
+        tabIndex={0} role="button" onMouseEnter={() => setActivePoiId(poi.id)} onFocus={() => setActivePoiId(poi.id)}
+        onClick={(event) => { event.stopPropagation(); setActivePoiId(poi.id); }}
+        aria-label={poiDescription(state, poi, territoryId)} className={`map-poi map-poi-${poi.type.toLowerCase()} ${territoryId === selectedId ? "map-poi-selected" : ""}`}>
+        <title>{poiDescription(state, poi, territoryId)}</title>{poi.type === "LANDMARK" ? "★" : poi.type === "JUNCTION" ? "◎" : poi.type === "FORTRESS" ? "▲" : "◆"}</text>)}
       {state.territories.flatMap((territory) => territory.settlementFeatures ?? (territory.settlementFeature ? [territory.settlementFeature] : [])).map((feature) => <text key={`settlement-${feature.id}`}
         x={feature.position.x + .5} y={feature.position.y + .75}
         className="map-settlement">{feature.kind === "CITY" ? "♜" : "⌂"}</text>)}
@@ -494,5 +543,9 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       })}
     </svg>
     <div className="map-summary">{selectedId ? `${state.mapCreation ? "Region" : "Gebiet"} ${selectedId}: ${cellsByTerritoryId.get(selectedId)?.length ?? getStateTerritoryArea(state, selectedId)} Kästchen` : state.mapCreation ? "Region auswählen" : "Gebiet auswählen"}</div>
+    {activePoiId !== undefined && (() => {
+      const entry = poiEntries.find(({ poi }) => poi.id === activePoiId);
+      return entry === undefined ? null : <div className="map-poi-tooltip" role="status"><strong>{entry.poi.type === "LANDMARK" ? "Wahrzeichen ★" : entry.poi.type === "JUNCTION" ? "Knotenpunkt ◎" : entry.poi.type === "FORTRESS" ? "Festung ▲" : "Relikt ◆"}</strong><span>{poiDescription(state, entry.poi, entry.territoryId)}</span></div>;
+    })()}
   </div>;
 }

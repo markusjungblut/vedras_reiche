@@ -18,15 +18,15 @@ export interface RuleHelpTopic {
 export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   overview: {
     id: "overview", title: "Überblick", short: "Gemeinsam Karte bauen, Gebiete erwerben und am Ende die höchste Wertung erreichen.",
-    long: "Zuerst erschafft ihr die Karte. Danach werden Startgebiete versteigert. Jede Runde aktiviert ihr passende Gebietskarten und führt anschließend eine Grundaktion aus. Fläche, Entwicklungen, POIs und weitere Boni fließen in die Endwertung ein.", keywords: ["ziel", "ablauf", "runde", "gewinnen"],
+    long: "Zuerst erschafft ihr die Karte. Danach werden Startgebiete versteigert. In jeder Runde löst jede Person zuerst ihre passenden Gebietskarten aus und führt direkt danach eine Grundaktion aus. Fläche, Entwicklungen, Strategische Punkte und weitere Boni fließen in die Endwertung ein.", keywords: ["ziel", "ablauf", "runde", "gewinnen"],
   },
   mapCreation: {
     id: "mapCreation", title: "Kartenbau", short: "Ein bestätigter Zeichenzug teilt genau ein Gebiet in zwei zusammenhängende Gebiete.",
     long: "Zeichne mit dem Grenzstift eine Trennung auf dem Raster. Beide Teile müssen zusammenhängend bleiben und mindestens {minimumTerritoryArea} Kästchen haben. Der Radiergummi entfernt nur Linien aus deinem aktuellen Entwurf; Rückgängig entfernt den letzten Strich. Beim Bestätigen bleiben nur Linien erhalten, die tatsächlich die neue Gebietsgrenze bilden.", keywords: ["grenzstift", "radiergummi", "rückgängig", "teilen", "mindestgröße", "raster"],
   },
   pois: {
-    id: "pois", title: "POIs", short: "Wahrzeichen, Knotenpunkte, Festungen und Relikte liegen auf einzelnen Rasterzellen.",
-    long: "★ Wahrzeichen erhöhen die Wertung ihres Gebiets. ◎ Knotenpunkte richten ihren Bonus nach den angrenzenden Gebieten. ▲ Festungen zählen in der Verteidigung. ◆ Relikte werden für die Wertung aktiv, sobald du mindestens zwei kontrollierst. Ein POI bleibt auf seiner Zelle; nach einer Grenzänderung gehört er zu dem Gebiet dieser Zelle.", keywords: ["wahrzeichen", "knotenpunkt", "festung", "relikt", "poi", "stern", "dreieck"],
+    id: "pois", title: "Strategische Punkte", short: "Wahrzeichen, Knotenpunkte, Festungen und Relikte liegen auf einzelnen Rasterzellen.",
+    long: "★ Wahrzeichen geben ihrem Gebiet +25 % Wertung. ◎ Knotenpunkte geben je angrenzendem Gebiet +10 %, höchstens +50 %. ▲ Festungen geben ihrem Gebiet im Kampf +1 Verteidigung. ◆ Relikte geben ihrem Gebiet +25 %, sobald du mindestens zwei Relikte kontrollierst. Ein Strategischer Punkt bleibt auf seiner Zelle; nach einer Grenzänderung gehört er zu dem Gebiet dieser Zelle.", keywords: ["wahrzeichen", "knotenpunkt", "festung", "relikt", "strategische punkte", "stern", "dreieck"],
   },
   territoryCards: {
     id: "territoryCards", title: "Gebietskarten", short: "Jede Gebietskarte trägt eine Aktivierungszahl und ein Symbol.",
@@ -38,11 +38,11 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   startAuctions: {
     id: "startAuctions", title: "Startauktionen", short: "Startgebiete werden in getrennten, verdeckten Startauktionen vergeben.",
-    long: "Die Startauktionen laufen vor der ersten Runde. Die aktuelle Auslage und die für dich verfügbaren Startgebote stehen im Aktionsbereich. Alle berechtigten Spieler geben ihr Gebot verdeckt ab; der Core deckt auf und löst das Ergebnis nach den Startauktionsregeln auf.", keywords: ["start", "gebot", "auslage", "verdeckt", "erste gebiete"],
+    long: "Die Startauktionen laufen vor der ersten Runde automatisch weiter. Die aktuelle Auslage und deine verfügbaren Startgebote stehen im Aktionsbereich. Alle berechtigten Spieler geben ihr Gebot verdeckt und unabhängig voneinander ab; nach der letzten Abgabe deckt der Core auf, löst das Ergebnis auf und öffnet die nächste Auktion.", keywords: ["start", "gebot", "auslage", "verdeckt", "erste gebiete"],
   },
   rounds: {
     id: "rounds", title: "Runden", short: "Eine Runde besteht aus Aktivierung und anschließenden Grundaktionen.",
-    long: "Zu Rundenbeginn werden Aktivierungszahlen bestimmt. In der Aktivierungsphase nutzt ihr passende eigene Gebietskarten. In der Aktionsphase führt der aktive Spieler eine Grundaktion aus: Auktion oder Krieg. Nach der letzten Runde startet die Wertung.", keywords: ["phase", "aktivierung", "aktion", "rundenende"],
+    long: "Zu Rundenbeginn werden Aktivierungszahlen bestimmt. In Spielerreihenfolge löst jede Person ihre passenden eigenen Gebietskarten aus und führt danach genau eine Grundaktion aus: Auktion oder Krieg. Ohne passende Karte beginnt die Grundaktion direkt. Nach der letzten Runde startet die Wertung.", keywords: ["phase", "aktivierung", "aktion", "rundenende"],
   },
   activation: {
     id: "activation", title: "Aktivierung", short: "Nur eigene Karten mit einer aktuellen Aktivierungszahl sind aktivierbar.",
@@ -86,7 +86,7 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   scoring: {
     id: "scoring", title: "Wertung", short: "Am Ende werden Fläche und regelkonforme Boni je Gebiet addiert.",
-    long: "Die Wertung zeigt pro Gebiet die Fläche und die einzelnen Bonusanteile: geheime Fraktion, größtes Reich, Entwicklungen und POIs. Bei Gleichständen um das größte Reich wählt der betroffene Spieler einen zulässigen Bereich. Die höchste Gesamtwertung gewinnt.", keywords: ["ende", "punkte", "fläche", "größtes reich", "boni", "sieg"],
+    long: "Die Wertung zeigt pro Gebiet die Fläche und die einzelnen Bonusanteile: geheime Fraktion, größtes Reich, Entwicklungen und Strategische Punkte. Bei Gleichständen um das größte Reich wählt der betroffene Spieler einen zulässigen Bereich. Die höchste Gesamtwertung gewinnt.", keywords: ["ende", "punkte", "fläche", "größtes reich", "boni", "sieg"],
   },
 };
 
@@ -98,7 +98,7 @@ export const GLOSSARY: readonly { readonly term: string; readonly definition: st
   { term: "Geschwächt", definition: "Ein Gebiet, bei dem der vorherige Grenzverlust keine ausreichende Fläche zurückgelassen hätte. Ein späterer Verlust führt zur Eroberung.", keywords: ["krieg", "grenzgewinn"] },
   { term: "Durchbruch", definition: "Kampfergebnis, das bei ausreichender Gebietsgröße eine Teilung auslösen kann.", keywords: ["cut and choose", "krieg"] },
   { term: "Cut-and-Choose", definition: "Teilungsablauf: Eine Person teilt, die andere wählt zuerst.", keywords: ["divider", "chooser", "gleichstand"] },
-  { term: "POI", definition: "Point of Interest: Wahrzeichen, Knotenpunkt, Festung oder Relikt auf einer Rasterzelle.", keywords: ["wahrzeichen", "festung", "relikt"] },
+  { term: "Strategischer Punkt", definition: "Wahrzeichen, Knotenpunkt, Festung oder Relikt auf einer Rasterzelle.", keywords: ["wahrzeichen", "festung", "relikt"] },
   { term: "Fraktion", definition: "Dein geheimes Symbol für den +25-%-Bonus auf Gebietskarten mit ihrem ursprünglichen Symbol.", keywords: ["geheim", "wertung"] },
 ];
 
@@ -168,12 +168,12 @@ export function getCurrentHelp(state: GameReadModel, viewerPlayerId?: string): C
     case GamePhase.MapCreation: {
       const stage = state.mapCreation?.stage;
       if (stage && stage !== MapCreationStage.DrawTerritories && stage !== MapCreationStage.ReadyToFinalize) return {
-        title: "Kartenbau · POIs", action: state.mapCreation?.activePlayerId === viewerPlayerId ? "Wähle eine freie Rasterzelle für den geforderten POI." : `${name(state, state.mapCreation?.activePlayerId)} platziert gerade einen POI.`, topicIds: ["pois", "mapCreation"],
+        title: "Kartenbau · Strategische Punkte", action: state.mapCreation?.activePlayerId === viewerPlayerId ? "Wähle eine freie Rasterzelle für den geforderten Strategischen Punkt." : `${name(state, state.mapCreation?.activePlayerId)} platziert gerade einen Strategischen Punkt.`, topicIds: ["pois", "mapCreation"],
       };
       return { title: "Kartenbau", action: state.mapCreation?.activePlayerId === viewerPlayerId ? "Zeichne eine Trennung, die genau ein Gebiet in zwei gültige Teile teilt." : `${name(state, state.mapCreation?.activePlayerId)} zeichnet gerade die nächste Trennung.`, topicIds: ["mapCreation", "pois"] };
     }
     case GamePhase.Setup: return { title: "Vorbereitung", action: "Die Karte ist fertig. Prüft eure persönlichen Fraktionen und startet danach die Startauktionen.", topicIds: ["factions", "startAuctions"] };
-    case GamePhase.StartAuctions: return { title: "Startauktionen", action: "Eröffne die nächste Startauktion aus der aktuellen Auslage.", topicIds: ["startAuctions"] };
+    case GamePhase.StartAuctions: return { title: "Startauktionen", action: "Die aktuelle Startauktion ist geöffnet. Gib dein verdecktes Gebot ab oder warte auf die Auflösung.", topicIds: ["startAuctions"] };
     case GamePhase.RoundReady: return { title: "Nächste Runde", action: "Starte die Runde; danach legt der Core die Aktivierungszahlen fest.", topicIds: ["rounds", "activation"] };
     case GamePhase.ActivationPhase: return { title: "Aktivierung", action: state.activePlayerId === viewerPlayerId ? "Wähle eines deiner vom Core freigegebenen Gebiete und nutze sein Symbol." : `${name(state, state.activePlayerId)} aktiviert gerade ein Gebiet.`, topicIds: ["activation", "diamonds", "clubs", "hearts", "spades"] };
     case GamePhase.ActionPhase: return { title: "Aktionsphase", action: state.activePlayerId === viewerPlayerId ? "Wähle eine vom Core angebotene Auktion oder einen Krieg." : `${name(state, state.activePlayerId)} führt gerade eine Grundaktion aus.`, topicIds: ["auctions", "war", "rounds"] };
@@ -207,7 +207,7 @@ const DOMAIN_MESSAGES: Partial<Record<DomainErrorCode, string>> = {
   [DomainErrorCode.SpadeChoiceAlreadyLocked]: "Deine ♠-Entscheidung ist bereits verdeckt festgelegt.",
   [DomainErrorCode.InvalidSplitResolution]: "Diese Teilung entspricht nicht den aktuellen Vorgaben.",
   [DomainErrorCode.InvalidSetupBoundaryDraft]: "Dieser Grenzentwurf teilt nicht genau ein Gebiet regelkonform.",
-  [DomainErrorCode.InvalidPoiPlacement]: "Dieser POI kann auf dieser Zelle oder in dieser Etappe nicht platziert werden.",
+  [DomainErrorCode.InvalidPoiPlacement]: "Dieser Strategische Punkt kann auf dieser Zelle oder in dieser Etappe nicht platziert werden.",
 };
 
 export function formatDomainError(error: unknown): string {

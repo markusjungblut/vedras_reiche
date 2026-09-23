@@ -314,6 +314,7 @@ interface ControlProps {
   readonly splitDraft?: SplitDraft | undefined;
   readonly onToggleSplitCell: (cell: GridCell) => void;
   readonly onSetOriginalCardPart: (part: "A" | "B") => void;
+  readonly onResetSplitDraft: () => void;
   readonly editor?: MapEditor | undefined;
   readonly playerName: (id: string) => string;
   readonly setupDraft?: SetupDraft | undefined;
@@ -337,34 +338,34 @@ function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlPro
   const [globalInfluence, setGlobalInfluence] = useState(0);
   const [localInfluence, setLocalInfluence] = useState(0);
   if (!auction) return null;
-  const nextBidderId = auction.eligiblePlayerIds.find((id) => auction.submittedBids[id] === undefined);
-  const nextBidder = state.players.find((player) => player.id === nextBidderId);
+  const localBidderId = auction.eligiblePlayerIds.find((id) => auction.submittedBids[id] === undefined);
+  const bidderId = viewerPlayerId ?? localBidderId;
+  const bidder = state.players.find((player) => player.id === bidderId);
   const territory = state.territories.find((item) => item.id === auction.territoryId);
-  const startAvailable = nextBidderId === undefined ? [] : state.startAuctions?.availableBidsByPlayerId[nextBidderId] ?? [];
-  const basicAvailable = (nextBidder?.availableBasicBids ?? []).filter((value): value is 1 | 2 | 3 =>
+  const startAvailable = bidderId === undefined ? [] : state.startAuctions?.availableBidsByPlayerId[bidderId] ?? [];
+  const basicAvailable = (bidder?.availableBasicBids ?? []).filter((value): value is 1 | 2 | 3 =>
     value === 1 || value === 2 || value === 3);
   const chosenBasic = basicAvailable.includes(basicBid as 1 | 2 | 3)
     ? basicBid as 1 | 2 | 3 : basicAvailable[0];
   const chosenStartBid = startAvailable.includes(startBid) ? startBid : startAvailable[0];
-  const maxGlobal = nextBidder?.globalInfluence ?? 0;
-  const maxLocal = nextBidderId === undefined ? 0 : territory?.localInfluenceByPlayerId?.[nextBidderId] ?? 0;
+  const maxGlobal = bidder?.globalInfluence ?? 0;
+  const maxLocal = bidderId === undefined ? 0 : territory?.localInfluenceByPlayerId?.[bidderId] ?? 0;
   const selectedGlobal = Math.min(globalInfluence, maxGlobal);
   const selectedLocal = Math.min(localInfluence, maxLocal);
-  const waitingForAnotherPlayer = viewerPlayerId !== undefined && nextBidderId !== undefined && nextBidderId !== viewerPlayerId;
+  const ownBid = viewerPlayerId === undefined || auction.submittedBids[viewerPlayerId] === undefined
+    ? undefined : auction.submittedBids[viewerPlayerId];
+  const canSubmit = bidderId !== undefined && auction.submittedBids[bidderId] === undefined &&
+    (viewerPlayerId === undefined || bidderId === viewerPlayerId);
+  const submittedCount = Object.keys(auction.submittedBids).length;
 
   return <section className="control-section" aria-label="Laufende Auktion">
     <div className="section-kicker">Verdeckte Gebote</div>
     <h3>{auction.kind === "START" ? "Startauktion" : "Normale Auktion"} · {auction.territoryId}</h3>
-    <p>Alle erforderlichen Gebote werden gleichzeitig aufgedeckt.</p>
-    <div className="bid-status-list">
-      {auction.eligiblePlayerIds.map((id) => <span key={id} className="status-chip">
-        {playerName(state, id)} {auction.submittedBids[id] === undefined ? "· offen" : "✓ abgegeben"}
-        {auction.kind === "START" && state.startAuctions && ` · verfügbar: ${state.startAuctions.availableBidsByPlayerId[id]?.join(", ") ?? "–"}`}
-      </span>)}
-    </div>
-    {nextBidderId !== undefined && waitingForAnotherPlayer && <p className="winner-message">Gebot abgegeben. Warte auf andere Spieler …</p>}
-    {nextBidderId !== undefined && !waitingForAnotherPlayer && <div className="bid-entry" key={`${auction.id}:${nextBidderId}`}>
-      <strong>{viewerPlayerId === nextBidderId ? "Du gibst jetzt ein Gebot ab" : `${playerName(state, nextBidderId)} gibt jetzt ein Gebot ab`}</strong>
+    <p>Alle erforderlichen Gebote werden gemeinsam aufgedeckt.</p>
+    <p className="bid-progress" aria-live="polite">Gebote: {submittedCount}/{auction.eligiblePlayerIds.length} abgegeben</p>
+    {ownBid !== undefined && <p className="winner-message">Dein verdecktes Gebot: {"submitted" in ownBid ? "abgegeben" : ownBid.kind === "START" ? ownBid.value : `${ownBid.basicBid} + ${ownBid.globalInfluence} + ${ownBid.localInfluence}`}. Warte auf die übrigen Gebote …</p>}
+    {canSubmit && <div className="bid-entry" key={`${auction.id}:${bidderId}`}>
+      <strong>{viewerPlayerId === bidderId ? "Gib jetzt dein verdecktes Gebot ab" : `${playerName(state, bidderId)} gibt jetzt ein Gebot ab`}</strong>
       {auction.kind === "START" ? <>
         <Field label="Startgebot">
           <select value={chosenStartBid} onChange={(event) => setStartBid(Number(event.target.value))}>
@@ -373,8 +374,8 @@ function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlPro
         </Field>
         <button type="button" className="primary-button" disabled={chosenStartBid === undefined}
           onClick={() => {
-            if (chosenStartBid === undefined) return;
-            onAction({ type: GameActionType.SubmitAuctionBid, playerId: nextBidderId,
+            if (chosenStartBid === undefined || bidderId === undefined) return;
+            onAction({ type: GameActionType.SubmitAuctionBid, playerId: bidderId,
               auctionId: auction.id, bid: { kind: "START", value: chosenStartBid } });
             setStartBid(0);
           }}>Gebot verdeckt abgeben</button>
@@ -397,8 +398,8 @@ function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlPro
         <p className="bid-total">Gebotswert: {(chosenBasic ?? 0) + selectedGlobal + selectedLocal}</p>
         <button type="button" className="primary-button" disabled={chosenBasic === undefined}
           onClick={() => {
-            if (chosenBasic === undefined) return;
-            onAction({ type: GameActionType.SubmitAuctionBid, playerId: nextBidderId,
+            if (chosenBasic === undefined || bidderId === undefined) return;
+            onAction({ type: GameActionType.SubmitAuctionBid, playerId: bidderId,
               auctionId: auction.id,
               bid: { kind: "NORMAL", basicBid: chosenBasic,
                 globalInfluence: selectedGlobal, localInfluence: selectedLocal } });
@@ -407,12 +408,13 @@ function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlPro
             setLocalInfluence(0);
           }}>Gebot verdeckt abgeben</button>
       </>}
-      <small>Nach der Abgabe zeigt die Ansicht nur noch „abgegeben“.</small>
+      <small>Nach der Abgabe bleibt nur dein eigenes Gebot sichtbar.</small>
     </div>}
+    {!canSubmit && ownBid === undefined && <p className="winner-message">Warte auf die aktuelle Auflösung …</p>}
   </section>;
 }
 
-function SplitEditor({ state, onAction, splitDraft, onToggleSplitCell, onSetOriginalCardPart, selectedPart, onSelectPart, viewerPlayerId }: ControlProps) {
+function SplitEditor({ state, onAction, splitDraft, onSetOriginalCardPart, onResetSplitDraft, selectedPart, onSelectPart, viewerPlayerId }: ControlProps) {
   const split = state.pendingSplit!;
   const map = state.map;
   const original = state.territories.find((territory) => territory.id === split.originalTerritoryId);
@@ -451,24 +453,21 @@ function SplitEditor({ state, onAction, splitDraft, onToggleSplitCell, onSetOrig
   return <section className="control-section" aria-label="Gebietsteilung bearbeiten">
     <div className="section-kicker">Cut and Choose · Grenze ziehen</div>
     <h3>{divider ? `${playerName(state, divider)} zieht die Grenze` : "Divider zieht die Grenze"}</h3>
-    <p>{chooser ? `${playerName(state, chooser)} wählt anschließend zuerst.` : "Danach wählt der andere Höchstbietende zuerst."} Zeichne eine gültige Grenze direkt auf der Karte.</p>
+    <p>{chooser ? `${playerName(state, chooser)} wählt anschließend zuerst.` : "Danach wählt der andere Höchstbietende zuerst."} Teile das Gebiet direkt auf der Karte in A und B.</p>
     <p>Teil A: {partA.length} Kästchen {partA.length >= minimum ? "✓" : `✗ mindestens ${minimum}`} · Zusammenhang {partAConnected ? "✓" : "✗"}</p>
     <p>Teil B: {validation.partBCells.length} Kästchen {validation.partBCells.length >= minimum ? "✓" : `✗ mindestens ${minimum}`} · Zusammenhang {partBConnected ? "✓" : "✗"}</p>
     <p>{validation.valid ? "Beide Teile sind zusammenhängend und regelkonform." : `Noch nicht gültig: ${validation.reason ?? "Mindestgröße oder Zusammenhang fehlt"}.`}</p>
     {!mayDivide && <p className="winner-message">Warte darauf, dass {playerName(state, divider ?? "")} die Grenze zeichnet.</p>}
-    <div className="split-cell-grid" aria-label="Zellen des ursprünglichen Gebiets">
-      {allCells.map((cell) => {
-        const key = `${cell.x},${cell.y}`;
-        const inA = partAKeys.includes(key);
-        return <button key={key} type="button" disabled={!mayDivide} className={inA ? "split-cell part-a" : "split-cell part-b"} onClick={() => onToggleSplitCell(cell)} aria-label={`Kästchen ${cell.x}, ${cell.y}: Teil ${inA ? "A" : "B"}`}>{inA ? "A" : "B"}</button>;
-      })}
-    </div>
     <div className="button-row">
       <button type="button" disabled={!mayDivide} className={originalCardPart === "A" ? "selected-button" : "secondary-button"} onClick={() => onSetOriginalCardPart("A")}>Teil A behält die Karte</button>
       <button type="button" disabled={!mayDivide} className={originalCardPart === "B" ? "selected-button" : "secondary-button"} onClick={() => onSetOriginalCardPart("B")}>Teil B behält die Karte</button>
     </div>
-    <button type="button" className="primary-button" disabled={!mayDivide || !validation.valid || divider === undefined}
-      onClick={() => divider !== undefined && onAction({ type: GameActionType.ProposeTerritorySplit, splitId: split.id, playerId: divider, partACells: partA, originalCardPart })}>Teilung bestätigen</button>
+    <div className="button-row">
+      <button type="button" className="primary-button" disabled={!mayDivide || !validation.valid || divider === undefined}
+        onClick={() => divider !== undefined && onAction({ type: GameActionType.ProposeTerritorySplit, splitId: split.id, playerId: divider, partACells: partA, originalCardPart })}>Teilung bestätigen</button>
+      <button type="button" className="secondary-button" disabled={!mayDivide} onClick={onResetSplitDraft}>Auswahl zurücksetzen</button>
+      <button type="button" className="text-button" disabled={!mayDivide} onClick={onResetSplitDraft}>Abbrechen</button>
+    </div>
     {allCells.length < 2 * minimum && <button type="button" className="secondary-button"
       onClick={() => onAction({ type: GameActionType.ResolveTerritorySplit, splitId: split.id, resolution: "SPLIT_NOT_POSSIBLE" })}>
       Teilung wegen zu kleiner Fläche unmöglich
@@ -641,11 +640,11 @@ function SetupControls(props: ControlProps) {
     const required = getSetupPoiRequirements(state.players.length)[poiType];
     const label = poiType === PointOfInterestType.Landmark ? "Wahrzeichen" : poiType === PointOfInterestType.Junction
       ? "Knotenpunkte" : poiType === PointOfInterestType.Fortress ? "Festungen" : "Relikte";
-    return <section className="control-section" aria-label="POIs platzieren">
+    return <section className="control-section" aria-label="Strategische Punkte platzieren">
       <div className="section-kicker">{label} platzieren</div>
       <h3>{name(state.activePlayerId ?? mapCreation.activePlayerId)} ist an der Reihe</h3>
       <p>Noch {required - mapCreation.placedPoiCounts[poiType]} / {required}. Wähle ein beliebiges Kästchen auf der Karte.</p>
-      <small>POIs bleiben an ihrer Rasterzelle, auch wenn diese Region später geteilt wird.</small>
+      <small>Strategische Punkte bleiben an ihrer Rasterzelle, auch wenn diese Region später geteilt wird.</small>
     </section>;
   }
 
@@ -745,10 +744,33 @@ function FinishedSetupControls(props: ControlProps) {
   </section>;
 }
 
+function PlayerTurnPanel({ state }: Pick<ControlProps, "state">) {
+  const input = "playerInput" in state ? state.playerInput : undefined;
+  if (input === undefined) return null;
+  const activeName = input.activePlayerId === undefined ? undefined : playerName(state, input.activePlayerId);
+  const action = input.action === "ACTIVATION" ? "Aktivierung" : input.action === "BASIC_ACTION" ? "Grundaktion"
+    : input.action === "SPLIT_DIVISION" || input.action === "WAR_CUT_DIVISION" ? "Teilung"
+      : input.action === "SPLIT_CHOICE" || input.action === "WAR_CUT_CHOICE" ? "Auswahl"
+        : input.action === "BORDER_ADVANCE" || input.action === "DIAMOND_CORRECTION" ? "Grenzentscheidung"
+          : input.action === "WAR_SPADE_CHOICE" ? "♠-Entscheidung" : undefined;
+  return <section className="control-section player-turn-panel" aria-label="Aktueller Spielstatus">
+    <div className="section-kicker">Spielstatus</div>
+    <h3>{input.status === "SUBMITTED" ? "Eingabe abgegeben" : input.status === "PROCESSING" ? "Spielstand wird verarbeitet" : "Warten"}</h3>
+    {input.submittedBidCount !== undefined && <p>Gebote: {input.submittedBidCount}/{input.requiredBidCount ?? 0} abgegeben.</p>}
+    <p>{input.status === "SUBMITTED" ? "Deine Eingabe ist gespeichert. Die Auflösung folgt, sobald alle nötigen Eingaben vorliegen."
+      : activeName === undefined ? "Der Server aktualisiert den Spielstand." : `${activeName} trifft gerade die nächste Entscheidung${action ? `: ${action}` : ""}.`}</p>
+  </section>;
+}
+
 function PhaseControls(props: ControlProps) {
   const { state, onAction, onStartRound, playerName: name } = props;
-  if (state.pendingSplit) return <SplitEditor {...props} />;
+  const playerInput = "playerInput" in state ? state.playerInput : undefined;
   if (state.auction) return <AuctionBidControls state={state} onAction={onAction} viewerPlayerId={props.viewerPlayerId} />;
+  if (playerInput !== undefined && playerInput.status !== "ACTION_REQUIRED" && playerInput.status !== "OPTIONAL_DECISION" &&
+      (state.pendingSplit || state.pendingWar || state.pendingDiamondBorderChanges.length > 0 || state.phase === GamePhase.ActivationPhase || state.phase === GamePhase.ActionPhase)) {
+    return <PlayerTurnPanel state={state} />;
+  }
+  if (state.pendingSplit) return <SplitEditor {...props} />;
   if (state.pendingWar) return <WarControls state={state} editor={props.editor} onAction={onAction}
     viewerPlayerId={props.viewerPlayerId} selectedPart={props.selectedPart} onSelectPart={props.onSelectPart} />;
   if (state.pendingDiamondBorderChanges.length > 0) return <NeutralDiamondControls state={state} editor={props.editor} onAction={onAction} />;
@@ -764,7 +786,7 @@ function PhaseControls(props: ControlProps) {
         <p>{state.startAuctions?.displayTerritoryIds.join(" · ")}</p>
         <p>Auktionssteller: {state.startAuctions && playerName(state, state.startAuctions.auctioneerPlayerId)}</p>
         <p>Bereits mit Gebiet: {state.startAuctions?.awardedPlayerIds.map((id) => playerName(state, id)).join(", ") || "niemand"}</p>
-        <button type="button" className="primary-button" onClick={() => onAction({ type: GameActionType.OpenNextStartAuction })}>Nächste Startauktion eröffnen</button>
+        <p className="winner-message">Die nächste Startauktion öffnet automatisch.</p>
       </section>;
     case GamePhase.RoundReady:
       return <section className="control-section"><div className="section-kicker">Runde bereit</div>
@@ -776,7 +798,7 @@ function PhaseControls(props: ControlProps) {
     case GamePhase.ActionPhase:
       return <ActionControls {...props} />;
     case GamePhase.Scoring:
-      return <ScoringPanel state={state} playerName={name} onAction={onAction} />;
+      return <ScoringPanel state={state} playerName={name} onAction={onAction} viewerPlayerId={props.viewerPlayerId} />;
     case GamePhase.Finished:
       return <ResultPanel state={state} playerName={name} factionSuits={props.factionSuits} />;
   }
@@ -820,13 +842,32 @@ export default function App() {
   const [showIntroduction, setShowIntroduction] = useState(() => !loadTutorialProgress().introductionSeen);
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpTopic, setHelpTopic] = useState<RuleHelpId | undefined>();
+  const [warChangedCellKeys, setWarChangedCellKeys] = useState<readonly string[]>([]);
   const runtime = useRef<Runtime | null>(null);
   const controller = useRef<GameController | null>(null);
   const unsubscribeController = useRef<(() => void) | null>(null);
   const newSeatIndex = useRef(4);
   const lastSoundEventId = useRef<string | undefined>(undefined);
+  const previousMapCells = useRef<Readonly<Record<string, string | null>> | undefined>(undefined);
+  const previousTerritoryOwners = useRef<Readonly<Record<string, string | null>> | undefined>(undefined);
 
   const state: GameReadModel | null = view;
+
+  useEffect(() => {
+    const cells = state?.map?.cells;
+    const previous = previousMapCells.current;
+    previousMapCells.current = cells;
+    const owners = state === null ? undefined : Object.fromEntries(state.territories.map((territory) => [territory.id, territory.ownerId]));
+    const previousOwners = previousTerritoryOwners.current;
+    previousTerritoryOwners.current = owners;
+    if (cells === undefined || previous === undefined || owners === undefined || previousOwners === undefined || state?.lastWarResult === undefined) return undefined;
+    const ownerChangedIds = new Set(Object.keys(owners).filter((id) => owners[id] !== previousOwners[id]));
+    const changed = Object.keys(cells).filter((key) => cells[key] !== previous[key] || ownerChangedIds.has(cells[key] ?? ""));
+    if (changed.length === 0) return undefined;
+    setWarChangedCellKeys(changed);
+    const timeout = window.setTimeout(() => setWarChangedCellKeys([]), 1800);
+    return () => window.clearTimeout(timeout);
+  }, [state?.map?.cells, state?.lastWarResult]);
 
   useEffect(() => {
     const clearInformationalSelection = (event: KeyboardEvent) => {
@@ -1223,8 +1264,9 @@ export default function App() {
   const toggleTerritorySelection = (territoryId: string) => {
     setSelectedTerritoryId((current) => current === territoryId ? undefined : territoryId);
   };
+  const remoteInput = state !== null && "playerInput" in state ? state.playerInput : undefined;
   const highlightedIds = state === null ? [] : [
-    ...(state.phase === GamePhase.ActivationPhase ? getAvailableActivationTerritoryIds(state) : []),
+    ...(state.phase === GamePhase.ActivationPhase && (multiplayer === null || remoteInput?.action === "ACTIVATION") ? getAvailableActivationTerritoryIds(state) : []),
     ...(state.auction ? [state.auction.territoryId] : []),
   ];
   const split = state?.pendingSplit;
@@ -1352,7 +1394,14 @@ export default function App() {
     setSplitDraft({ ...currentSplitDraft, partAKeys });
   };
   const setOriginalCardPart = (part: "A" | "B") => {
-    if (multiplayerConnected && currentSplitDraft) setSplitDraft({ ...currentSplitDraft, originalCardPart: part });
+    if (!multiplayerConnected || !currentSplitDraft) return;
+    if (multiplayer !== null && multiplayer.playerId !== split?.dividerPlayerId) return;
+    setSplitDraft({ ...currentSplitDraft, originalCardPart: part });
+  };
+  const resetSplitDraft = () => {
+    if (!multiplayerConnected || !currentSplitDraft) return;
+    if (multiplayer !== null && multiplayer.playerId !== split?.dividerPlayerId) return;
+    setSplitDraft(null);
   };
   const scoring = state?.scoring;
   const realmHighlights = scoring ? (() => {
@@ -1570,6 +1619,7 @@ export default function App() {
           <div className="board-column">
             <TerritoryBoard state={state} selectedId={selectedTerritoryId}
               onSelect={toggleTerritorySelection} onClearSelection={() => setSelectedTerritoryId(undefined)} highlightedIds={highlightedIds}
+              changedCellKeys={warChangedCellKeys}
               viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} focusTerritoryId={state.pendingSplit?.originalTerritoryId ?? state.pendingWar?.attackerTerritoryId}
               partChoice={currentPartChoice === undefined ? undefined : { ...currentPartChoice, onChoose: (part) => setPartChoiceDraft({ key: currentPartChoice.key, part }) }} playerName={name}
               splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
@@ -1584,7 +1634,7 @@ export default function App() {
             <ActionPanel><fieldset className="action-lock" disabled={!multiplayerConnected}><PhaseControls state={state} actionTerritoryId={actionTerritoryId}
                 onSelectActionTerritory={setActionTerritoryId} onAction={dispatch} onStartRound={beginRound}
                 splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
-                onSetOriginalCardPart={setOriginalCardPart} editor={editor} playerName={name}
+                onSetOriginalCardPart={setOriginalCardPart} onResetSplitDraft={resetSplitDraft} editor={editor} playerName={name}
                 setupDraft={setupDraft} onSetSetupDraft={setSetupDraft} setupValidationIssues={setupValidationIssues} setupCanEdit={setupCanEdit}
                 privacyPlayerId={privacyPlayerId} viewerPlayerId={multiplayer?.playerId} factionVisible={factionVisible}
                 onSetPrivacyPlayerId={setPrivacyPlayerId} onSetFactionVisible={setFactionVisible}

@@ -93,6 +93,18 @@ function validateNewCard(state: GameState, original: Territory, newPart: Territo
   }
 }
 
+/** New map regions receive a short, reload-safe player-facing name. */
+function nextSplitTerritoryId(state: GameState): TerritoryId {
+  const used = new Set(state.territories.map((territory) => territory.id));
+  const highestNamed = Math.max(0, ...state.territories.flatMap((territory) => {
+    const match = /^Gebiet (\d+)$/.exec(territory.id);
+    return match === null ? [] : [Number(match[1])];
+  }));
+  let index = Math.max(state.territories.length + 1, highestNamed + 1);
+  while (used.has(`Gebiet ${index}`)) index += 1;
+  return `Gebiet ${index}`;
+}
+
 function appendEvents(
   state: GameState,
   timestamp: string,
@@ -451,7 +463,7 @@ export function chooseSplitPart(
   }
   const original = state.territories.find((territory) => territory.id === split.originalTerritoryId);
   if (original === undefined || original.ownerId !== null || original.card === undefined) invalid();
-  const newTerritoryId = `${original.id}:split:${state.events.length + 1}`;
+  const newTerritoryId = nextSplitTerritoryId(state);
   if (state.territories.some((territory) => territory.id === newTerritoryId)) invalid();
   const chooserGetsOriginal = action.chosenPart === split.proposal.originalCardPart;
   const originalOwnerId = chooserGetsOriginal ? roles.firstChooserPlayerId : roles.dividerPlayerId;

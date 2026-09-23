@@ -66,6 +66,52 @@ function roundDescriptions(round: 1 | 2, display: readonly TerritoryId[]): Event
   ];
 }
 
+function openNextStartAuctionState(
+  state: GameState,
+  start: StartAuctionsState,
+): { readonly state: GameState; readonly description: EventDescription } {
+  if (state.auction || state.pendingSplit) throw new DomainError(DomainErrorCode.AuctionAlreadyActive);
+  if (start.awardedPlayerIds.length === state.players.length) {
+    throw new DomainError(DomainErrorCode.InvalidStartAuctionState, "This start auction round has ended.");
+  }
+  const display = start.displayTerritoryIds;
+  let displayIndex = -1;
+  for (let offset = 0; offset < display.length; offset += 1) {
+    const index = (start.nextDisplayIndex + offset) % display.length;
+    const territory = state.territories.find((item) => item.id === display[index]);
+    if (territory?.ownerId === null) {
+      displayIndex = index;
+      break;
+    }
+  }
+  if (displayIndex < 0) throw new DomainError(DomainErrorCode.NoEligibleStartTerritory);
+  const territoryId = display[displayIndex]!;
+  const eligiblePlayerIds = state.players
+    .map((player) => player.id)
+    .filter((id) => !start.awardedPlayerIds.includes(id));
+  const auctionId = `${state.gameId}:start-auction:${start.round}:${state.events.length + 1}`;
+  return {
+    state: {
+      ...state,
+      startAuctions: { ...start, nextDisplayIndex: (displayIndex + 1) % display.length },
+      auction: {
+        id: auctionId,
+        kind: "START",
+        territoryId,
+        auctioneerPlayerId: start.auctioneerPlayerId,
+        eligiblePlayerIds,
+        submittedBids: {},
+        status: "BIDDING",
+      },
+    },
+    description: {
+      type: GameEventType.AuctionOpened,
+      actorId: start.auctioneerPlayerId,
+      payload: { auctionId, kind: "START", round: start.round, territoryId, eligiblePlayerIds },
+    },
+  };
+}
+
 /** Starts §8 with the clockwise successor of the last setup actor as auctioneer. */
 export function beginStartAuctions(
   state: GameState,
@@ -86,7 +132,7 @@ export function beginStartAuctions(
   }
   const display = randomDisplay(state, [], random);
   const playerIds = state.players.map((player) => player.id);
-  return result({
+  const started: GameState = {
     ...state,
     phase: GamePhase.StartAuctions,
     startAuctions: {
@@ -98,53 +144,19 @@ export function beginStartAuctions(
       awardedPlayerIds: [],
       availableBidsByPlayerId: bidSets(playerIds),
     },
-  }, timestamp, roundDescriptions(1, display));
+  };
+  const opened = openNextStartAuctionState(started, started.startAuctions!);
+  return result(opened.state, timestamp, [...roundDescriptions(1, display), opened.description]);
 }
 
-/** Scans the fixed display, wrapping to its first still-neutral territory. */
+/**
+ * Kept as a compatibility action for older clients. New start auctions open
+ * themselves and therefore leave no idle state for this command to advance.
+ */
 export function openNextStartAuction(state: GameState, timestamp: string): ActionResult {
   const start = requireStartAuctions(state);
-  if (state.auction || state.pendingSplit) {
-    throw new DomainError(DomainErrorCode.AuctionAlreadyActive);
-  }
-  if (start.awardedPlayerIds.length === state.players.length) {
-    throw new DomainError(DomainErrorCode.InvalidStartAuctionState, "This start auction round has ended.");
-  }
-  const display = start.displayTerritoryIds;
-  let displayIndex = -1;
-  for (let offset = 0; offset < display.length; offset += 1) {
-    const index = (start.nextDisplayIndex + offset) % display.length;
-    const territory = state.territories.find((item) => item.id === display[index]);
-    if (territory?.ownerId === null) {
-      displayIndex = index;
-      break;
-    }
-  }
-  if (displayIndex < 0) {
-    throw new DomainError(DomainErrorCode.NoEligibleStartTerritory);
-  }
-  const territoryId = display[displayIndex]!;
-  const eligiblePlayerIds = state.players
-    .map((player) => player.id)
-    .filter((id) => !start.awardedPlayerIds.includes(id));
-  const auctionId = `${state.gameId}:start-auction:${start.round}:${state.events.length + 1}`;
-  return result({
-    ...state,
-    startAuctions: { ...start, nextDisplayIndex: (displayIndex + 1) % display.length },
-    auction: {
-      id: auctionId,
-      kind: "START",
-      territoryId,
-      auctioneerPlayerId: start.auctioneerPlayerId,
-      eligiblePlayerIds,
-      submittedBids: {},
-      status: "BIDDING",
-    },
-  }, timestamp, [{
-    type: GameEventType.AuctionOpened,
-    actorId: start.auctioneerPlayerId,
-    payload: { auctionId, kind: "START", round: start.round, territoryId, eligiblePlayerIds },
-  }]);
+  const opened = openNextStartAuctionState(state, start);
+  return result(opened.state, timestamp, [opened.description]);
 }
 
 function successorAuctioneer(state: GameState, start: StartAuctionsState): PlayerId {
@@ -189,7 +201,8 @@ function finishResolvedAuction(
         availableBidsByPlayerId: bidSets(playerIds),
       },
     };
-    return result(nextState, timestamp, [...descriptions, ...roundDescriptions(2, display)]);
+    const opened = openNextStartAuctionState(nextState, nextState.startAuctions!);
+    return result(opened.state, timestamp, [...descriptions, ...roundDescriptions(2, display), opened.description]);
   }
   if (nextAwarded.length === state.players.length && start.round === 2) {
     for (const player of state.players) {
@@ -207,6 +220,10 @@ function finishResolvedAuction(
         availableBasicBids: [1, 2, 3],
       })),
     };
+  }
+  if (nextState.phase === GamePhase.StartAuctions) {
+    const opened = openNextStartAuctionState(nextState, nextState.startAuctions!);
+    return result(opened.state, timestamp, [...descriptions, opened.description]);
   }
   return result(nextState, timestamp, descriptions);
 }

@@ -37,15 +37,17 @@ test("three-player round combines activation, auction, spade war, border gain an
     territories: ids.map((id) => ({ id, ownerId: id.startsWith("N") ? null : id,
       card: { suit: id === "B" ? Suit.Spades : Suit.Hearts, activationNumber: id === "B" ? 1 : 12 } })) };
   let round = startRound(state, new Dice(0, 1, 1, 2, 1, 3, 1), timestamp).state;
-  assert.equal(round.phase, GamePhase.ActivationPhase);
+  assert.equal(round.phase, GamePhase.ActionPhase);
+  assert.equal(round.activePlayerId, "A");
   assert.deepEqual(round.activation.pendingTerritoryIds, ["B"]);
+  round = auction(round, "A", "N1");
+  assert.equal(round.phase, GamePhase.ActivationPhase);
+  assert.equal(round.activePlayerId, "B");
   round = act(round, { type: GameActionType.ActivateTerritory, playerId: "B", territoryId: "B",
     choice: { type: "SPADE_STORE" } });
   assert.equal(round.phase, GamePhase.ActionPhase);
-  assert.equal(round.activePlayerId, "A");
-  assert.equal(round.spadeActivations.length, 1);
-  round = auction(round, "A", "N1");
   assert.equal(round.activePlayerId, "B");
+  assert.equal(round.spadeActivations.length, 1);
   round = act(round, { type: GameActionType.StartWar, playerId: "B", attackerTerritoryId: "B", defenderTerritoryId: "C" });
   const warId = round.pendingWar.id;
   round = act(round, { type: GameActionType.SetWarSpadeChoice, warId, playerId: "B",

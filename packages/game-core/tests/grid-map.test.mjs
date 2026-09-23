@@ -108,6 +108,8 @@ test("player game view keeps opponent bid values out of the active auction", () 
   assert.deepEqual(viewB.spadeActivations, []);
   assert.equal(JSON.stringify(viewB).includes("A-private-spade"), false);
   assert.equal(viewB.events.some((event) => event.type === "SPADE_ACTIVATION_STORED"), false);
+  assert.deepEqual(viewA.playerInput, { status: "SUBMITTED", action: "NORMAL_BID", submittedBidCount: 1, requiredBidCount: 2 });
+  assert.deepEqual(viewB.playerInput, { status: "ACTION_REQUIRED", action: "NORMAL_BID", submittedBidCount: 1, requiredBidCount: 2 });
 });
 
 test("start and normal auction split roles use the same clockwise reference rule", () => {

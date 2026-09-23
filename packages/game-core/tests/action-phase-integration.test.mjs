@@ -165,6 +165,7 @@ test("a legal war snapshots geometry and locks both territories for the round", 
     round: 1,
     activation: { pendingTerritoryIds: [], resolvedTerritoryIds: [] },
     startPlayerId: "A",
+    activePlayerId: "A",
     territories: [
       territory("A1", "A", ["B1"]),
       territory("B1", "B", ["A1"]),
@@ -198,6 +199,7 @@ test("the fully completed last round enters and completes scoring when no choice
     phase: GamePhase.ActivationPhase,
     round: 9,
     activation: { pendingTerritoryIds: [], resolvedTerritoryIds: [] },
+    activePlayerId: "A",
     territories: [
       territory("A1", "A", []),
       territory("B1", "B", []),
