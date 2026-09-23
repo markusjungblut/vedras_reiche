@@ -1,5 +1,10 @@
 /** This package contains transport DTOs only. It deliberately has no game-core dependency. */
 export const PROTOCOL_VERSION = 1 as const;
+/** Technical transport and rendering limits, not gameplay rules. */
+export const MAX_MAP_WIDTH = 200;
+export const MAX_MAP_HEIGHT = 200;
+export const MAX_MAP_CELLS = 25_000;
+export const MAX_WEBSOCKET_PAYLOAD_BYTES = 64 * 1024;
 
 export enum NetworkErrorCode {
   ProtocolVersionMismatch = "PROTOCOL_VERSION_MISMATCH",

@@ -5,10 +5,11 @@ import {
   type GameState,
   type PlayerGameView,
   type RandomSource,
+  type Suit,
 } from "@vedras/game-core";
 
 export interface GameControllerSnapshot {
-  readonly view?: PlayerGameView;
+  readonly view?: GameState | PlayerGameView;
   readonly revision: number;
   readonly connectionStatus?: "CONNECTING" | "CONNECTED" | "RECONNECTING" | "DISCONNECTED" | "INVALID_SESSION" | "ROOM_NOT_FOUND" | "SESSION_REPLACED";
   readonly connectionMessage?: string;
@@ -19,6 +20,8 @@ export interface GameController {
   dispatch(action: GameAction): Promise<void>;
   subscribe(listener: (snapshot: GameControllerSnapshot) => void): () => void;
   dispose(): void;
+  /** Available only to the local controller; remote views are already redacted. */
+  getLocalSecretFaction?(playerId: string): Suit | undefined;
 }
 
 export interface LocalGameControllerOptions {
@@ -38,7 +41,7 @@ export class LocalGameController implements GameController {
   }
 
   getSnapshot(): GameControllerSnapshot {
-    return { view: this.state as unknown as PlayerGameView, revision: this.revision };
+    return { view: this.state, revision: this.revision };
   }
 
   async dispatch(action: GameAction): Promise<void> {
@@ -60,6 +63,10 @@ export class LocalGameController implements GameController {
 
   dispose(): void {
     this.listeners.clear();
+  }
+
+  getLocalSecretFaction(playerId: string): Suit | undefined {
+    return this.state.players.find((player) => player.id === playerId)?.secretFactionSuit;
   }
 
   private emit(): void {

@@ -1,10 +1,11 @@
-import { GamePhase, MapCreationStage, type GameState } from "@vedras/game-core";
+import { GamePhase, MapCreationStage } from "@vedras/game-core";
 import type { RuleHelpId } from "../help/rule-help";
 import type { TutorialProgress, TutorialStep } from "../help/tutorial-state";
+import type { GameReadModel } from "../game-read-model";
 
 interface Hint { readonly step: TutorialStep; readonly title: string; readonly text: string; readonly topic: RuleHelpId; }
 
-function relevantHint(state: GameState, viewerPlayerId: string | undefined, progress: TutorialProgress): Hint | undefined {
+function relevantHint(state: GameReadModel, viewerPlayerId: string | undefined, progress: TutorialProgress): Hint | undefined {
   const ownTurn = state.activePlayerId === viewerPlayerId;
   const mapStage = state.mapCreation?.stage;
   if (state.phase === GamePhase.MapCreation && ownTurn && mapStage === MapCreationStage.DrawTerritories && !progress.seen.mapCreation) return {
@@ -35,7 +36,7 @@ function relevantHint(state: GameState, viewerPlayerId: string | undefined, prog
 }
 
 export function FirstGameHint({ state, viewerPlayerId, progress, onDismiss, onOpenHelp }: {
-  readonly state: GameState; readonly viewerPlayerId?: string | undefined; readonly progress: TutorialProgress;
+  readonly state: GameReadModel; readonly viewerPlayerId?: string | undefined; readonly progress: TutorialProgress;
   readonly onDismiss: (step: TutorialStep) => void; readonly onOpenHelp: (topic: RuleHelpId) => void;
 }) {
   const hint = relevantHint(state, viewerPlayerId, progress);

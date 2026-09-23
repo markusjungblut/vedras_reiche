@@ -8,8 +8,10 @@ import {
 
 export interface BorderAdvanceValidation {
   readonly valid: boolean;
-  readonly reason?: "OUTSIDE_CORRIDOR" | "DUPLICATE_CELL" | "BELOW_MINIMUM_AREA" | "TERRITORY_DISCONNECTED";
+  readonly reason?: "OUTSIDE_CORRIDOR" | "DUPLICATE_CELL" | "INVALID_DIRECT_TRANSFER" | "BELOW_MINIMUM_AREA" | "TERRITORY_DISCONNECTED" | "AMBIGUOUS_RETAINED_COMPONENT";
   readonly corridor: readonly GridCell[];
+  readonly directTransferCells?: readonly GridCell[];
+  readonly annexedDisconnectedCells?: readonly GridCell[];
   readonly map?: GridMapState;
 }
 
@@ -17,6 +19,82 @@ export interface BorderAdvanceLimitation {
   readonly determinate: true;
   readonly limitedByMinimumArea: boolean;
   readonly limitedByGeometry: boolean;
+  readonly limitedByTopology: boolean;
+}
+
+export interface BorderTransferResolution {
+  readonly valid: boolean;
+  readonly directTransferCells: readonly GridCell[];
+  readonly annexedDisconnectedCells: readonly GridCell[];
+  readonly allTransferCells: readonly GridCell[];
+  readonly retainedDonorCells: readonly GridCell[];
+  readonly reason?: "INVALID_DIRECT_TRANSFER" | "BELOW_MINIMUM_AREA" | "TERRITORY_DISCONNECTED" | "AMBIGUOUS_RETAINED_COMPONENT";
+  readonly map?: GridMapState;
+}
+
+function connectedComponents(cells: readonly GridCell[]): GridCell[][] {
+  const remaining = new Map(cells.map((cell) => [toCellKey(cell), cell]));
+  const components: GridCell[][] = [];
+  while (remaining.size > 0) {
+    const start = remaining.values().next().value as GridCell;
+    const component: GridCell[] = [];
+    const queue = [start];
+    remaining.delete(toCellKey(start));
+    for (let index = 0; index < queue.length; index += 1) {
+      const cell = queue[index]!;
+      component.push(cell);
+      for (const neighbor of [
+        { x: cell.x - 1, y: cell.y }, { x: cell.x + 1, y: cell.y },
+        { x: cell.x, y: cell.y - 1 }, { x: cell.x, y: cell.y + 1 },
+      ]) {
+        const key = toCellKey(neighbor);
+        const candidate = remaining.get(key);
+        if (candidate !== undefined) {
+          remaining.delete(key);
+          queue.push(candidate);
+        }
+      }
+    }
+    components.push(component);
+  }
+  return components;
+}
+
+/**
+ * Resolves a direct border transfer without mutating state. A donor may retain
+ * only one unambiguous main component; every smaller disconnected remainder is
+ * annexed by the recipient.
+ */
+export function resolveBorderTransferTopology(
+  map: GridMapState, winnerId: TerritoryId, loserId: TerritoryId, directTransferCells: readonly GridCell[],
+): BorderTransferResolution {
+  const directKeys = new Set(directTransferCells.map(toCellKey));
+  const base = { valid: false as const, directTransferCells, annexedDisconnectedCells: [] as GridCell[],
+    allTransferCells: [...directTransferCells], retainedDonorCells: [] as GridCell[] };
+  if (directKeys.size !== directTransferCells.length ||
+      directTransferCells.some((cell) => getGridCellTerritory(map, cell) !== loserId)) {
+    return { ...base, reason: "INVALID_DIRECT_TRANSFER" };
+  }
+  const donorCells = getTerritoryCells(map, loserId);
+  const retainedCandidates = donorCells.filter((cell) => !directKeys.has(toCellKey(cell)));
+  const components = connectedComponents(retainedCandidates);
+  const largestArea = Math.max(0, ...components.map((component) => component.length));
+  const largest = components.filter((component) => component.length === largestArea);
+  if (largest.length !== 1) return { ...base, reason: "AMBIGUOUS_RETAINED_COMPONENT" };
+  const retainedDonorCells = largest[0]!;
+  if (retainedDonorCells.length < getMinimumTerritoryArea(map)) {
+    return { ...base, retainedDonorCells, reason: "BELOW_MINIMUM_AREA" };
+  }
+  const annexedDisconnectedCells = components.filter((component) => component !== retainedDonorCells).flat();
+  const allTransferCells = [...directTransferCells, ...annexedDisconnectedCells];
+  const cells = { ...map.cells };
+  for (const cell of allTransferCells) cells[toCellKey(cell)] = winnerId;
+  const changed = { ...map, cells };
+  if (!areCellsOrthogonallyConnected(getTerritoryCells(changed, winnerId))) {
+    return { valid: false, directTransferCells, annexedDisconnectedCells, allTransferCells, retainedDonorCells,
+      reason: "TERRITORY_DISCONNECTED" };
+  }
+  return { valid: true, directTransferCells, annexedDisconnectedCells, allTransferCells, retainedDonorCells, map: changed };
 }
 
 /** Depth is measured only through the original losing territory, from its original shared front. */
@@ -60,19 +138,13 @@ export function validateBorderAdvance(
   if (keys.some((key) => !allowed.has(key) || map.cells[key] !== loserId)) {
     return { valid: false, reason: "OUTSIDE_CORRIDOR", corridor };
   }
-  const cells = { ...map.cells };
-  for (const key of keys) cells[key] = winnerId;
-  const changed = { ...map, cells };
-  const minimumArea = getMinimumTerritoryArea(map);
-  if (getTerritoryCells(changed, loserId).length < minimumArea ||
-      getTerritoryCells(changed, winnerId).length < minimumArea) {
-    return { valid: false, reason: "BELOW_MINIMUM_AREA", corridor };
+  const topology = resolveBorderTransferTopology(map, winnerId, loserId, claimedCells);
+  if (!topology.valid || topology.map === undefined) {
+    return { valid: false, ...(topology.reason === undefined ? {} : { reason: topology.reason }), corridor, directTransferCells: claimedCells,
+      annexedDisconnectedCells: topology.annexedDisconnectedCells };
   }
-  if (!areCellsOrthogonallyConnected(getTerritoryCells(changed, loserId)) ||
-      !areCellsOrthogonallyConnected(getTerritoryCells(changed, winnerId))) {
-    return { valid: false, reason: "TERRITORY_DISCONNECTED", corridor };
-  }
-  return { valid: true, corridor, map: changed };
+  return { valid: true, corridor, map: topology.map, directTransferCells: topology.directTransferCells,
+    annexedDisconnectedCells: topology.annexedDisconnectedCells };
 }
 
 /**
@@ -106,13 +178,11 @@ export function assessBorderAdvanceLimitation(
   originalBorder: SharedBorder, maximumDepth: number, _claimedCells: readonly GridCell[],
 ): BorderAdvanceLimitation {
   const completeFront = getCellsWithinBorderDepth(map, loserId, originalBorder, maximumDepth);
-  const remainingArea = getTerritoryCells(map, loserId).length - completeFront.length;
-  const limitedByMinimumArea = remainingArea < getMinimumTerritoryArea(map);
-
-  const cells = { ...map.cells };
-  for (const cell of completeFront) cells[toCellKey(cell)] = winnerId;
-  const fullAdvanceMap = { ...map, cells };
-  const limitedByGeometry = !areCellsOrthogonallyConnected(getTerritoryCells(fullAdvanceMap, loserId)) ||
-    !areCellsOrthogonallyConnected(getTerritoryCells(fullAdvanceMap, winnerId));
-  return { determinate: true, limitedByMinimumArea, limitedByGeometry };
+  const topology = resolveBorderTransferTopology(map, winnerId, loserId, completeFront);
+  return {
+    determinate: true,
+    limitedByMinimumArea: topology.reason === "BELOW_MINIMUM_AREA",
+    limitedByGeometry: topology.reason === "TERRITORY_DISCONNECTED",
+    limitedByTopology: topology.reason === "AMBIGUOUS_RETAINED_COMPONENT",
+  };
 }

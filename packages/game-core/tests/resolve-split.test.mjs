@@ -170,9 +170,14 @@ test("impossible normal split keeps neutral territory and charges no one", () =>
   assert.equal(resolved.state.pendingSplit, undefined);
   assert.equal(resolved.state.territories.find((territory) => territory.id === "X").ownerId, null);
   assert.equal(resolved.state.territories.length, pending.territories.length);
-  assert.deepEqual(resolved.state.players, pending.players);
+  assert.deepEqual(resolved.state.players.map(({ id, globalInfluence, availableBasicBids }) => ({ id, globalInfluence, availableBasicBids })), [
+    { id: "A", globalInfluence: 6, availableBasicBids: [1, 3] },
+    { id: "B", globalInfluence: 6, availableBasicBids: [2, 3] },
+    { id: "C", globalInfluence: 6, availableBasicBids: [1, 2, 3] },
+  ]);
   assert.deepEqual(resolved.state.territories[1].localInfluenceByPlayerId,
     pending.territories[1].localInfluenceByPlayerId);
+  assert.ok(resolved.events.some((event) => event.type === GameEventType.BasicBidExhausted));
 });
 
 test("split resolution rejects mismatched IDs, roles, ownership and lost original card", () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,7 +12,7 @@ import { RoomError, RoomManager } from "../dist/room-manager.js";
 import { FileRoomStore } from "../dist/room-store.js";
 import { broadcastRoom, createVedrasServer } from "../dist/server.js";
 import { GameActionType, GamePhase, Suit, createGameState } from "@vedras/game-core";
-import { NetworkErrorCode } from "@vedras/protocol";
+import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, MAX_WEBSOCKET_PAYLOAD_BYTES, NetworkErrorCode } from "@vedras/protocol";
 
 class FixedRandomSource {
   nextInt(min) { return min; }
@@ -71,6 +71,17 @@ test("room lifecycle preserves host authority and lobby configuration", async ()
     [host.participant.playerId, guest.participant.playerId], host.participant.playerId);
   assert.equal(host.room.status, "RUNNING");
   assert.equal(host.room.gameState.map.width, 100);
+});
+
+test("technical map limits reject oversized lobby configurations without changing the room", async () => {
+  const rooms = manager();
+  const host = await rooms.createRoom("Anna");
+  const original = { ...host.room.map };
+  await assert.rejects(() => rooms.updateMap(host.room.roomId, host.sessionToken, { width: MAX_MAP_WIDTH + 1, height: 50 }),
+    (error) => error.code === NetworkErrorCode.InvalidStartConfiguration);
+  await assert.rejects(() => rooms.updateMap(host.room.roomId, host.sessionToken, { width: MAX_MAP_WIDTH, height: MAX_MAP_HEIGHT }),
+    (error) => error.code === NetworkErrorCode.InvalidStartConfiguration && MAX_MAP_WIDTH * MAX_MAP_HEIGHT > MAX_MAP_CELLS);
+  assert.deepEqual(host.room.map, original);
 });
 
 test("commands are serialized, identity-bound, and keep only a durable idempotency window", async () => {
@@ -181,6 +192,7 @@ test("restored snapshots still create redacted player views for hidden bids, spa
   const restored = roomsB.getRoom(room.roomId);
   const benView = roomsB.getPlayerView(restored, guest.participant.playerId);
   assert.equal(benView.players.find((player) => player.id === anna.playerId).secretFactionSuit, undefined);
+  assert.equal(benView.viewerSecretFactionSuit, Suit.Clubs);
   assert.deepEqual(benView.auction.submittedBids[anna.playerId], { submitted: true });
 
   const warSnapshot = await store.load(room.roomId);
@@ -244,6 +256,78 @@ test("HTTP and WebSocket transport still sends individual player views", async (
   annaSocket.close();
   benSocket.close();
   await server.close();
+});
+
+test("transport rejects malformed and oversized WebSocket input", async () => {
+  const server = createVedrasServer({ roomManager: manager(), port: 0, logger: () => {} });
+  if (!server.httpServer.listening) await once(server.httpServer, "listening");
+  const malformed = new WebSocket("ws://127.0.0.1:" + server.port + "/ws");
+  await once(malformed, "open");
+  const rejected = nextMessage(malformed);
+  malformed.send(JSON.stringify({ type: "GAME_COMMAND", commandId: "missing-action" }));
+  assert.equal((await rejected).code, NetworkErrorCode.InvalidMessage);
+  malformed.close();
+
+  const oversized = new WebSocket("ws://127.0.0.1:" + server.port + "/ws");
+  await once(oversized, "open");
+  const closed = new Promise((resolve) => oversized.once("close", (code) => resolve(code)));
+  oversized.once("error", () => {});
+  oversized.send(Buffer.alloc(MAX_WEBSOCKET_PAYLOAD_BYTES + 1, 65));
+  const code = await closed;
+  assert.equal(code, 1009);
+  await server.close();
+});
+
+test("production server serves the built client on one origin without exposing internal paths", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vedras-web-"));
+  const assets = join(directory, "assets");
+  await mkdir(assets);
+  await writeFile(join(directory, "index.html"), "<main>Vedras Production</main>", "utf8");
+  await writeFile(join(assets, "app.js"), "console.log('asset')", "utf8");
+  const server = createVedrasServer({
+    roomManager: manager(),
+    port: 0,
+    staticDirectory: directory,
+    production: true,
+    webOrigins: ["https://staging.example.invalid"],
+    allowCrossOrigin: false,
+    logger: () => {},
+  });
+  if (!server.httpServer.listening) await once(server.httpServer, "listening");
+  const base = "http://127.0.0.1:" + server.port;
+  try {
+    const page = await fetch(base + "/", { headers: { origin: "https://staging.example.invalid" } });
+    assert.equal(page.status, 200);
+    assert.equal(await page.text(), "<main>Vedras Production</main>");
+    assert.match(page.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+    assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(page.headers.get("access-control-allow-origin"), null);
+    const foreignOrigin = await fetch(base + "/", { headers: { origin: "https://foreign.example.invalid" } });
+    assert.equal(foreignOrigin.status, 403);
+
+    const clientRoute = await fetch(base + "/room/ABC123");
+    assert.equal(clientRoute.status, 200);
+    assert.equal(await clientRoute.text(), "<main>Vedras Production</main>");
+    const asset = await fetch(base + "/assets/app.js");
+    assert.equal(asset.status, 200);
+    assert.match(asset.headers.get("cache-control") ?? "", /immutable/);
+
+    for (const protectedPath of ["/api/rooms", "/ws", "/data/rooms/ROOM1.json", "/%2e%2e/data/rooms/ROOM1.json"]) {
+      const response = await fetch(base + protectedPath);
+      assert.notEqual(response.status, 200, protectedPath);
+      assert.doesNotMatch(await response.text(), /Vedras Production/);
+    }
+    const health = await fetch(base + "/health");
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { status: "ok", storage: "ok", protocolVersion: 1 });
+
+    const socket = new WebSocket("ws://127.0.0.1:" + server.port + "/ws", { headers: { origin: "https://staging.example.invalid" } });
+    await once(socket, "open");
+    socket.close();
+  } finally {
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 function nextMessage(socket) {

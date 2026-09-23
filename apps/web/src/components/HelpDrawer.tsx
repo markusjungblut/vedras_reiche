@@ -1,24 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import type { GameState } from "@vedras/game-core";
+import type { GameReadModel } from "../game-read-model";
 import { GLOSSARY, RULE_HELP, getCurrentHelp, getHelpValues, renderRuleHelp, type RuleHelpId } from "../help/rule-help";
 
 type HelpTab = "CURRENT" | "RULES" | "GLOSSARY";
 
 interface HelpDrawerProps {
-  readonly state: GameState;
+  readonly state: GameReadModel;
   readonly viewerPlayerId?: string | undefined;
   readonly open: boolean;
   readonly initialTopic?: RuleHelpId | undefined;
   readonly onClose: () => void;
   readonly onReplayIntroduction: () => void;
   readonly onResetTutorial: () => void;
+  readonly buildId: string;
 }
 
 const TAB_LABEL: Readonly<Record<HelpTab, string>> = {
   CURRENT: "Aktuelle Phase", RULES: "Alle Regeln", GLOSSARY: "Begriffe",
 };
 
-export function HelpDrawer({ state, viewerPlayerId, open, initialTopic, onClose, onReplayIntroduction, onResetTutorial }: HelpDrawerProps) {
+export function HelpDrawer({ state, viewerPlayerId, open, initialTopic, onClose, onReplayIntroduction, onResetTutorial, buildId }: HelpDrawerProps) {
   const [tab, setTab] = useState<HelpTab>("CURRENT");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<RuleHelpId | undefined>();
@@ -74,6 +75,7 @@ export function HelpDrawer({ state, viewerPlayerId, open, initialTopic, onClose,
       {glossaryMatches.length > 0 ? glossaryMatches.map((entry) => <article className="help-topic" key={entry.term}><h3>{entry.term}</h3><p>{entry.definition}</p></article>) : <p className="muted">Kein passender Begriff gefunden.</p>}
     </div>}
     <div className="help-footer"><button type="button" className="secondary-button" onClick={onReplayIntroduction}>Einführung erneut anzeigen</button>
-      <button type="button" className="text-button" onClick={onResetTutorial}>Tutorialhinweise zurücksetzen</button></div>
+      <button type="button" className="text-button" onClick={onResetTutorial}>Tutorialhinweise zurücksetzen</button>
+      <small className="build-id">Build {buildId}</small></div>
   </aside>;
 }

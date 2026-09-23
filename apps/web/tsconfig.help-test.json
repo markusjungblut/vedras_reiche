@@ -5,5 +5,5 @@
     "outDir": ".test-dist",
     "rootDir": "src"
   },
-  "include": ["src/help/rule-help.ts", "src/help/tutorial-state.ts"]
+  "include": ["src/help/rule-help.ts", "src/help/tutorial-state.ts", "src/map/territory-label-anchor.ts"]
 }

@@ -179,6 +179,27 @@ function payWinningBid(
   };
 }
 
+function exhaustUnresolvedSplitBids(
+  state: GameState, split: PendingTerritorySplit, original: Territory,
+): { readonly players: readonly Player[]; readonly descriptions: readonly EventDescription[] } {
+  const bids = validatedNormalBids(state, split, original);
+  const refreshedPlayerIds: PlayerId[] = [];
+  const players = state.players.map((player) => {
+    if (!split.tiedPlayerIds.includes(player.id)) return player;
+    const remaining = player.availableBasicBids!.filter((value) => value !== bids[player.id]!.basicBid);
+    const refreshed = remaining.length === 0;
+    if (refreshed) refreshedPlayerIds.push(player.id);
+    return { ...player, availableBasicBids: refreshed ? [...BASIC_BIDS] : remaining };
+  });
+  const descriptions: EventDescription[] = split.tiedPlayerIds.flatMap((playerId) => [
+    { type: GameEventType.BasicBidExhausted, actorId: playerId,
+      payload: { auctionId: split.auctionId, playerId, basicBid: bids[playerId]!.basicBid, reason: "SPLIT_NOT_POSSIBLE" } },
+    ...(refreshedPlayerIds.includes(playerId) ? [{ type: GameEventType.BasicBidsRefreshed, actorId: playerId,
+      payload: { playerId, availableBasicBids: BASIC_BIDS } }] : []),
+  ]);
+  return { players, descriptions };
+}
+
 /** Shared bookkeeping; legal parts are only supplied by the internal chooser workflow. */
 function resolveTerritorySplitInternal(
   state: GameState,
@@ -204,10 +225,17 @@ function resolveTerritorySplitInternal(
       throw new DomainError(DomainErrorCode.InvalidSplitResolution,
         "A split cannot be declared impossible solely from a non-minimal map area.");
     }
-    const resolved = appendEvents(state, timestamp, state, [{
+    const unresolved = split.auctionKind === "NORMAL" ? exhaustUnresolvedSplitBids(state, split, original) : undefined;
+    const resolved = appendEvents(state, timestamp, {
+      ...state,
+      ...(unresolved === undefined ? {} : { players: unresolved.players }),
+    }, [{
       type: GameEventType.TerritorySplitResolved,
       payload: { splitId: split.id, auctionId: split.auctionId, resolution: "SPLIT_NOT_POSSIBLE" },
-    }]);
+    }, ...(unresolved?.descriptions ?? []), ...(split.auctionKind === "NORMAL" ? [{
+      type: GameEventType.AuctionResolved,
+      payload: { auctionId: split.auctionId, result: "SPLIT_NOT_POSSIBLE", tiedPlayerIds: split.tiedPlayerIds },
+    }] : [])]);
     if (split.auctionKind === "START") {
       const finished = completeStartAuctionAfterSplit(resolved.state, [], random, timestamp);
       return { state: finished.state, events: [...resolved.events, ...finished.events] };

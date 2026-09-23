@@ -19,6 +19,7 @@ export * from "./rules/activated-territories.js";
 export * from "./rules/activation-numbers.js";
 export * from "./rules/player-order.js";
 export * from "./rules/territory-size.js";
+export * from "./rules/grid-depth.js";
 export * from "./rules/territory-card-deck.js";
 export * from "./rules/round-count.js";
 export * from "./state/create-game-state.js";

@@ -1,15 +1,19 @@
-import type { GameState } from "@vedras/game-core";
+import type { GameReadModel } from "../game-read-model";
 
 interface StateInspectorProps {
-  state: GameState;
-  showHidden: boolean;
+  state: GameReadModel;
 }
 
-function inspectableState(state: GameState, showHidden: boolean): object {
-  if (showHidden) return state;
+function inspectableState(state: GameReadModel): object {
   return {
     ...state,
-    players: state.players.map(({ secretFactionSuit: _secretFactionSuit, ...player }) => player),
+    players: state.players.map((player) => ({
+      id: player.id,
+      name: player.name,
+      globalInfluence: player.globalInfluence,
+      availableBasicBids: player.availableBasicBids,
+      turnStatus: player.turnStatus,
+    })),
     auction: state.auction && {
       ...state.auction,
       submittedBids: Object.fromEntries(Object.keys(state.auction.submittedBids).map((id) => [id, "Abgegeben – verdeckt"])),
@@ -18,11 +22,11 @@ function inspectableState(state: GameState, showHidden: boolean): object {
   };
 }
 
-export function StateInspector({ state, showHidden }: StateInspectorProps) {
+export function StateInspector({ state }: StateInspectorProps) {
   return (
     <details className="panel state-inspector">
-      <summary>GameState anzeigen <span className="muted">{showHidden ? "mit Debug-Informationen" : "verdeckte Werte ausgeblendet"}</span></summary>
-      <pre>{JSON.stringify(inspectableState(state, showHidden), null, 2)}</pre>
+      <summary>Spielansicht anzeigen <span className="muted">verdeckte Werte ausgeblendet</span></summary>
+      <pre>{JSON.stringify(inspectableState(state), null, 2)}</pre>
     </details>
   );
 }

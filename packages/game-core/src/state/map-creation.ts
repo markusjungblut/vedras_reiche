@@ -246,9 +246,11 @@ export function placeSetupPointOfInterest(state: GameState, action: PlaceSetupPo
     }]);
 }
 
-function setupValidationIssues(state: GameState, mapCreation: MapCreationState): MapValidationIssue[] {
-  const regions = setupRegions(state, mapCreation);
-  const map = setupMap(state, regions);
+export type MapValidationReadState = Pick<GameState, "map" | "mapCreation" | "territories">;
+
+function setupValidationIssues(state: MapValidationReadState, mapCreation: MapCreationState): MapValidationIssue[] {
+  const regions = deriveSetupRegions(state.map!, mapCreation.borders);
+  const map = materializeSetupRegionMap(state.map!, regions);
   const minimum = getMinimumTerritoryArea(map);
   const issues: MapValidationIssue[] = [];
   const covered = regions.reduce((count, region) => count + region.cells.length, 0);
@@ -263,7 +265,7 @@ function setupValidationIssues(state: GameState, mapCreation: MapCreationState):
   return issues;
 }
 
-export function getSetupMapValidationIssues(state: GameState): MapValidationIssue[] {
+export function getSetupMapValidationIssues(state: MapValidationReadState): MapValidationIssue[] {
   if (state.map === undefined) return [{ territoryId: "KARTE", code: "DISCONNECTED", message: "Keine Rasterkarte vorhanden." }];
   if (state.mapCreation !== undefined && state.territories.length === 0) return setupValidationIssues(state, state.mapCreation);
   const minimum = getMinimumTerritoryArea(state.map);

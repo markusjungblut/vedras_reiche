@@ -1,7 +1,7 @@
-import type { GameState } from "@vedras/game-core";
+import type { GameReadModel } from "../game-read-model";
 
 interface PlayerPanelProps {
-  state: GameState;
+  state: GameReadModel;
   playerName: (id: string) => string;
   viewerPlayerId?: string | undefined;
 }

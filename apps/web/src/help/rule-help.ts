@@ -1,4 +1,5 @@
-import { DomainError, DomainErrorCode, GamePhase, MapCreationStage, getBreakthroughThreshold, getMinimumTerritoryArea, type GameState } from "@vedras/game-core";
+import { DomainError, DomainErrorCode, GamePhase, MapCreationStage, getBreakthroughThreshold, getMinimumTerritoryArea, scaleGridDepth } from "@vedras/game-core";
+import type { GameReadModel } from "../game-read-model";
 
 export type RuleHelpId =
   | "overview" | "mapCreation" | "pois" | "territoryCards" | "factions" | "startAuctions"
@@ -49,7 +50,7 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   diamonds: {
     id: "diamonds", title: "♦ Grenze", short: "♦ markiert Grenzen oder bereitet eine legale Verschiebung zu neutralem Gebiet vor.",
-    long: "An einer gegnerischen Nachbarschaft setzt ♦ eine Grenzmarkierung. Bei neutralen Nachbarn kann ♦ bis zu zwei Rasterzellen entlang der gemeinsamen Grenze übernehmen. In jedem Fall prüft der Core Zusammenhang und die Mindestgröße von {minimumTerritoryArea} Kästchen.", keywords: ["diamant", "grenze", "neutral", "zellen", "markierung"],
+    long: "An einer gegnerischen Nachbarschaft setzt ♦ eine Grenzmarkierung. Bei neutralen Nachbarn kann ♦ bis zu {neutralDiamondDepth} Rasterzellen entlang der gemeinsamen Grenze übernehmen. Auf größeren Karten reicht die Verschiebung entsprechend weiter. In jedem Fall prüft der Core Zusammenhang und die Mindestgröße von {minimumTerritoryArea} Kästchen.", keywords: ["diamant", "grenze", "neutral", "zellen", "markierung"],
   },
   clubs: {
     id: "clubs", title: "♣ Entwicklung", short: "♣ entwickelt ein eigenes Gebiet oder einen eigenen Nachbarn.",
@@ -65,7 +66,7 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   auctions: {
     id: "auctions", title: "Normale Auktionen", short: "Alle berechtigten Spieler bieten verdeckt auf ein neutrales Nachbargebiet.",
-    long: "Ein normales Gebot besteht aus Grundgebot, globalem Einfluss und lokalem Einfluss auf dieses Gebiet. Das Grundgebot folgt den verfügbaren Grundgeboten des Spielers; der Core verwaltet auch deren Rücksetzung. Nach allen Abgaben werden die Gebote gemeinsam aufgelöst.", keywords: ["grundgebot", "globaler einfluss", "lokaler einfluss", "bieten", "neutral"],
+    long: "Ein normales Gebot besteht aus Grundgebot, globalem Einfluss und lokalem Einfluss auf dieses Gebiet. Das Grundgebot folgt den verfügbaren Grundgeboten des Spielers; der Core verwaltet auch deren Rücksetzung. Nach allen Abgaben werden die Gebote gemeinsam aufgelöst. Bei einem unaufgelösten Höchstgleichstand bleibt das Gebiet neutral. Die beteiligten Höchstbieter erschöpfen ihr verwendetes Grundgebot, eingesetzter Einfluss wird aber nicht bezahlt.", keywords: ["grundgebot", "globaler einfluss", "lokaler einfluss", "bieten", "neutral"],
   },
   war: {
     id: "war", title: "Krieg", short: "Ein eigenes Gebiet greift ein angrenzendes gegnerisches Gebiet an.",
@@ -73,7 +74,7 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   borderGains: {
     id: "borderGains", title: "Grenzgewinn", short: "Nach einem passenden Kampfergebnis übernimmt der Gewinner Zellen entlang der gemeinsamen Grenze.",
-    long: "Die Kartenansicht markiert den zulässigen Korridor. Du kannst darin Zellen auswählen; der Core prüft für beide Gebiete Zusammenhang und die Mindestgröße von {minimumTerritoryArea} Kästchen. Geschwächt bedeutet: Der gespeicherte Grenzverlauf ließ beim vorherigen Verlust keine ausreichende Fläche zurück. Verliert ein geschwächtes Gebiet später erneut, wird es vollständig erobert; ein eigener Sieg entfernt die Schwächung.", keywords: ["korridor", "geschwächt", "mindestfläche", "zellen", "vorstoß"],
+    long: "Die Kartenansicht markiert den zulässigen Korridor. Ein normaler Grenzgewinn reicht auf dieser Karte bis zu {normalAdvanceDepth} Kästchen tief, ein starker Vorstoß bis zu {strongAdvanceDepth}. Du kannst darin Zellen auswählen; der Core prüft für beide Gebiete Zusammenhang und die Mindestgröße von {minimumTerritoryArea} Kästchen. Trennt die Verschiebung einen kleineren Teil ab, fällt er automatisch an das gewinnende Gebiet, damit jedes Gebiet zusammenhängend bleibt. Geschwächt bedeutet: Der gespeicherte Grenzverlauf ließ beim vorherigen Verlust keine ausreichende Fläche zurück. Verliert ein geschwächtes Gebiet später erneut, wird es vollständig erobert; ein eigener Sieg entfernt die Schwächung.", keywords: ["korridor", "geschwächt", "mindestfläche", "zellen", "vorstoß"],
   },
   breakthrough: {
     id: "breakthrough", title: "Durchbruch", short: "Bei großen Verlierergebieten kann ein Kampfergebnis eine Teilung auslösen.",
@@ -101,23 +102,35 @@ export const GLOSSARY: readonly { readonly term: string; readonly definition: st
   { term: "Fraktion", definition: "Dein geheimes Symbol für den +25-%-Bonus auf Gebietskarten mit ihrem ursprünglichen Symbol.", keywords: ["geheim", "wertung"] },
 ];
 
-export interface HelpValues { readonly minimumTerritoryArea: number; readonly cutAndChooseThreshold: number; }
+export interface HelpValues {
+  readonly minimumTerritoryArea: number;
+  readonly cutAndChooseThreshold: number;
+  readonly neutralDiamondDepth: number;
+  readonly normalAdvanceDepth: number;
+  readonly strongAdvanceDepth: number;
+}
 
-export function getHelpValues(state: GameState): HelpValues {
+export function getHelpValues(state: GameReadModel): HelpValues {
   const map = state.map;
   return map === undefined
-    ? { minimumTerritoryArea: 0, cutAndChooseThreshold: 0 }
-    : { minimumTerritoryArea: getMinimumTerritoryArea(map), cutAndChooseThreshold: getBreakthroughThreshold(map) };
+    ? { minimumTerritoryArea: 0, cutAndChooseThreshold: 0, neutralDiamondDepth: 0, normalAdvanceDepth: 0, strongAdvanceDepth: 0 }
+    : {
+      minimumTerritoryArea: getMinimumTerritoryArea(map), cutAndChooseThreshold: getBreakthroughThreshold(map),
+      neutralDiamondDepth: scaleGridDepth(2, map), normalAdvanceDepth: scaleGridDepth(2, map), strongAdvanceDepth: scaleGridDepth(4, map),
+    };
 }
 
 export function renderRuleHelp(topic: RuleHelpTopic, values: HelpValues): RuleHelpTopic {
   const render = (text: string) => text
     .replaceAll("{minimumTerritoryArea}", String(values.minimumTerritoryArea))
-    .replaceAll("{cutAndChooseThreshold}", String(values.cutAndChooseThreshold));
+    .replaceAll("{cutAndChooseThreshold}", String(values.cutAndChooseThreshold))
+    .replaceAll("{neutralDiamondDepth}", String(values.neutralDiamondDepth))
+    .replaceAll("{normalAdvanceDepth}", String(values.normalAdvanceDepth))
+    .replaceAll("{strongAdvanceDepth}", String(values.strongAdvanceDepth));
   return { ...topic, short: render(topic.short), long: render(topic.long) };
 }
 
-function name(state: GameState, playerId: string | undefined): string {
+function name(state: GameReadModel, playerId: string | undefined): string {
   return state.players.find((player) => player.id === playerId)?.name ?? "Ein Spieler";
 }
 
@@ -128,7 +141,7 @@ export interface CurrentHelp {
 }
 
 /** Reads only public phase and pending workflow state. It never derives game legality. */
-export function getCurrentHelp(state: GameState, viewerPlayerId?: string): CurrentHelp {
+export function getCurrentHelp(state: GameReadModel, viewerPlayerId?: string): CurrentHelp {
   if (state.pendingSplit) {
     const choosing = state.pendingSplit.stage === "AWAITING_CHOICE";
     const responsible = choosing ? state.pendingSplit.firstChooserPlayerId : state.pendingSplit.dividerPlayerId;

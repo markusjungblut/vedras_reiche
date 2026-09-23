@@ -16,6 +16,7 @@ import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
 import { applySymbolAbility } from "./apply-symbol-ability.js";
 import { getSharedBorder, reconcileMapBoundFeatures, validateBorderAdvance } from "../map/index.js";
+import { scaleGridDepth } from "../rules/grid-depth.js";
 import type { ResolveNeutralDiamondAction } from "../actions/game-action.js";
 import { resolveDiamondCorrection, setWarSpadeChoice, proposeBorderAdvance, proposeWarCut, chooseWarCut } from "../war/war.js";
 import { chooseLargestRealm } from "../scoring/scoring.js";
@@ -155,7 +156,7 @@ export function resolveNeutralDiamond(
     throw new DomainError(DomainErrorCode.InvalidDiamondNeutralChange);
   }
   const border = getSharedBorder(state.map, source.id, target.id);
-  const validation = validateBorderAdvance(state.map, source.id, target.id, border, 2, action.claimedCells);
+  const validation = validateBorderAdvance(state.map, source.id, target.id, border, scaleGridDepth(2, state.map), action.claimedCells);
   if (!validation.valid || validation.map === undefined) {
     throw new DomainError(DomainErrorCode.InvalidDiamondNeutralChange, validation.reason);
   }
@@ -168,7 +169,10 @@ export function resolveNeutralDiamond(
   const finished = nextPlayer === undefined;
   const descriptions: EventDescription[] = [
     { type: GameEventType.DiamondNeutralBorderChanged, actorId: action.playerId,
-      payload: { effectId: effect.id, sourceTerritoryId: source.id, neutralTerritoryId: target.id, claimedCells: action.claimedCells } },
+      payload: { effectId: effect.id, sourceTerritoryId: source.id, neutralTerritoryId: target.id,
+        directTransferCells: validation.directTransferCells ?? action.claimedCells,
+        annexedDisconnectedCells: validation.annexedDisconnectedCells ?? [],
+        claimedCells: action.claimedCells } },
     { type: GameEventType.TerritoryActivated, actorId: action.playerId,
       payload: { playerId: action.playerId, territoryId: source.id, selectedSuit: effect.selectedSuit } },
   ];

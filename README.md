@@ -60,7 +60,7 @@ Die offenen Aktivierungen werden zu Beginn der Phase ermittelt. Erhält ein Gebi
 
 | Symbol | Wirkung in Arbeitspaket 2 |
 | --- | --- |
-| ♦ Karo | Eine Grenze zu einem angrenzenden gegnerischen Gebiet kann für den nächsten Krieg markiert werden. Eine Grenze zu einem neutralen Nachbarn kann bis zu zwei Kästchen tief geometrisch verschoben werden. Die Aktivierung wartet auf diese Entscheidung. |
+| ♦ Karo | Eine Grenze zu einem angrenzenden gegnerischen Gebiet kann für den nächsten Krieg markiert werden. Eine Grenze zu einem neutralen Nachbarn kann bis zur für die Kartengröße gültigen Tiefe geometrisch verschoben werden. Die Aktivierung wartet auf diese Entscheidung. |
 | ♣ Kreuz | Eigenes Gebiet oder eigener Nachbar erhält bei einer Aktivierung eine Siedlung, wird zur Stadt entwickelt oder erhält eine Spezialisierung. Zweite Aktivierungszahl und zweites Symbol schließen sich gegenseitig aus; Siedlung oder Stadt kann daneben bestehen. |
 | ♥ Herz | Wahl zwischen genau einem globalen Einfluss oder zwei lokalen Einflusspunkten auf einem angrenzenden neutralen Gebiet. |
 | ♠ Pik | Ein einmal verwendbarer Kampfbonus mit Spieler und Herkunftsgebiet wird für die laufende Runde gespeichert und verfällt ungenutzt am Rundenende. |
@@ -71,9 +71,9 @@ Nachbarschaften und Flächen werden aus der Rasterkarte berechnet. ♦-Grenzvers
 
 Die Aktionsphase beginnt beim Startspieler und läuft im Uhrzeigersinn. Jeder Spieler führt genau eine Grundaktion aus: Auktion oder Krieg. Der aktuelle Spieler kann eine Auktion für ein unmittelbar angrenzendes neutrales Gebiet eröffnen oder mit einem eigenen Gebiet einen angrenzenden Gegner angreifen. Nur wenn beides unmöglich ist, verfällt die Grundaktion. Ein Gebiet, das ein Spieler in der Auktion eines anderen gewinnt, verbraucht seine eigene Grundaktion nicht.
 
-Bei einer normalen Auktion müssen alle Spieler verdeckt bieten, auch ohne Nachbarschaft zum Gebiet. Ein Gebot besteht aus einem verfügbaren Grundgebot `1`, `2` oder `3`, ganzzahligem globalem Einfluss und gegebenenfalls eigenem lokalem Einfluss auf dem versteigerten Gebiet. Der Core wertet erst aus, wenn alle Gebote vorliegen. Nur wer tatsächlich ein Gebiet erhält, bezahlt Einfluss und erschöpft das eingesetzte Grundgebot. Nach Erschöpfung aller drei Grundgebote steht sofort ein neuer vollständiger Satz zur Verfügung. Wird das Gebiet vergeben, verfällt sämtlicher dort verbliebener lokaler Einfluss.
+Bei einer normalen Auktion müssen alle Spieler verdeckt bieten, auch ohne Nachbarschaft zum Gebiet. Ein Gebot besteht aus einem verfügbaren Grundgebot `1`, `2` oder `3`, ganzzahligem globalem Einfluss und gegebenenfalls eigenem lokalem Einfluss auf dem versteigerten Gebiet. Der Core wertet erst aus, wenn alle Gebote vorliegen. Erfolgreiche Erwerber bezahlen Einfluss und erschöpfen ihr Grundgebot. Bei einem unaufgelösten Höchstgleichstand bleibt der Einfluss erhalten, aber die beteiligten Höchstbieter erschöpfen ihr verwendetes Grundgebot. Nach Erschöpfung aller drei Grundgebote steht sofort ein neuer vollständiger Satz zur Verfügung. Wird das Gebiet vergeben, verfällt sämtlicher dort verbliebener lokaler Einfluss.
 
-Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über eine legale Gebietsteilung offen. Bei mindestens drei Höchstbietenden bleibt das Gebiet neutral und niemand bezahlt. Nach dem ersten solchen Gleichstand darf der aktive Spieler innerhalb derselben Grundaktion eine zweite Auktion eröffnen oder seinen Zug beenden. Eine dritte Auktion ist nicht möglich. Nach vollständig abgewickelter Aktion folgt der nächste Spieler. Erst nach der letzten Aktion ist die Runde abgeschlossen und kann die nächste beginnen; nach der letzten Spielrunde beginnt `SCORING`.
+Bei genau zwei Höchstbietenden bleibt die Auktion bis zur Entscheidung über eine legale Gebietsteilung offen. Ist diese nachweislich unmöglich, bleibt das Gebiet neutral, beide Höchstbieter erschöpfen ihr Grundgebot und niemand bezahlt Einfluss. Bei mindestens drei Höchstbietenden bleibt das Gebiet ebenfalls neutral; nur deren Höchstbieter erschöpfen ihr Grundgebot. Nach dem ersten solchen Gleichstand darf der aktive Spieler innerhalb derselben Grundaktion eine zweite Auktion eröffnen oder seinen Zug beenden. Eine dritte Auktion ist nicht möglich. Nach vollständig abgewickelter Aktion folgt der nächste Spieler. Erst nach der letzten Aktion ist die Runde abgeschlossen und kann die nächste beginnen; nach der letzten Spielrunde beginnt `SCORING`.
 
 ## Endwertung und Spielende
 
@@ -103,6 +103,10 @@ Der Browser speichert Room-ID, Spieler-ID und Session-Token lokal und bietet bei
 
 Der Server legt jeden Room als atomaren JSON-Snapshot unter `data/rooms/` ab; `data/` wird nicht committed. Beim Neustart lädt er WAITING-, RUNNING- und FINISHED-Rooms wieder ein. Zum Testen eines Neustarts `npm run dev:multiplayer` beenden, erneut starten und die gespeicherte Partie im Browser fortsetzen. `VEDRAS_DATA_DIR=/pfad/zum/volume` setzt das Datenverzeichnis; ohne Angabe gilt `./data`. Für andere Entwicklungs-Origins kann der Server mit `WEB_ORIGIN=http://host:port` gestartet werden; `PORT` setzt den Server-Port.
 
+## Production und Staging
+
+`npm run build:production` erzeugt den Webbuild und den Node-Server. `npm start` liefert den Webclient, `/api` und `/ws` unter einem Origin aus; dafür sind mindestens `WEB_ORIGIN=https://deine-domain` und ein persistentes `VEDRAS_DATA_DIR` zu setzen. Der mehrstufige [Dockerfile](Dockerfile) verwendet `/data` als Volume und läuft als nicht privilegierter Node-Benutzer. Die vollständige Anleitung für TLS-Proxy, Healthcheck, Update, Rollback und Backup steht in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ## AP4: Rastergeometrie und Gebietsteilung
 
 Der Game Core verwendet ein orthogonales Raster als einzige Geometriequelle. `getTerritoryArea`, `isTerritoryConnected`, `getAdjacentTerritoryIds` und `getSharedBorder` arbeiten direkt auf `GridMapState`. POIs und Siedlungen/Städte liegen auf konkreten Zellen. Bei einer Zweiwege-Auktion zieht der Divider die Grenze; der First Chooser wählt in einem zweiten, core-validierten Schritt. Der neue Teil erhält eine unbenutzte Gebietskarte; bei vollständig verwendeten 48 Karten wird der gedruckte Wert der ursprünglichen Karte dupliziert. Zusätzliche Aktivierungszahl und Symbol bleiben beim ursprünglichen Kartenteil. Die Normalauktion verwendet dieselbe Rollenregel wie die Startauktion.
@@ -111,11 +115,11 @@ Der Game Core verwendet ein orthogonales Raster als einzige Geometriequelle. `ge
 
 Ein Krieg sperrt beide beteiligten Gebiete für weitere Kriege in derselben Runde. Beide Spieler bestätigen verdeckt höchstens eine verfügbare ♠-Aktivierung. Danach würfelt jeder einmal mit der eingespeisten `RandomSource`. Ein ♠ aus einem Gebiet an der gegnerischen Kampfgrenze gibt +2, sonst +1; jede Festung auf einer Zelle im Verteidigungsgebiet gibt +1. Der Angreifer erhält keinen automatischen Bonus. Der `WarSnapshot` hält die Flächen und gemeinsame Grenze vor dem Kampf fest.
 
-Bei Gleichstand endet die Grundaktion ohne Gebietsänderung. Differenz 1–2 eröffnet einen Grenzgewinn bis Tiefe 2, Differenz ab 3 bei einem Siegergebiet kleiner als die halbe Verliererfläche einen starken Vorstoß bis Tiefe 4. Eine ♦-Markierung verändert diese Tiefen um +1 für ihren Besitzer oder −1 für dessen Gegner und verfällt nach dem Krieg. Der Spieler zeichnet die Übernahme im erlaubten Korridor; der Core prüft Zusammenhang, Mindestfläche und Gebietszellen. Der Spieler darf auch keine Zelle übernehmen.
+Bei Gleichstand endet die Grundaktion ohne Gebietsänderung. Differenz 1–2 eröffnet einen Grenzgewinn mit Basis-Tiefe 2, Differenz ab 3 bei einem Siegergebiet kleiner als die halbe Verliererfläche einen starken Vorstoß mit Basis-Tiefe 4. Eine ♦-Markierung verändert diese Basiswerte um +1 für ihren Besitzer oder −1 für dessen Gegner und verfällt nach dem Krieg. Alle Rastertiefen skalieren mit `round(Basis × sqrt(Kartenfläche / 2500))`; die Oberfläche zeigt den wirksamen Wert. Der Spieler zeichnet die direkte Übernahme im erlaubten Korridor; der Core prüft Zusammenhang, Mindestfläche und Gebietszellen. Der Spieler darf auch keine Zelle übernehmen.
 
 Bei Differenz ab 3 und Siegerfläche mindestens der Hälfte der Verliererfläche erfolgt ab der doppelten dynamischen Mindestfläche ein Durchbruch: Der Gewinner zeichnet eine Teilung, und der Verlierer wählt zuerst. Sein Teil behält die Originalkarte und ID; der andere erhält eine neue Karte und ID. Eine ursprüngliche ♦-Markierung erlaubt anschließend eine optionale 1-Zellen-Korrektur zugunsten ihres Besitzers. Unterhalb der Schwelle wird das unterlegene Gebiet vollständig erobert, ohne mit einem anderen Gebiet zu verschmelzen. Ein geschwächtes Gebiet wird bei jeder Niederlage mit mindestens einem Punkt vollständig erobert; ein geschwächter Sieger verliert seine Schwächung.
 
-POIs und Siedlungen/Städte bleiben bei jeder Rasteränderung auf ihren Zellen. Für eine Schwächung berechnet der Core ausschließlich vom gespeicherten ursprünglichen Grenzverlauf eine orthogonale BFS-Tiefe im ursprünglichen Verlierergebiet. Ließe der vollständige Streifen bis zur effektiven Kampftiefe weniger als die dynamische Mindestfläche zurück, wird das Gebiet geschwächt; freiwillig weniger übernommene Zellen oder reine Zusammenhangshindernisse ändern diese Entscheidung nicht.
+POIs und Siedlungen/Städte bleiben bei jeder Rasteränderung auf ihren Zellen. Trennt ein direkter Grenzgewinn kleinere Restkomponenten vom Verlierer ab, fallen sie automatisch an den Gewinner. Die eindeutige größte Restkomponente behält TerritoryId und Karte; gleich große größte Komponenten machen die Auswahl ungültig. Für eine Schwächung berechnet der Core ausschließlich vom gespeicherten ursprünglichen Grenzverlauf eine orthogonale BFS-Tiefe im ursprünglichen Verlierergebiet. Ließe der vollständig simulierte, topologisch aufgelöste Streifen weniger als die dynamische Mindestfläche zurück, wird das Gebiet geschwächt; eine topologisch mehrdeutige oder rein geometrisch begrenzte Vorschau bewirkt keine Schwächung.
 
 ## Installation und Entwicklung
 
@@ -134,9 +138,10 @@ Danach ist der lokale Client gewöhnlich unter [http://localhost:5173](http://lo
 npm run build
 npm run typecheck
 npm test
+npm run test:e2e
 ```
 
-Die Tests verwenden den integrierten Test-Runner von Node.js. Sie prüfen Core-Regeln sowie Room-Lifecycle, Sessions, autoritative Commands, Deduplizierung und redigierte WebSocket-Snapshots.
+Die Node-Tests prüfen Core-Regeln sowie Room-Lifecycle, Sessions, autoritative Commands, Deduplizierung und redigierte WebSocket-Snapshots. `npm run test:e2e` startet für Playwright einen isolierten Server und Browser-Client; es prüft Kartenbau, Karteninteraktion sowie das Erstellen, Beitreten und Starten eines Mehrspielerraums.
 
 ## Weitere Arbeitspakete
 

@@ -1,8 +1,8 @@
-import type { GameState } from "@vedras/game-core";
+import type { GameReadModel } from "../game-read-model";
 import { phaseLabel } from "../formatters/phase-label";
 
 interface GameHeaderProps {
-  state: GameState;
+  state: GameReadModel;
   playerName: (id: string) => string;
   mode?: "LOCAL" | "MULTIPLAYER";
   viewerPlayerId?: string | undefined;

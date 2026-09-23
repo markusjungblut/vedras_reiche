@@ -12,6 +12,10 @@ function named(event: GameEvent, key: string, playerName: PlayerName): string {
   return id === "?" ? id : playerName(id);
 }
 
+function cellCount(event: GameEvent, key: string): number {
+  return Array.isArray(event.payload[key]) ? event.payload[key].length : 0;
+}
+
 function revealedBids(event: GameEvent, playerName: PlayerName): string {
   const raw = event.payload.bids;
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -100,7 +104,11 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
     case GameEventType.CombatRolled: return `Kampf: Angreifer ${field(event, "attackerRoll")} + ♠ ${field(event, "attackerSpadeBonus")} = ${field(event, "attackerTotal")}; Verteidiger ${field(event, "defenderRoll")} + ♠ ${field(event, "defenderSpadeBonus")} + Festungen ${field(event, "defenderFortressBonus")} = ${field(event, "defenderTotal")}. Differenz ${field(event, "difference")}.`;
     case GameEventType.SpadeActivationUsed: return "♠-Aktivierung eingesetzt.";
     case GameEventType.BorderAdvanceRequired: return `Grenzgewinn bis ${field(event, "maximumDepth")} Kästchen Tiefe möglich.`;
-    case GameEventType.BorderAdvanceResolved: return "Grenzverschiebung bestätigt.";
+    case GameEventType.BorderAdvanceResolved: {
+      const annexed = cellCount(event, "annexedDisconnectedCells");
+      return annexed === 0 ? "Grenzverschiebung bestätigt."
+        : `Grenzverschiebung bestätigt; ${annexed} abgeschnittene Kästchen fallen ebenfalls an den Gewinner.`;
+    }
     case GameEventType.TerritoryWeakened: return `${field(event, "territoryId")} wurde geschwächt.`;
     case GameEventType.TerritoryWeakeningRemoved: return `Schwächung von ${field(event, "territoryId")} entfernt.`;
     case GameEventType.TerritoryConquered: return `${field(event, "territoryId")} wurde vollständig von ${named(event, "ownerId", playerName)} erobert.`;
@@ -109,8 +117,12 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
     case GameEventType.WarCutChoiceMade: return "Verlierer hat seinen Gebietsteil gewählt.";
     case GameEventType.DiamondBorderMarkConsumed: return "♦-Grenzmarkierung verbraucht.";
     case GameEventType.DiamondCutCorrectionRequired: return "♦-Korrektur der Teilungsgrenze möglich.";
-    case GameEventType.DiamondCutCorrectionResolved: return "♦-Korrektur abgeschlossen.";
-    case GameEventType.DiamondNeutralBorderChanged: return "♦-Grenzverschiebung zum neutralen Gebiet abgeschlossen.";
+    case GameEventType.DiamondCutCorrectionResolved: return cellCount(event, "annexedDisconnectedCells") === 0
+      ? "♦-Korrektur abgeschlossen."
+      : `♦-Korrektur abgeschlossen; ${cellCount(event, "annexedDisconnectedCells")} abgeschnittene Kästchen wurden annektiert.`;
+    case GameEventType.DiamondNeutralBorderChanged: return cellCount(event, "annexedDisconnectedCells") === 0
+      ? "♦-Grenzverschiebung zum neutralen Gebiet abgeschlossen."
+      : `♦-Grenzverschiebung abgeschlossen; ${cellCount(event, "annexedDisconnectedCells")} abgeschnittene Kästchen wurden annektiert.`;
     case GameEventType.WarResolved: {
       const outcome = field(event, "outcome");
       const labels: Record<string, string> = { TIE: "Gleichstand", BORDER_ADVANCE: "Grenzgewinn",

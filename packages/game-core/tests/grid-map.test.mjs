@@ -86,7 +86,12 @@ test("player game view keeps opponent bid values out of the active auction", () 
   const state = {
     gameId: "view", phase: "ACTION_PHASE", round: 1, maxRounds: 9,
     players: [{ id: "A", secretFactionSuit: Suit.Hearts }, { id: "B", secretFactionSuit: Suit.Spades }], territories: [], pointsOfInterest: [], borderMarks: [],
-    startPlayerId: "A", activationNumbers: [], pendingDiamondBorderChanges: [], spadeActivations: [], events: [],
+    startPlayerId: "A", activationNumbers: [], pendingDiamondBorderChanges: [],
+    spadeActivations: [{ id: "A-private-spade", playerId: "A", sourceTerritoryId: "T", status: "AVAILABLE" }],
+    events: [
+      { id: "stored", type: "SPADE_ACTIVATION_STORED", actorId: "A", timestamp: "2026-01-01T00:00:00.000Z", payload: { effectId: "A-private-spade" } },
+      { id: "used", type: "SPADE_ACTIVATION_USED", actorId: "A", timestamp: "2026-01-01T00:00:01.000Z", payload: { activationId: "A-private-spade", effectId: "A-private-spade" } },
+    ],
     auction: {
       id: "auction", kind: "NORMAL", territoryId: "T", eligiblePlayerIds: ["A", "B"], status: "BIDDING",
       submittedBids: { A: { kind: "NORMAL", basicBid: 3, globalInfluence: 2, localInfluence: 1 } },
@@ -99,7 +104,10 @@ test("player game view keeps opponent bid values out of the active auction", () 
   assert.equal(JSON.stringify(viewB.auction).includes("globalInfluence"), false);
   assert.equal(viewA.players[1].secretFactionSuit, undefined);
   assert.equal(viewB.players[0].secretFactionSuit, undefined);
-  assert.equal(viewB.players[1].secretFactionSuit, Suit.Spades);
+  assert.equal(viewB.viewerSecretFactionSuit, Suit.Spades);
+  assert.deepEqual(viewB.spadeActivations, []);
+  assert.equal(JSON.stringify(viewB).includes("A-private-spade"), false);
+  assert.equal(viewB.events.some((event) => event.type === "SPADE_ACTIVATION_STORED"), false);
 });
 
 test("start and normal auction split roles use the same clockwise reference rule", () => {

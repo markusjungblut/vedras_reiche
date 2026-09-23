@@ -14,6 +14,7 @@ import {
 import type { TerritoryId } from "../model/ids.js";
 import { PointOfInterestType } from "../model/point-of-interest.js";
 import { getBreakthroughThreshold } from "../rules/territory-size.js";
+import { scaleGridDepth } from "../rules/grid-depth.js";
 import { finishCurrentBasicAction } from "../state/action-phase.js";
 import type { CombatResult, PendingWar } from "../state/action-phase-state.js";
 import { GamePhase } from "../state/game-phase.js";
@@ -21,6 +22,8 @@ import type { GameState } from "../state/game-state.js";
 import type { CardSource } from "../utils/card-source.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
+
+export type WarSpadeReadState = Pick<GameState, "map" | "spadeActivations">;
 
 function append(state: GameState, next: GameState, timestamp: string, descriptions: EventDescription[]): ActionResult {
   const events = createEvents(state, timestamp, descriptions);
@@ -40,7 +43,7 @@ function finish(state: GameState, timestamp: string, descriptions: EventDescript
   return { state: completed.state, events: [...result.events, ...completed.events] };
 }
 
-export function getAvailableWarSpades(state: GameState, playerId: string, opponentTerritoryId: TerritoryId):
+export function getAvailableWarSpades(state: WarSpadeReadState, playerId: string, opponentTerritoryId: TerritoryId):
   { id: string; sourceTerritoryId: TerritoryId; bonus: 1 | 2 }[] {
   if (state.map === undefined) return [];
   return state.spadeActivations.filter((effect) => effect.playerId === playerId && effect.status === "AVAILABLE")
@@ -56,11 +59,11 @@ function roll(random: RandomSource): number {
   return value;
 }
 
-function borderDepth(war: PendingWar, winnerId: TerritoryId, strong: boolean): number {
+function borderDepth(war: PendingWar, winnerId: TerritoryId, strong: boolean, map: NonNullable<GameState["map"]>): number {
   const base = strong ? 4 : 2;
-  if (war.borderMark === undefined) return base;
+  if (war.borderMark === undefined) return scaleGridDepth(base, map);
   const winnerPlayerId = winnerId === war.attackerTerritoryId ? war.attackerPlayerId : war.defenderPlayerId;
-  return base + (war.borderMark.playerId === winnerPlayerId ? 1 : -1);
+  return scaleGridDepth(base + (war.borderMark.playerId === winnerPlayerId ? 1 : -1), map);
 }
 
 export function setWarSpadeChoice(
@@ -151,7 +154,7 @@ export function setWarSpadeChoice(
       type: GameEventType.WarCutRequired, payload: { warId: war.id, loserTerritoryId, dividerPlayerId: winnerTerritoryId === war.attackerTerritoryId ? war.attackerPlayerId : war.defenderPlayerId },
     }]);
   }
-  const maximumDepth = borderDepth(war, winnerTerritoryId, outcome === "STRONG_ADVANCE");
+  const maximumDepth = borderDepth(war, winnerTerritoryId, outcome === "STRONG_ADVANCE", state.map);
   const nextWar: PendingWar = { ...war, spadeChoices: choices, combat, stage: "AWAITING_BORDER_ADVANCE", maximumDepth };
   return append(state, { ...base, pendingWar: nextWar }, timestamp, [...descriptions, {
     type: GameEventType.BorderAdvanceRequired, payload: { warId: war.id, winnerTerritoryId, loserTerritoryId, maximumDepth },
@@ -199,7 +202,9 @@ export function proposeBorderAdvance(state: GameState, action: ProposeBorderAdva
   });
   const descriptions: EventDescription[] = [
     { type: GameEventType.BorderAdvanceResolved, actorId: action.playerId,
-      payload: { warId: war.id, claimedCells: action.claimedCells, maximumDepth: war.maximumDepth,
+      payload: { warId: war.id, claimedCells: action.claimedCells,
+        directTransferCells: validation.directTransferCells ?? action.claimedCells,
+        annexedDisconnectedCells: validation.annexedDisconnectedCells ?? [], maximumDepth: war.maximumDepth,
         weakeningAssessment: limitation } },
     { type: GameEventType.WarResolved, payload: { warId: war.id, outcome: war.combat.outcome } },
   ];
@@ -255,7 +260,7 @@ export function chooseWarCut(
     return append(state, { ...next, pendingWar: { ...war, stage: "AWAITING_DIAMOND_CORRECTION",
       cutTerritoryIds: [loser.id, newId] } }, timestamp, [...descriptions,
       { type: GameEventType.DiamondCutCorrectionRequired, actorId: war.borderMark.playerId,
-        payload: { warId: war.id, playerId: war.borderMark.playerId, maximumDepth: 1 } },
+        payload: { warId: war.id, playerId: war.borderMark.playerId, maximumDepth: scaleGridDepth(1, state.map) } },
     ]);
   }
   return finish(next, timestamp, [...descriptions, { type: GameEventType.WarResolved,
@@ -271,12 +276,14 @@ export function resolveDiamondCorrection(state: GameState, action: ResolveDiamon
   const recipientId = state.territories.find((territory) => territory.id === firstId)?.ownerId === action.playerId ? firstId : secondId;
   const donorId = recipientId === firstId ? secondId : firstId;
   const border = getSharedBorder(state.map, recipientId, donorId);
-  const validation = validateBorderAdvance(state.map, recipientId, donorId, border, 1, action.claimedCells);
+  const validation = validateBorderAdvance(state.map, recipientId, donorId, border, scaleGridDepth(1, state.map), action.claimedCells);
   if (!validation.valid || validation.map === undefined) throw advanceError(validation.reason);
   const next = reconcileMapBoundFeatures({ ...state, map: validation.map });
   return finish(next, timestamp, [
     { type: GameEventType.DiamondCutCorrectionResolved, actorId: action.playerId,
-      payload: { warId: war.id, claimedCells: action.claimedCells } },
+      payload: { warId: war.id, claimedCells: action.claimedCells,
+        directTransferCells: validation.directTransferCells ?? action.claimedCells,
+        annexedDisconnectedCells: validation.annexedDisconnectedCells ?? [] } },
     { type: GameEventType.WarResolved, payload: { warId: war.id, outcome: "CUT_AND_CHOOSE" } },
   ]);
 }

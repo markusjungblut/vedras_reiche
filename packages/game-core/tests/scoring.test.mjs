@@ -187,7 +187,7 @@ test("final player views contain results and reveal all factions", () => {
   const finished = beginScoring(state, timestamp).state;
   const view = createGameViewForPlayer(finished, "anna");
   assert.ok(view.result);
-  assert.equal(view.players.find((player) => player.id === "ben").secretFactionSuit, Suit.Spades);
+  assert.equal(view.revealedFactionSuitsByPlayerId.ben, Suit.Spades);
 });
 
 test("the final basic action completes scoring and blocks every later game action", () => {

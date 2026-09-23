@@ -150,6 +150,17 @@ export class FileRoomStore implements RoomStore {
 
   constructor(private readonly directory: string, private readonly logger?: RoomStoreLogger) {}
 
+  /** Verifies that the configured persistent directory can be created and written before serving rooms. */
+  async ensureReady(): Promise<void> {
+    await mkdir(this.directory, { recursive: true });
+    const probe = join(this.directory, `.vedras-storage-probe-${process.pid}-${randomUUID()}.tmp`);
+    try {
+      await writeFile(probe, "", { encoding: "utf8", flag: "wx" });
+    } finally {
+      await unlink(probe).catch(() => undefined);
+    }
+  }
+
   async loadAll(): Promise<readonly PersistedRoom[]> {
     await mkdir(this.directory, { recursive: true });
     this.lastLoadSkipped = 0;

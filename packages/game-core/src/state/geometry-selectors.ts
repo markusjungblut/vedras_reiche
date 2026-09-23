@@ -10,23 +10,27 @@ import type { PointOfInterest } from "../model/point-of-interest.js";
 import type { SettlementFeature } from "../model/territory.js";
 import type { PointOfInterestId, TerritoryId } from "../model/ids.js";
 
-export function getStateTerritoryCells(state: GameState, territoryId: TerritoryId): GridCell[] {
+/** Public geometry fields shared by authoritative state and player projections. */
+export type GeometryReadState = Pick<GameState, "map" | "territories">;
+type PointOfInterestReadState = GeometryReadState & Pick<GameState, "pointsOfInterest">;
+
+export function getStateTerritoryCells(state: GeometryReadState, territoryId: TerritoryId): GridCell[] {
   return state.map ? getTerritoryCells(state.map, territoryId) : [];
 }
 
-export function getStateTerritoryArea(state: GameState, territoryId: TerritoryId): number {
+export function getStateTerritoryArea(state: GeometryReadState, territoryId: TerritoryId): number {
   if (state.map) return getMapTerritoryArea(state.map, territoryId);
   return state.territories.find((territory) => territory.id === territoryId)?.area ?? 0;
 }
 
-export function getStateAdjacentTerritoryIds(state: GameState, territoryId: TerritoryId): TerritoryId[] {
+export function getStateAdjacentTerritoryIds(state: GeometryReadState, territoryId: TerritoryId): TerritoryId[] {
   if (state.map) return getMapAdjacentTerritoryIds(state.map, territoryId);
   return state.territories.find((territory) => territory.id === territoryId)?.adjacentTerritoryIds
     ? [...state.territories.find((territory) => territory.id === territoryId)!.adjacentTerritoryIds!]
     : [];
 }
 
-export function areStateTerritoriesAdjacent(state: GameState, first: TerritoryId, second: TerritoryId): boolean {
+export function areStateTerritoriesAdjacent(state: GeometryReadState, first: TerritoryId, second: TerritoryId): boolean {
   if (state.map) return areTerritoriesAdjacent(state.map, first, second);
   const left = state.territories.find((territory) => territory.id === first);
   const right = state.territories.find((territory) => territory.id === second);
@@ -34,7 +38,7 @@ export function areStateTerritoriesAdjacent(state: GameState, first: TerritoryId
 }
 
 export function getPointOfInterestTerritory(
-  state: GameState,
+  state: PointOfInterestReadState,
   poiOrId: PointOfInterest | PointOfInterestId,
 ): TerritoryId | undefined {
   const poi = typeof poiOrId === "string"
@@ -46,7 +50,7 @@ export function getPointOfInterestTerritory(
 }
 
 export function getSettlementTerritory(
-  state: GameState,
+  state: GeometryReadState,
   positionOrFeature: GridCell | SettlementFeature,
 ): TerritoryId | undefined {
   if (!state.map) return undefined;

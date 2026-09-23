@@ -13,10 +13,14 @@
     "dev:server": "npm run build --workspace @vedras/game-core && npm run build --workspace @vedras/protocol && npm run dev --workspace @vedras/server",
     "dev:multiplayer": "concurrently -k \"npm run dev:server\" \"npm run dev:web\"",
     "build": "npm run build --workspace @vedras/game-core && npm run build --workspace @vedras/protocol && npm run build --workspace @vedras/server && npm run build --workspace @vedras/web",
+    "build:production": "npm run build",
+    "start": "node apps/server/dist/index.js --production",
     "typecheck": "npm run build --workspace @vedras/game-core && npm run build --workspace @vedras/protocol && npm run typecheck --workspace @vedras/game-core && npm run typecheck --workspace @vedras/protocol && npm run typecheck --workspace @vedras/server && npm run typecheck --workspace @vedras/web",
-    "test": "npm run test --workspace @vedras/game-core && npm run build --workspace @vedras/protocol && npm run test --workspace @vedras/server && npm run test --workspace @vedras/web"
+    "test": "npm run test --workspace @vedras/game-core && npm run build --workspace @vedras/protocol && npm run test --workspace @vedras/server && npm run test --workspace @vedras/web",
+    "test:e2e": "npm run build && playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "concurrently": "^10.0.5",
     "typescript": "^7.0.2"
   },

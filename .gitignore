@@ -4,3 +4,8 @@ dist/
 *.tsbuildinfo
 .codex-tmp/
 data/
+test-results/
+playwright-report/
+.env
+.env.*
+!.env.example

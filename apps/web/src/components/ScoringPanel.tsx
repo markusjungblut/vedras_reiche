@@ -1,8 +1,9 @@
-import { formatRoundedScoreHundredths, formatScoreHundredths, GameActionType, type GameAction, type GameState, type TerritoryScoreBreakdown } from "@vedras/game-core";
+import { formatRoundedScoreHundredths, formatScoreHundredths, GameActionType, type GameAction, type Suit, type TerritoryScoreBreakdown } from "@vedras/game-core";
 import { suitName, suitSymbol } from "../formatters/suit-label";
+import type { GameReadModel } from "../game-read-model";
 
 interface ScoringPanelProps {
-  readonly state: GameState;
+  readonly state: GameReadModel;
   readonly playerName: (id: string) => string;
   readonly onAction: (action: GameAction) => void;
 }
@@ -55,7 +56,9 @@ export function ScoringPanel({ state, playerName, onAction }: ScoringPanelProps)
 }
 
 /** Renders only the immutable result that the core already calculated. */
-export function ResultPanel({ state, playerName }: Pick<ScoringPanelProps, "state" | "playerName">) {
+export function ResultPanel({ state, playerName, factionSuits }: Pick<ScoringPanelProps, "state" | "playerName"> & {
+  readonly factionSuits?: Readonly<Partial<Record<string, Suit>>> | undefined;
+}) {
   const result = state.result;
   if (!result) return <p className="empty-state">Kein Endergebnis vorhanden.</p>;
   const maxScore = Math.max(...result.playerResults.map((score) => score.totalScoreHundredths));
@@ -80,8 +83,8 @@ export function ResultPanel({ state, playerName }: Pick<ScoringPanelProps, "stat
         {group.map((score) => <details key={score.playerId} className="player-score" open={index === 0}>
           <summary><strong>{playerName(score.playerId)}</strong><strong>{formatRoundedScoreHundredths(score.totalScoreHundredths)} Punkte</strong></summary>
           <div className="score-meta">{group.length > 1 ? `Gemeinsamer Platz ${placement}` : `${placement}. Platz`}</div>
-          {state.players.find((player) => player.id === score.playerId)?.secretFactionSuit !== undefined && <div className="result-faction">
-            {suitSymbol(state.players.find((player) => player.id === score.playerId)!.secretFactionSuit!)} {suitName(state.players.find((player) => player.id === score.playerId)!.secretFactionSuit!)}
+          {factionSuits?.[score.playerId] !== undefined && <div className="result-faction">
+            {suitSymbol(factionSuits[score.playerId]!)} {suitName(factionSuits[score.playerId]!)}
           </div>}
           <div className="score-meta">{score.controlledTerritoryCount} Gebiete · {score.controlledArea} Kästchen · {score.activeRelicCount} Relikte</div>
           <div className="territory-score-list">{score.territoryScores.map((territory) => <TerritoryBreakdown key={territory.territoryId} score={territory} />)}</div>

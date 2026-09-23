@@ -179,14 +179,39 @@ test("first three-way tie permits one optional second auction; second tie cannot
   assert.equal(firstTie.state.territories[1].ownerId, null);
   assert.equal(firstTie.state.actionPhase.secondAuctionAvailable, true);
   assert.equal(firstTie.state.players[0].globalInfluence, 6);
-  assert.deepEqual(firstTie.state.players[0].availableBasicBids, [1, 2, 3]);
+  assert.deepEqual(firstTie.state.players[0].availableBasicBids, [1, 3]);
   assert.ok(firstTie.events.some((event) => event.type === GameEventType.SecondAuctionAvailable));
   state = open(firstTie.state, "Y").state;
   assert.equal(state.actionPhase.auctionsOpenedByActivePlayer, 2);
-  state = submit(state, "A", 2).state;
-  state = submit(state, "B", 2).state;
-  const secondTie = submit(state, "C", 2);
+  state = submit(state, "A", 1).state;
+  state = submit(state, "B", 1).state;
+  const secondTie = submit(state, "C", 1);
   assert.equal(secondTie.state.actionPhase.secondAuctionAvailable, false);
   assert.equal(secondTie.state.territories.find((territory) => territory.id === "Y").ownerId, null);
   rejectsWithoutMutation(secondTie.state, () => open(secondTie.state, "X"), DomainErrorCode.SecondAuctionUnavailable);
+});
+
+test("an unresolved highest tie exhausts only highest bids, preserves influence, and refreshes an empty set", () => {
+  let base = stateWith(["A", "B", "C", "D"]);
+  base = {
+    ...base,
+    players: base.players.map((player) => ({ ...player, availableBasicBids: player.id === "D" ? [1, 2, 3] : [1] })),
+  };
+  let state = open(base).state;
+  state = submit(state, "A", 1, 4).state;
+  state = submit(state, "B", 1, 4).state;
+  state = submit(state, "C", 1, 4).state;
+  const result = submit(state, "D", 1, 3);
+
+  assert.equal(result.state.territories.find((territory) => territory.id === "X").ownerId, null);
+  for (const id of ["A", "B", "C"]) {
+    const player = result.state.players.find((item) => item.id === id);
+    assert.equal(player.globalInfluence, 6);
+    assert.deepEqual(player.availableBasicBids, [1, 2, 3]);
+  }
+  assert.deepEqual(result.state.players.find((player) => player.id === "D").availableBasicBids, [1, 2, 3]);
+  assert.equal(result.state.players.find((player) => player.id === "D").globalInfluence, 6);
+  assert.equal(result.events.filter((event) => event.type === GameEventType.BasicBidExhausted).length, 3);
+  assert.equal(result.events.filter((event) => event.type === GameEventType.BasicBidsRefreshed).length, 3);
+  assert.equal(result.events.some((event) => event.type === GameEventType.GlobalInfluenceSpent), false);
 });

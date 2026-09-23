@@ -9,8 +9,10 @@ export interface DiamondTargets {
   readonly opponentTerritoryIds: readonly TerritoryId[];
 }
 
+export type DiamondTargetsReadState = Pick<GameState, "map" | "territories">;
+
 /** Logical candidates only; neutral geometry still needs a separate map decision. */
-export function getDiamondTargets(state: GameState, sourceTerritoryId: TerritoryId): DiamondTargets {
+export function getDiamondTargets(state: DiamondTargetsReadState, sourceTerritoryId: TerritoryId): DiamondTargets {
   const source = state.territories.find((territory) => territory.id === sourceTerritoryId);
   if (source === undefined) {
     throw new DomainError(DomainErrorCode.TerritoryNotFound);

@@ -57,6 +57,22 @@ function fight(state, dice, aSpade = null, bSpade = null) {
   return next;
 }
 
+function largeWarFixture({ attackerWidth = 50, markPlayer } = {}) {
+  const cells = {};
+  for (let y = 0; y < 100; y += 1) for (let x = 0; x < 100; x += 1) cells[`${x},${y}`] = x < attackerWidth ? "A" : "B";
+  const setup = createGameState({ gameId: "large-war", players: [{ id: "P", name: "P" }, { id: "Q", name: "Q" }], startPlayerId: "P" });
+  return {
+    ...setup, phase: GamePhase.ActionPhase, round: 1, activePlayerId: "P",
+    actionPhase: { completedPlayerIds: [], auctionsOpenedByActivePlayer: 0, secondAuctionAvailable: false },
+    map: createGridMap({ width: 100, height: 100 }, cells),
+    territories: [
+      { id: "A", ownerId: "P", card: { suit: Suit.Spades, activationNumber: 2 } },
+      { id: "B", ownerId: "Q", card: { suit: Suit.Clubs, activationNumber: 3 } },
+    ],
+    borderMarks: markPlayer ? [{ id: "mark", territoryIds: ["A", "B"], playerId: markPlayer }] : [],
+  };
+}
+
 test("combat has no attacker bonus, ties lock both territories and consume the mark", () => {
   const initial = fixture({ markPlayer: "P" });
   const started = start(initial);
@@ -73,17 +89,17 @@ test("combat has no attacker bonus, ties lock both territories and consume the m
   assert.equal(tied.events.some((event) => event.type === GameEventType.ActionCompleted), true);
 });
 
-test("normal win uses a 2-cell corridor and a completed border move ends the action", () => {
+test("normal win uses the compact fixture's scaled corridor and a completed border move ends the action", () => {
   const fought = fight(start(fixture()), [5, 3]);
   assert.equal(fought.pendingWar.stage, "AWAITING_BORDER_ADVANCE");
-  assert.equal(fought.pendingWar.maximumDepth, 2);
+  assert.equal(fought.pendingWar.maximumDepth, 1);
   assert.equal(fought.pendingWar.combat.difference, 2);
   const war = fought.pendingWar;
-  const corridor = getCellsWithinBorderDepth(fought.map, "B", war.originalSharedBorder, 2);
-  const defaultAdvance = getMaximumLegalBorderAdvance(fought.map, "A", "B", war.originalSharedBorder, 2);
-  assert.equal(corridor.length, 10);
+  const corridor = getCellsWithinBorderDepth(fought.map, "B", war.originalSharedBorder, war.maximumDepth);
+  const defaultAdvance = getMaximumLegalBorderAdvance(fought.map, "A", "B", war.originalSharedBorder, war.maximumDepth);
+  assert.equal(corridor.length, 5);
   assert.ok(defaultAdvance.length > 0);
-  assert.equal(validateBorderAdvance(fought.map, "A", "B", war.originalSharedBorder, 2, defaultAdvance).valid, true);
+  assert.equal(validateBorderAdvance(fought.map, "A", "B", war.originalSharedBorder, war.maximumDepth, defaultAdvance).valid, true);
   const invalid = { type: GameActionType.ProposeBorderAdvance, warId: war.id, playerId: "P", claimedCells: [{ x: 10, y: 0 }] };
   assert.throws(() => act(fought, invalid), (error) => error.code === DomainErrorCode.CellOutsideWarCorridor);
   assert.equal(fought.map.cells["10,0"], "B");
@@ -94,6 +110,31 @@ test("normal win uses a 2-cell corridor and a completed border move ends the act
   assert.equal(resolved.territories.find((territory) => territory.id === "B").weakened, undefined);
 });
 
+test("normal, strong, and ♦-marked wars use scaled grid depths on a 100 by 100 map", () => {
+  assert.equal(fight(start(largeWarFixture()), [5, 3]).pendingWar.maximumDepth, 4);
+  assert.equal(fight(start(largeWarFixture({ markPlayer: "P" })), [5, 3]).pendingWar.maximumDepth, 6);
+  assert.equal(fight(start(largeWarFixture({ attackerWidth: 25 })), [6, 3]).pendingWar.maximumDepth, 8);
+});
+
+test("neutral ♦ accepts a connected four-cell deep transfer on a 100 by 100 map", () => {
+  const base = largeWarFixture();
+  const state = {
+    ...base,
+    phase: GamePhase.ActivationPhase,
+    activationNumbers: [2],
+    activation: { pendingTerritoryIds: ["A"], resolvedTerritoryIds: [] },
+    territories: base.territories.map((territory) => territory.id === "A"
+      ? { ...territory, card: { suit: Suit.Diamonds, activationNumber: 2 } }
+      : { ...territory, ownerId: null }),
+  };
+  const pending = act(state, { type: GameActionType.ActivateTerritory, playerId: "P", territoryId: "A",
+    choice: { type: "DIAMOND_NEUTRAL_BORDER", targetTerritoryId: "B" } }).state;
+  const effect = pending.pendingDiamondBorderChanges[0];
+  const resolved = act(pending, { type: GameActionType.ResolveNeutralDiamond, effectId: effect.id, playerId: "P",
+    claimedCells: [{ x: 50, y: 0 }, { x: 51, y: 0 }, { x: 52, y: 0 }, { x: 53, y: 0 }] }).state;
+  assert.deepEqual([50, 51, 52, 53].map((x) => resolved.map.cells[`${x},0`]), ["A", "A", "A", "A"]);
+});
+
 test("empty gain is legal at minimum area; claiming a cell there is rejected", () => {
   const fought = fight(start(fixture({ b: 20 })), [5, 3]);
   const warId = fought.pendingWar.id;
@@ -102,7 +143,7 @@ test("empty gain is legal at minimum area; claiming a cell there is rejected", (
   const resolved = act(fought, { type: GameActionType.ProposeBorderAdvance, warId, playerId: "P", claimedCells: [] }).state;
   assert.equal(getTerritoryArea(resolved.map, "B"), 20);
   const limitation = assessBorderAdvanceLimitation(fought.map, "A", "B", fought.pendingWar.originalSharedBorder, 2, []);
-  assert.deepEqual(limitation, { determinate: true, limitedByMinimumArea: true, limitedByGeometry: false });
+  assert.deepEqual(limitation, { determinate: true, limitedByMinimumArea: true, limitedByGeometry: false, limitedByTopology: false });
 });
 
 function mapFromCells(width, height, entries) {
@@ -116,7 +157,7 @@ test("complete front depth weakens only when it would reduce the loser below twe
   ]);
   const minBorder = getSharedBorder(minLimited, "A", "B");
   assert.deepEqual(assessBorderAdvanceLimitation(minLimited, "A", "B", minBorder, 2, []), {
-    determinate: true, limitedByMinimumArea: true, limitedByGeometry: false,
+    determinate: true, limitedByMinimumArea: true, limitedByGeometry: false, limitedByTopology: false,
   });
 
   const exactMinimum = mapFromCells(10, 3, [
@@ -125,7 +166,7 @@ test("complete front depth weakens only when it would reduce the loser below twe
   ]);
   const exactBorder = getSharedBorder(exactMinimum, "A", "B");
   assert.deepEqual(assessBorderAdvanceLimitation(exactMinimum, "A", "B", exactBorder, 2, []), {
-    determinate: true, limitedByMinimumArea: false, limitedByGeometry: false,
+    determinate: true, limitedByMinimumArea: false, limitedByGeometry: false, limitedByTopology: false,
   });
 });
 
@@ -137,19 +178,19 @@ test("a geometrically disconnected full front does not weaken the loser", () => 
     ...Array.from({ length: 12 }, (_, offset) => ({ x: 3 + offset % 3, y: 5 + Math.floor(offset / 3), territoryId: "B" })),
   ]);
   const limitation = assessBorderAdvanceLimitation(map, "A", "B", getSharedBorder(map, "A", "B"), 2, []);
-  assert.deepEqual(limitation, { determinate: true, limitedByMinimumArea: false, limitedByGeometry: true });
+  assert.deepEqual(limitation, { determinate: true, limitedByMinimumArea: false, limitedByGeometry: false, limitedByTopology: true });
 });
 
-test("diamond depth can weaken even when the winner claims only one cell", () => {
+test("a compact ♦-marked border uses its scaled depth even when the winner claims only one cell", () => {
   const plain = fight(start(fixture({ b: 30 })), [5, 3]);
   const plainLimitation = assessBorderAdvanceLimitation(plain.map, "A", "B", plain.pendingWar.originalSharedBorder, plain.pendingWar.maximumDepth, []);
   assert.equal(plainLimitation.limitedByMinimumArea, false);
 
   const marked = fight(start(fixture({ b: 30, markPlayer: "P" })), [5, 3]);
-  assert.equal(marked.pendingWar.maximumDepth, 3);
+  assert.equal(marked.pendingWar.maximumDepth, 1);
   const resolved = act(marked, { type: GameActionType.ProposeBorderAdvance, warId: marked.pendingWar.id,
     playerId: "P", claimedCells: [{ x: 8, y: 0 }] }).state;
-  assert.equal(resolved.territories.find((territory) => territory.id === "B").weakened, true);
+  assert.equal(resolved.territories.find((territory) => territory.id === "B").weakened, undefined);
   assert.equal(resolved.map.cells["8,0"], "A");
 });
 
@@ -210,13 +251,13 @@ test("weakened loser is conquered at difference one and weakened winner recovers
   assert.equal(recovered.territories.find((territory) => territory.id === "A").weakened, false);
 });
 
-test("strong advance and marked depths follow the snapshot area ratio", () => {
-  for (const [markPlayer, expected] of [[undefined, 4], ["P", 5], ["Q", 3]]) {
+test("strong advance and marked depths scale down on compact fixtures", () => {
+  for (const [markPlayer, expected] of [[undefined, 1], ["P", 1], ["Q", 1]]) {
     const fought = fight(start(fixture({ a: 19, b: 40, format: "A5", markPlayer })), [6, 1]);
     assert.equal(fought.pendingWar.combat.outcome, "STRONG_ADVANCE");
     assert.equal(fought.pendingWar.maximumDepth, expected);
   }
-  for (const [markPlayer, expected] of [["P", 3], ["Q", 1]]) {
+  for (const [markPlayer, expected] of [["P", 1], ["Q", 1]]) {
     const fought = fight(start(fixture({ markPlayer })), [5, 3]);
     assert.equal(fought.pendingWar.maximumDepth, expected);
   }
@@ -334,14 +375,14 @@ test("neutral diamond pauses activation until a validated geometric change", () 
   assert.throws(() => act(pending, { type: GameActionType.ResolveNeutralDiamond, effectId: effect.id, playerId: "P",
     claimedCells: [{ x: 10, y: 0 }] }), (error) => error.code === DomainErrorCode.InvalidDiamondNeutralChange);
   const resolved = act(pending, { type: GameActionType.ResolveNeutralDiamond, effectId: effect.id, playerId: "P",
-    claimedCells: [{ x: 8, y: 0 }, { x: 9, y: 0 }] }).state;
+    claimedCells: [{ x: 8, y: 0 }] }).state;
   assert.equal(resolved.map.cells["8,0"], "A");
-  assert.equal(resolved.map.cells["9,0"], "A");
+  assert.equal(resolved.map.cells["9,0"], "B");
   assert.equal(resolved.pendingDiamondBorderChanges.length, 0);
   assert.equal(resolved.phase, GamePhase.ActionPhase);
 });
 
-test("border validator rejects disconnected remnants without mutating input", () => {
+test("border validator rejects ambiguous retained main components without mutating input", () => {
   const map = fixture({ a: 40, b: 40 }).map;
   const border = getSharedBorder(map, "A", "B");
   const cells = getCellsWithinBorderDepth(map, "B", border, 8);
@@ -349,6 +390,6 @@ test("border validator rejects disconnected remnants without mutating input", ()
   const row = Array.from({ length: 8 }, (_, i) => ({ x: 8 + i, y: 2 }));
   const validation = validateBorderAdvance(map, "A", "B", border, 8, row);
   assert.equal(validation.valid, false);
-  assert.equal(validation.reason, "TERRITORY_DISCONNECTED");
+  assert.equal(validation.reason, "AMBIGUOUS_RETAINED_COMPONENT");
   assert.equal(map.cells["8,2"], "B");
 });

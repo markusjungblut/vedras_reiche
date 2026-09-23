@@ -31,13 +31,20 @@ Important areas:
 
 - `packages/game-core`: authoritative, headless game domain.
 - `apps/web`: React/Vite visual/debug client; must remain a thin client over the core.
-- `apps/server`: reserved for the future authoritative multiplayer server.
+- `apps/server`: authoritative Node/WebSocket multiplayer server with room persistence.
+- `packages/protocol`: versioned transport DTOs shared by browser and server.
 - `docs/`: architecture and rule documentation.
 - `OPEN_QUESTIONS.md`: unresolved or explicitly resolved rule decisions.
 
-The long-term architecture is:
+The multiplayer architecture is:
 
-`Client -> authoritative Server -> Game Core`
+`Browser -> HTTP/WebSocket -> authoritative Server -> RoomManager -> Game Core`
+
+`RoomManager -> RoomStore -> FileRoomStore`
+
+Local mode is:
+
+`Browser -> LocalGameController -> Game Core`
 
 During local development, `apps/web` may call the Game Core directly. Do not mistake this development shortcut for the future multiplayer trust boundary.
 
@@ -102,17 +109,19 @@ Repository-root commands:
 ```bash
 npm run dev
 npm run dev:core
+npm run dev:multiplayer
 npm run build
 npm run typecheck
 npm test
+npm run test:e2e
 ```
 
 Current root behavior:
-- `npm run dev` builds `@vedras/game-core` and starts the web client.
+- `npm run dev` builds the Core and Protocol and starts the web client.
 - `npm run dev:core` starts the core TypeScript watch mode.
-- `npm run build` builds core and web.
-- `npm run typecheck` checks core and web.
-- `npm test` runs the Game Core tests.
+- `npm run dev:multiplayer` starts the authoritative server and web client together.
+- `npm run build`, `npm run typecheck`, and `npm test` cover Core, Protocol, Server, and Web.
+- `npm run test:e2e` runs the Playwright journeys against an isolated server and web client.
 
 During implementation:
 - run the narrowest relevant test first where practical;
@@ -147,7 +156,7 @@ Do not turn `AGENTS.md` into a changelog or implementation-status document. Dete
 
 ## Web client
 
-`apps/web` is primarily a visual/debug client until multiplayer is introduced.
+`apps/web` is the player client for local and authoritative multiplayer games. Local mode remains a development and pass-and-play shortcut.
 
 Requirements:
 - visible UI text may be German;

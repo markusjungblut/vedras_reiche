@@ -154,6 +154,21 @@ function spendWinnerBid(
   };
 }
 
+/** An unresolved highest tie consumes only its participating basic bids. */
+function exhaustTiedBasicBids(
+  players: readonly Player[], tiedPlayerIds: readonly PlayerId[], bids: Readonly<Record<PlayerId, NormalAuctionBid>>,
+): { readonly players: readonly Player[]; readonly refreshedPlayerIds: readonly PlayerId[] } {
+  const refreshedPlayerIds: PlayerId[] = [];
+  const nextPlayers = players.map((player) => {
+    if (!tiedPlayerIds.includes(player.id)) return player;
+    const remaining = player.availableBasicBids!.filter((value) => value !== bids[player.id]!.basicBid);
+    const refreshed = remaining.length === 0;
+    if (refreshed) refreshedPlayerIds.push(player.id);
+    return { ...player, availableBasicBids: refreshed ? [...BASIC_BIDS] : remaining };
+  });
+  return { players: nextPlayers, refreshedPlayerIds };
+}
+
 /** Submits one hidden bid and resolves atomically when the final player has bid. */
 export function submitNormalAuctionBid(
   state: GameState,
@@ -267,12 +282,24 @@ export function submitNormalAuctionBid(
     type: GameEventType.AuctionTiedMultiplePlayers,
     payload: { auctionId: auction.id, territoryId: auction.territoryId, playerIds: tiedPlayerIds, value: highest },
   });
+  const exhausted = exhaustTiedBasicBids(state.players, tiedPlayerIds, bids);
+  for (const playerId of tiedPlayerIds) {
+    descriptions.push({ type: GameEventType.BasicBidExhausted, actorId: playerId,
+      payload: { auctionId: auction.id, playerId, basicBid: bids[playerId]!.basicBid, reason: "UNRESOLVED_HIGHEST_TIE" } });
+    if (exhausted.refreshedPlayerIds.includes(playerId)) {
+      descriptions.push({ type: GameEventType.BasicBidsRefreshed, actorId: playerId,
+        payload: { playerId, availableBasicBids: BASIC_BIDS } });
+    }
+  }
+  descriptions.push({ type: GameEventType.AuctionResolved,
+    payload: { auctionId: auction.id, result: "UNRESOLVED_HIGHEST_TIE", tiedPlayerIds } });
   const secondAuctionAvailable = state.actionPhase.auctionsOpenedByActivePlayer === 1;
   if (secondAuctionAvailable) {
     descriptions.push({ type: GameEventType.SecondAuctionAvailable, payload: { previousAuctionId: auction.id } });
   }
   return appendEvents(state, timestamp, {
     ...withoutAuction,
+    players: exhausted.players,
     actionPhase: { ...state.actionPhase, secondAuctionAvailable },
   }, descriptions);
 }

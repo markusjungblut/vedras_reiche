@@ -14,7 +14,7 @@ import {
   type PlayerGameView,
   type RandomSource,
 } from "@vedras/game-core";
-import { NetworkErrorCode, type GameActionDto, type PublicRoomState } from "@vedras/protocol";
+import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, NetworkErrorCode, type GameActionDto, type PublicRoomState } from "@vedras/protocol";
 import {
   MAX_ACCEPTED_COMMANDS,
   PERSISTENCE_VERSION,
@@ -262,7 +262,7 @@ export class RoomManager {
         throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Player order must contain each current player exactly once.");
       }
       const selectedMap = mapConfig ?? room.map;
-      if (!isMapConfigValid(selectedMap)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Map dimensions must be positive integers.");
+      if (!isMapConfigValid(selectedMap)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, mapConfigurationMessage());
       const players = playerOrder.map((id) => ({ id, name: room.participants.get(id)!.name }));
       let state = createGameState({ gameId: room.roomId, players, startPlayerId: playerOrder[0]! });
       state = applyAction(state, { type: GameActionType.BeginMapCreation, firstPlayerId: firstMapDrawerPlayerId, map: selectedMap }, this.context()).state;
@@ -285,7 +285,7 @@ export class RoomManager {
       const room = session.room;
       if (session.participant.playerId !== room.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host can configure the map.");
       if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
-      if (!isMapConfigValid(map)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, "Map dimensions must be positive integers.");
+      if (!isMapConfigValid(map)) throw new RoomError(NetworkErrorCode.InvalidStartConfiguration, mapConfigurationMessage());
       const revision = room.revision + 1;
       const updatedAt = this.now();
       await this.persist(room, { map, revision, updatedAt });
@@ -456,7 +456,12 @@ function copyMap(map: GridMapConfig): GridMapConfig {
   return { width: map.width, height: map.height, ...(map.format === undefined ? {} : { format: map.format }) };
 }
 
-function isMapConfigValid(map: GridMapConfig): boolean {
+export function isMapConfigValid(map: GridMapConfig): boolean {
   return Number.isSafeInteger(map.width) && map.width > 0 && Number.isSafeInteger(map.height) && map.height > 0 &&
+    map.width <= MAX_MAP_WIDTH && map.height <= MAX_MAP_HEIGHT && map.width * map.height <= MAX_MAP_CELLS &&
     (map.format === undefined || map.format === "A4" || map.format === "A5");
+}
+
+function mapConfigurationMessage(): string {
+  return `Die Karte darf höchstens ${MAX_MAP_WIDTH} × ${MAX_MAP_HEIGHT} Zellen und insgesamt ${MAX_MAP_CELLS.toLocaleString("de-DE")} Zellen haben.`;
 }

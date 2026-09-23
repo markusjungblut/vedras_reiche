@@ -1,8 +1,11 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { readFile, realpath, stat } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import { extname, isAbsolute, relative, resolve } from "node:path";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import {
   NetworkErrorCode,
+  MAX_WEBSOCKET_PAYLOAD_BYTES,
   PROTOCOL_VERSION,
   type ClientMessage,
   type CreateRoomRequest,
@@ -19,6 +22,11 @@ export interface VedrasServerOptions {
   readonly roomManager: RoomManager;
   readonly port?: number;
   readonly webOrigins?: readonly string[];
+  /** Enables CORS for separately running development clients. Production uses one origin and leaves it off. */
+  readonly allowCrossOrigin?: boolean;
+  /** Directory containing the built Vite client. It is only served when explicitly configured. */
+  readonly staticDirectory?: string;
+  readonly production?: boolean;
   readonly logger?: (event: string, details: Readonly<Record<string, string | number | boolean>>) => void;
 }
 
@@ -36,13 +44,66 @@ interface SocketSession {
 }
 
 const DEFAULT_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"];
+const RESERVED_STATIC_PREFIXES = ["/api", "/ws", "/health", "/data"];
+const MIME_TYPES: Readonly<Record<string, string>> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
+  ".woff2": "font/woff2",
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isBoundedJson(value: unknown, depth = 0): boolean {
+  if (depth > 6) return false;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length <= 5_000 && value.every((item) => isBoundedJson(item, depth + 1));
+  return isRecord(value) && Object.keys(value).length <= 64 && Object.values(value).every((item) => isBoundedJson(item, depth + 1));
+}
+
+function isClientMessage(value: unknown): value is ClientMessage {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "PING") return Object.keys(value).length === 1;
+  if (value.type === "AUTHENTICATE") return typeof value.protocolVersion === "number" && Number.isSafeInteger(value.protocolVersion) &&
+    typeof value.roomId === "string" && value.roomId.length > 0 && value.roomId.length <= 32 &&
+    typeof value.sessionToken === "string" && value.sessionToken.length > 0 && value.sessionToken.length <= 256;
+  if (value.type === "GAME_COMMAND") return typeof value.commandId === "string" && value.commandId.trim().length > 0 && value.commandId.length <= 160 &&
+    isRecord(value.action) && typeof value.action.type === "string" && value.action.type.length > 0 && value.action.type.length <= 100 &&
+    Object.keys(value.action).length <= 64 && isBoundedJson(value.action);
+  return false;
+}
+
+function rawDataSize(data: RawData): number {
+  if (Array.isArray(data)) return data.reduce((size, chunk) => size + chunk.length, 0);
+  if (data instanceof ArrayBuffer) return data.byteLength;
+  return data.length;
+}
 
 function parseMessage(data: RawData): ClientMessage | undefined {
+  if (rawDataSize(data) > MAX_WEBSOCKET_PAYLOAD_BYTES) return undefined;
   try {
     const parsed = JSON.parse(data.toString()) as unknown;
-    return parsed !== null && typeof parsed === "object" && "type" in parsed ? parsed as ClientMessage : undefined;
+    return isClientMessage(parsed) ? parsed : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function applySecurityHeaders(response: ServerResponse, production: boolean): void {
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (production) {
+    response.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self'");
   }
 }
 
@@ -54,6 +115,19 @@ function writeJson(response: ServerResponse, status: number, payload: unknown, o
     response.setHeader("Vary", "Origin");
   }
   response.end(JSON.stringify(payload));
+}
+
+function isReservedStaticPath(pathname: string): boolean {
+  return RESERVED_STATIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const difference = relative(root, candidate);
+  return difference === "" || (!difference.startsWith("..") && !isAbsolute(difference));
+}
+
+function staticContentType(filePath: string): string {
+  return MIME_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
@@ -93,31 +167,100 @@ function errorPayload(error: unknown): { code: NetworkErrorCode; message: string
   return { code: NetworkErrorCode.InvalidMessage, message: "The request could not be processed." };
 }
 
+async function serveStaticFile(request: IncomingMessage, response: ServerResponse, pathname: string, staticDirectory: string): Promise<void> {
+  let decodedPathname: string;
+  try {
+    decodedPathname = decodeURIComponent(pathname);
+  } catch {
+    writeJson(response, 400, { code: NetworkErrorCode.InvalidMessage, message: "Invalid path." });
+    return;
+  }
+  if (decodedPathname.includes("\0")) {
+    writeJson(response, 400, { code: NetworkErrorCode.InvalidMessage, message: "Invalid path." });
+    return;
+  }
+
+  let root: string;
+  try {
+    root = await realpath(staticDirectory);
+  } catch {
+    writeJson(response, 503, { code: NetworkErrorCode.PersistenceFailed, message: "Web client is unavailable." });
+    return;
+  }
+
+  const requested = resolve(root, `.${decodedPathname}`);
+  if (!isPathInside(root, requested)) {
+    writeJson(response, 403, { code: NetworkErrorCode.OriginNotAllowed, message: "Path is not allowed." });
+    return;
+  }
+
+  let filePath = requested;
+  let spaFallback = decodedPathname === "/";
+  try {
+    const resolved = await realpath(requested);
+    const details = await stat(resolved);
+    if (!details.isFile() || !isPathInside(root, resolved)) throw new Error("not a static file");
+    filePath = resolved;
+  } catch {
+    if (extname(decodedPathname) !== "") {
+      writeJson(response, 404, { code: NetworkErrorCode.RoomNotFound, message: "Static file not found." });
+      return;
+    }
+    spaFallback = true;
+    filePath = resolve(root, "index.html");
+  }
+
+  try {
+    const resolved = await realpath(filePath);
+    const details = await stat(resolved);
+    if (!details.isFile() || !isPathInside(root, resolved)) throw new Error("static file is outside the web build");
+    response.statusCode = 200;
+    response.setHeader("Content-Type", staticContentType(resolved));
+    if (!spaFallback && decodedPathname.startsWith("/assets/")) response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    else response.setHeader("Cache-Control", "no-cache");
+    if (request.method === "HEAD") response.end();
+    else response.end(await readFile(resolved));
+  } catch {
+    writeJson(response, 503, { code: NetworkErrorCode.PersistenceFailed, message: "Web client is unavailable." });
+  }
+}
+
 export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
   const allowedOrigins = new Set(options.webOrigins ?? DEFAULT_ORIGINS);
-  const log = options.logger ?? ((event, details) => process.stdout.write(JSON.stringify({ event, ...details }) + "\n"));
+  const log = options.logger ?? ((event, details) => process.stdout.write(JSON.stringify({ timestamp: new Date().toISOString(), event, ...details }) + "\n"));
   const isAllowedOrigin = (origin: string | undefined): origin is string => origin === undefined || allowedOrigins.has(origin);
+  const corsOrigin = (origin: string | undefined): string | undefined => options.allowCrossOrigin === true && origin !== undefined ? origin : undefined;
+  let shuttingDown = false;
   const httpServer = createServer(async (request, response) => {
     const origin = request.headers.origin;
+    applySecurityHeaders(response, options.production === true);
+    if (shuttingDown) {
+      writeJson(response, 503, { code: NetworkErrorCode.PersistenceFailed, message: "Server is shutting down." });
+      return;
+    }
     if (!isAllowedOrigin(origin)) {
       writeJson(response, 403, { code: NetworkErrorCode.OriginNotAllowed, message: "Origin is not allowed." });
       return;
     }
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
-      if (origin !== undefined) response.setHeader("Access-Control-Allow-Origin", origin);
-      response.setHeader("Access-Control-Allow-Headers", "Content-Type");
-      response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      const cors = corsOrigin(origin);
+      if (cors !== undefined) {
+        response.setHeader("Access-Control-Allow-Origin", cors);
+        response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+        response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        response.setHeader("Vary", "Origin");
+      }
       response.end();
       return;
     }
     const url = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && url.pathname === "/health") {
       writeJson(response, options.roomManager.isStorageHealthy() ? 200 : 503, {
-        status: options.roomManager.isStorageHealthy() ? "ok" : "degraded",
+        status: options.roomManager.isStorageHealthy() ? "ok" : "error",
         storage: options.roomManager.isStorageHealthy() ? "ok" : "error",
         protocolVersion: PROTOCOL_VERSION,
-      }, origin);
+      }, corsOrigin(origin));
       return;
     }
     try {
@@ -126,7 +269,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         if (!bodyHasPlayerName(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
         const { room, participant, sessionToken } = await options.roomManager.createRoom(body.playerName);
         log("room_created", { roomId: room.roomId, playerId: participant.playerId });
-        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, origin);
+        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, corsOrigin(origin));
         return;
       }
       const joinMatch = /^\/api\/rooms\/([^/]+)\/join$/.exec(url.pathname);
@@ -136,7 +279,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         const { room, participant, sessionToken } = await options.roomManager.joinRoom(decodeURIComponent(joinMatch[1]), body.playerName);
         log("player_joined", { roomId: room.roomId, playerId: participant.playerId });
         broadcastRoom(options.roomManager, room);
-        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, origin);
+        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, corsOrigin(origin));
         return;
       }
       const startMatch = /^\/api\/rooms\/([^/]+)\/start$/.exec(url.pathname);
@@ -148,7 +291,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         );
         log("game_started", { roomId: room.roomId, playerCount: room.participants.size });
         broadcastRoom(options.roomManager, room);
-        writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, origin);
+        writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, corsOrigin(origin));
         return;
       }
       const mapMatch = /^\/api\/rooms\/([^/]+)\/map$/.exec(url.pathname);
@@ -157,27 +300,36 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         if (!bodyIsUpdateMapRequest(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "Map configuration is invalid.");
         const room = await options.roomManager.updateMap(decodeURIComponent(mapMatch[1]), body.sessionToken, body.map);
         broadcastRoom(options.roomManager, room);
-        writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, origin);
+        writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, corsOrigin(origin));
         return;
       }
-      writeJson(response, 404, { code: NetworkErrorCode.RoomNotFound, message: "Route not found." }, origin);
+      if (isReservedStaticPath(url.pathname)) {
+        writeJson(response, 404, { code: NetworkErrorCode.RoomNotFound, message: "Route not found." }, corsOrigin(origin));
+        return;
+      }
+      if ((request.method === "GET" || request.method === "HEAD") && options.staticDirectory !== undefined) {
+        await serveStaticFile(request, response, url.pathname, options.staticDirectory);
+        return;
+      }
+      writeJson(response, 404, { code: NetworkErrorCode.RoomNotFound, message: "Route not found." }, corsOrigin(origin));
     } catch (error) {
       const payload = errorPayload(error);
       const status = payload.code === NetworkErrorCode.PersistenceFailed ? 500 : payload.code === NetworkErrorCode.RoomNotFound ? 404 :
         payload.code === NetworkErrorCode.RoomAlreadyStarted || payload.code === NetworkErrorCode.RoomFull ? 409 : 400;
-      writeJson(response, status, payload, origin);
+      if (!(error instanceof RoomError)) log("request_failed", { route: url.pathname, code: payload.code });
+      writeJson(response, status, payload, corsOrigin(origin));
     }
   });
 
-  const websocketServer = new WebSocketServer({ noServer: true });
+  const websocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_WEBSOCKET_PAYLOAD_BYTES });
   const socketSessions = new Map<WebSocket, SocketSession>();
   const alive = new Map<WebSocket, boolean>();
 
   httpServer.on("upgrade", (request, socket, head) => {
     const origin = request.headers.origin;
     const url = new URL(request.url ?? "/", "http://localhost");
-    if (!isAllowedOrigin(origin) || url.pathname !== "/ws") {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+    if (shuttingDown || !isAllowedOrigin(origin) || url.pathname !== "/ws") {
+      socket.write(`HTTP/1.1 ${shuttingDown ? "503 Service Unavailable" : "403 Forbidden"}\r\n\r\n`);
       socket.destroy();
       return;
     }
@@ -194,8 +346,13 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         if (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING) websocket.close(code, reason);
       },
     };
+    websocket.on("error", () => log("websocket_error", { reason: "invalid_payload" }));
     websocket.on("pong", () => alive.set(websocket, true));
     websocket.on("message", async (data) => {
+      if (shuttingDown) {
+        connection.close(1001, "Server is shutting down.");
+        return;
+      }
       const message = parseMessage(data);
       if (message === undefined) {
         sendError(connection, NetworkErrorCode.InvalidMessage, "Message must be valid JSON.");
@@ -290,14 +447,32 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
   httpServer.listen(configuredPort);
   const address = httpServer.address() as AddressInfo | null;
   const port = address?.port ?? configuredPort;
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    if (closing !== undefined) return closing;
+    shuttingDown = true;
+    clearInterval(heartbeat);
+    for (const websocket of websocketServer.clients) websocket.close(1001, "Server is shutting down.");
+    const forcedTermination = setTimeout(() => {
+      for (const websocket of websocketServer.clients) websocket.terminate();
+    }, 5_000);
+    forcedTermination.unref();
+    closing = new Promise((resolveClose, rejectClose) => {
+      websocketServer.close((websocketError) => {
+        clearTimeout(forcedTermination);
+        httpServer.close((httpError) => {
+          const error = websocketError ?? httpError;
+          if (error === undefined) resolveClose();
+          else rejectClose(error);
+        });
+      });
+    });
+    return closing;
+  };
   return {
     httpServer,
     port,
-    close: () => new Promise((resolve, reject) => {
-      clearInterval(heartbeat);
-      websocketServer.close();
-      httpServer.close((error) => error === undefined ? resolve() : reject(error));
-    }),
+    close,
   };
 }
 

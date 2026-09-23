@@ -81,7 +81,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .territory-badges { display: flex; gap: 5px; }
 .territory-badges span, .status-chip, .role-chip { padding: 3px 7px; border-radius: 999px; background: #26395f; color: #c0d0ee; font-size: 10px; }
 .territory-influence { padding-top: 4px; border-top: 1px solid #263657; }
-.raster-map-wrap { display: grid; gap: 8px; }
+.raster-map-wrap { display: grid; gap: 8px; overscroll-behavior: contain; }
 .map-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .map-controls .secondary-button { padding: 6px 10px; }
 .map-legend { margin-left: auto; color: #9fb2d7; font-size: 12px; }
@@ -145,6 +145,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media (max-width: 1000px) { .main-grid { grid-template-columns: minmax(0, 1fr); }.sidebar-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }.toolbar { flex-wrap: wrap; }.toolbar .field { margin-left: 0; }.territory-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 650px) { .game-header { padding: 18px; }.dashboard { width: calc(100vw - 20px); }.board-column, .action-panel, .event-panel, .details-panel, .player-panel { padding: 14px; }.territory-grid, .sidebar-column, .lower-grid, .scenario-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.sidebar-column, .lower-grid { grid-template-columns: minmax(0, 1fr); }.territory-card { min-height: 130px; }.territory-number { font-size: 23px; }.split-cell { min-width: 0; }.number-fields { grid-template-columns: minmax(0, 1fr); } }
 .map-cell-corridor { fill: #eac78d !important; cursor: pointer; }
+.map-cell-annexed, .map-cell-annexed:hover { fill: #5d9ca5 !important; stroke: #d6ffff; stroke-width: .06; }
 .map-cell-war-attacker { stroke: #f8d88e; stroke-width: .06; }
 .map-cell-war-defender { stroke: #f18a85; stroke-width: .06; }
 .territory-card.is-war-locked { outline: 1px solid #e6a978; }

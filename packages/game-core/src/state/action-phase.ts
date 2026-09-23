@@ -16,8 +16,10 @@ export interface PotentialBasicActions {
   readonly canStartWar: boolean;
 }
 
+export type ActionTargetReadState = Pick<GameState, "map" | "territories">;
+
 /** Returns legal neutral targets for an opener without deciding the action itself. */
-export function getPotentialAuctionTerritoryIds(state: GameState, playerId: PlayerId): TerritoryId[] {
+export function getPotentialAuctionTerritoryIds(state: ActionTargetReadState, playerId: PlayerId): TerritoryId[] {
   const own = state.territories.filter((territory) => territory.ownerId === playerId);
   return state.territories
     .filter((target) => target.ownerId === null && own.some((source) =>
@@ -31,7 +33,7 @@ export interface PotentialWarTarget {
 }
 
 /** Returns only pairs that may still fight this round. */
-export function getPotentialWarTargets(state: GameState, playerId: PlayerId): PotentialWarTarget[] {
+export function getPotentialWarTargets(state: ActionTargetReadState, playerId: PlayerId): PotentialWarTarget[] {
   const own = state.territories.filter((territory) => territory.ownerId === playerId && !territory.participatedInWarThisRound);
   const opponents = state.territories.filter((territory) => territory.ownerId !== null && territory.ownerId !== playerId && !territory.participatedInWarThisRound);
   return own.flatMap((attacker) => opponents
@@ -39,7 +41,7 @@ export function getPotentialWarTargets(state: GameState, playerId: PlayerId): Po
     .map((defender) => ({ attackerTerritoryId: attacker.id, defenderTerritoryId: defender.id })));
 }
 
-export function getPotentialBasicActions(state: GameState, playerId: PlayerId): PotentialBasicActions {
+export function getPotentialBasicActions(state: ActionTargetReadState, playerId: PlayerId): PotentialBasicActions {
   return {
     canOpenAuction: getPotentialAuctionTerritoryIds(state, playerId).length > 0,
     canStartWar: getPotentialWarTargets(state, playerId).length > 0,

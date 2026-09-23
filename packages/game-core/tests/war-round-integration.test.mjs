@@ -53,7 +53,7 @@ test("three-player round combines activation, auction, spade war, border gain an
   round = act(round, { type: GameActionType.SetWarSpadeChoice, warId, playerId: "C",
     spadeActivationId: null }, new Dice(3, 3));
   assert.equal(round.pendingWar.combat.difference, 2);
-  assert.equal(round.pendingWar.maximumDepth, 2);
+  assert.equal(round.pendingWar.maximumDepth, 1);
   round = act(round, { type: GameActionType.ProposeBorderAdvance, warId, playerId: "B",
     claimedCells: [{ x: 24, y: 0 }] });
   assert.equal(round.map.cells["24,0"], "B");

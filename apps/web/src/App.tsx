@@ -30,7 +30,6 @@ import {
   type ActivationChoice,
   type GameAction,
   type GameState,
-  type PlayerGameView,
   type Territory,
   type GridCell,
 } from "@vedras/game-core";
@@ -51,15 +50,19 @@ import { SeededRandomSource } from "./debug/seeded-random-source";
 import { LocalGameController, type GameController } from "./controllers/game-controller";
 import { RemoteGameController, type MultiplayerCredentials, type RemoteConnectionStatus } from "./controllers/remote-game-controller";
 import { mergeDraftEdges } from "./map/setup-draft";
-import type { PublicRoomState } from "@vedras/protocol";
+import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, type PublicRoomState } from "@vedras/protocol";
 import { FirstGameHint } from "./components/FirstGameHint";
 import { HelpDrawer } from "./components/HelpDrawer";
 import { IntroductionTour } from "./components/IntroductionTour";
 import { formatDomainError, type RuleHelpId } from "./help/rule-help";
 import { loadTutorialProgress, markIntroductionSeen, markTutorialSeen, resetTutorialProgress, type TutorialStep } from "./help/tutorial-state";
+import type { GameReadModel } from "./game-read-model";
 
 const DEFAULT_SEED = 12345;
 const SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL ?? window.location.origin;
+/** Production keeps these out of the normal player journey; `?developer=1` is an intentional local diagnosis mode. */
+const DEVELOPER_TOOLS_ENABLED = import.meta.env.DEV || new URLSearchParams(window.location.search).has("developer");
+const BUILD_ID = __VEDRAS_BUILD_ID__;
 const MULTIPLAYER_SESSIONS_KEY = "vedras-reiche-multiplayer-sessions";
 const MULTIPLAYER_LAST_ROOM_KEY = "vedras-reiche-last-multiplayer-room";
 const SCENARIOS: readonly { kind: ScenarioKind; label: string; detail: string }[] = [
@@ -189,11 +192,29 @@ function nextTimestamp(state: GameState): string {
   return new Date(Date.UTC(2026, 0, 1) + state.events.length * 1000).toISOString();
 }
 
-function playerName(state: GameState, id: string): string {
+function isTechnicallyValidMapSize(map: { readonly width: number; readonly height: number }): boolean {
+  return Number.isSafeInteger(map.width) && map.width > 0 && map.width <= MAX_MAP_WIDTH &&
+    Number.isSafeInteger(map.height) && map.height > 0 && map.height <= MAX_MAP_HEIGHT &&
+    map.width * map.height <= MAX_MAP_CELLS;
+}
+
+function mapSizeError(): string {
+  return `Die Karte darf höchstens ${MAX_MAP_WIDTH} × ${MAX_MAP_HEIGHT} Zellen und insgesamt ${MAX_MAP_CELLS.toLocaleString("de-DE")} Zellen haben.`;
+}
+
+function projectedViewerFactionSuit(state: GameReadModel | undefined): Suit | undefined {
+  return state !== undefined && "viewerSecretFactionSuit" in state ? state.viewerSecretFactionSuit : undefined;
+}
+
+function projectedFactionSuits(state: GameReadModel | undefined): Readonly<Partial<Record<string, Suit>>> | undefined {
+  return state !== undefined && "revealedFactionSuitsByPlayerId" in state ? state.revealedFactionSuitsByPlayerId : undefined;
+}
+
+function playerName(state: GameReadModel, id: string): string {
   return state.players.find((player) => player.id === id)?.name ?? id;
 }
 
-function neighboringTerritories(state: GameState, source: Territory): Territory[] {
+function neighboringTerritories(state: GameReadModel, source: Territory): Territory[] {
   const adjacent = new Set(getStateAdjacentTerritoryIds(state, source.id));
   return state.territories.filter((territory) => adjacent.has(territory.id));
 }
@@ -202,9 +223,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="field"><span>{label}</span>{children}</label>;
 }
 
-function SecretFactionPanel({ state, playerId, visible, onVisibleChange, localPassAndPlay, onPlayerChange }: {
-  state: GameState;
+function SecretFactionPanel({ state, playerId, factionSuit, visible, onVisibleChange, localPassAndPlay, onPlayerChange }: {
+  state: GameReadModel;
   playerId?: string | undefined;
+  factionSuit?: Suit | undefined;
   visible: boolean;
   onVisibleChange: (visible: boolean) => void;
   localPassAndPlay: boolean;
@@ -212,20 +234,20 @@ function SecretFactionPanel({ state, playerId, visible, onVisibleChange, localPa
 }) {
   if (state.phase === GamePhase.Finished) return null;
   const player = state.players.find((item) => item.id === playerId) ?? state.players[0];
-  if (!player?.secretFactionSuit) return null;
+  if (!player || !factionSuit) return null;
   return <section className="panel secret-faction-panel" aria-label="Eigene geheime Fraktion">
     <div className="panel-heading"><div><p className="eyebrow">Persönlich</p><h2>Geheime Fraktion</h2></div></div>
     {localPassAndPlay && <Field label="Bildschirm für"><select value={player.id} onChange={(event) => { onPlayerChange(event.target.value); onVisibleChange(false); }}>
       {state.players.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
     </select></Field>}
     {!visible ? <><p>Nur {player.name} kann diese Information sehen.</p><button type="button" className="primary-button" onClick={() => onVisibleChange(true)}>Fraktion anzeigen</button></>
-      : <><p className="secret-faction">{suitSymbol(player.secretFactionSuit)} {suitName(player.secretFactionSuit).toUpperCase()}</p>
+      : <><p className="secret-faction">{suitSymbol(factionSuit)} {suitName(factionSuit).toUpperCase()}</p>
         <button type="button" className="secondary-button" onClick={() => onVisibleChange(false)}>Fraktion verbergen</button></>}
   </section>;
 }
 
 interface ControlProps {
-  readonly state: GameState;
+  readonly state: GameReadModel;
   readonly actionTerritoryId?: string | undefined;
   readonly onSelectActionTerritory: (id: string) => void;
   readonly onAction: (action: GameAction) => void;
@@ -246,6 +268,7 @@ interface ControlProps {
   readonly onSetFactionVisible?: (visible: boolean) => void;
   readonly selectedPart?: "A" | "B" | undefined;
   readonly onSelectPart?: (part: "A" | "B") => void;
+  readonly factionSuits?: Readonly<Partial<Record<string, Suit>>> | undefined;
 }
 
 function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlProps, "state" | "onAction" | "viewerPlayerId">) {
@@ -696,7 +719,7 @@ function PhaseControls(props: ControlProps) {
     case GamePhase.Scoring:
       return <ScoringPanel state={state} playerName={name} onAction={onAction} />;
     case GamePhase.Finished:
-      return <ResultPanel state={state} playerName={name} />;
+      return <ResultPanel state={state} playerName={name} factionSuits={props.factionSuits} />;
   }
 }
 
@@ -708,11 +731,10 @@ export default function App() {
   const [showDebugScenarios, setShowDebugScenarios] = useState(false);
   const [newGamePlayers, setNewGamePlayers] = useState<readonly NewGamePlayerInput[]>(DEFAULT_PLAYERS);
   const [firstMapDrawerKey, setFirstMapDrawerKey] = useState(DEFAULT_PLAYERS[0]!.key);
-  const [view, setView] = useState<PlayerGameView | null>(null);
+  const [view, setView] = useState<GameReadModel | null>(null);
   const [selectedTerritoryId, setSelectedTerritoryId] = useState<string | undefined>();
   const [actionTerritoryId, setActionTerritoryId] = useState<string | undefined>();
   const [partChoiceDraft, setPartChoiceDraft] = useState<{ readonly key: string; readonly part: "A" | "B" } | undefined>();
-  const [showHidden, setShowHidden] = useState(false);
   const [showScoreLabels, setShowScoreLabels] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [splitDraft, setSplitDraft] = useState<SplitDraft | null>(null);
@@ -739,9 +761,7 @@ export default function App() {
   const unsubscribeController = useRef<(() => void) | null>(null);
   const newSeatIndex = useRef(4);
 
-  // Render helpers still use the established GameState-shaped component API.
-  // In remote mode this value originates solely from PlayerGameView.
-  const state = view as GameState | null;
+  const state: GameReadModel | null = view;
 
   useEffect(() => {
     const clearInformationalSelection = (event: KeyboardEvent) => {
@@ -903,6 +923,10 @@ export default function App() {
       setError("Breite und Höhe müssen positive ganze Zahlen sein.");
       return;
     }
+    if (!isTechnicallyValidMapSize(lobbyMap)) {
+      setError(mapSizeError());
+      return;
+    }
     if (!multiplayerConnected) return;
     try {
       await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/map`, {
@@ -1001,6 +1025,14 @@ export default function App() {
   const reset = () => {
     if (scenario && window.confirm("Aktuelles Demo-Spiel wirklich zurücksetzen?")) loadScenario(scenario, seed);
   };
+  const viewerPlayerId = multiplayer?.playerId ?? privacyPlayerId;
+  const viewerFactionSuit = multiplayer ? projectedViewerFactionSuit(state ?? undefined)
+    : viewerPlayerId === undefined ? undefined : controller.current?.getLocalSecretFaction?.(viewerPlayerId);
+  const factionSuits = multiplayer ? projectedFactionSuits(state ?? undefined) : state === null ? undefined
+    : Object.fromEntries(state.players.flatMap((player) => {
+      const factionSuit = controller.current?.getLocalSecretFaction?.(player.id);
+      return factionSuit === undefined ? [] : [[player.id, factionSuit]];
+    }));
   const name = (id: string) => state ? playerName(state, id) : id;
   const toggleTerritorySelection = (territoryId: string) => {
     setSelectedTerritoryId((current) => current === territoryId ? undefined : territoryId);
@@ -1177,7 +1209,7 @@ export default function App() {
         <button type="button" className="primary-button" onClick={() => setShowMultiplayer(true)}>Mehrspieler</button>
         <button type="button" className="secondary-button" onClick={() => setShowNewGameConfig(true)}>Lokales Testspiel</button>
         <button type="button" className="secondary-button" onClick={() => setShowIntroduction(true)}>Spiel erklären</button>
-        <button type="button" className="text-button" onClick={() => setShowDebugScenarios(true)}>Debug-Szenarien</button>
+        {DEVELOPER_TOOLS_ENABLED && <button type="button" className="text-button" onClick={() => setShowDebugScenarios(true)}>Debug-Szenarien</button>}
       </div>}
       {showMultiplayer && <section className="new-game-config panel multiplayer-panel">
         <div className="panel-heading"><div><span className="section-kicker">Mehrspieler</span><h2>{multiplayerRoom ? `Raum ${multiplayerRoom.roomId}` : "Gemeinsame Partie"}</h2></div>
@@ -1206,12 +1238,12 @@ export default function App() {
           })}</div>
           {multiplayerRoom.hostPlayerId === multiplayer?.playerId ? <>
             <div className="number-fields">
-              <Field label="Kartenbreite"><input type="number" min="1" step="1" value={lobbyMap.width}
+              <Field label="Kartenbreite"><input type="number" min="1" max={MAX_MAP_WIDTH} step="1" value={lobbyMap.width}
                 disabled={!multiplayerConnected} onChange={(event) => setLobbyMap((current) => ({ ...current, width: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
-              <Field label="Kartenhöhe"><input type="number" min="1" step="1" value={lobbyMap.height}
+              <Field label="Kartenhöhe"><input type="number" min="1" max={MAX_MAP_HEIGHT} step="1" value={lobbyMap.height}
                 disabled={!multiplayerConnected} onChange={(event) => setLobbyMap((current) => ({ ...current, height: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
             </div>
-            <small>Aktuelle Karte: {lobbyMap.width} × {lobbyMap.height} · Mindestgebiet: {Number.isSafeInteger(lobbyMap.width) && Number.isSafeInteger(lobbyMap.height) && lobbyMap.width > 0 && lobbyMap.height > 0 ? getMinimumTerritoryArea(lobbyMap) : "—"}</small>
+            <small>Aktuelle Karte: {lobbyMap.width} × {lobbyMap.height} · Mindestgebiet: {isTechnicallyValidMapSize(lobbyMap) ? getMinimumTerritoryArea(lobbyMap) : "—"} · technisch maximal {MAX_MAP_CELLS.toLocaleString("de-DE")} Zellen</small>
             <Field label="Erster Kartenzeichner"><select value={firstMultiplayerDrawerId ?? ""} disabled={!multiplayerConnected} onChange={(event) => setFirstMultiplayerDrawerId(event.target.value)}>{lobbyOrder.map((playerId) => {
               const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
               return player ? <option key={playerId} value={playerId}>{player.name}</option> : null;
@@ -1247,7 +1279,7 @@ export default function App() {
           <button type="button" className="primary-button" onClick={startConfiguredGame}>Kartenbau starten</button>
         </div>
       </section>}
-      {showDebugScenarios && <section className="debug-welcome">
+      {DEVELOPER_TOOLS_ENABLED && showDebugScenarios && <section className="debug-welcome">
         <div className="panel-heading"><div><span className="section-kicker">Debug-Szenarien</span><h2>Schnelle Testzustände</h2></div><button type="button" className="text-button" onClick={() => setShowDebugScenarios(false)}>Schließen</button></div>
         <Field label="Debug-Seed"><input type="number" min="0" step="1" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} /></Field>
         <div className="scenario-grid">{SCENARIOS.map((item) => <button type="button" key={item.kind} className="scenario-tile" onClick={() => startSelectedScenario(item.kind)}><strong>{item.label}</strong><span>{item.detail}</span></button>)}</div>
@@ -1308,26 +1340,25 @@ export default function App() {
                 setupDraft={setupDraft} onSetSetupDraft={setSetupDraft} setupValidationIssues={setupValidationIssues} setupCanEdit={setupCanEdit}
                 privacyPlayerId={privacyPlayerId} viewerPlayerId={multiplayer?.playerId} factionVisible={factionVisible}
                 onSetPrivacyPlayerId={setPrivacyPlayerId} onSetFactionVisible={setFactionVisible}
+                factionSuits={factionSuits}
                 selectedPart={currentPartChoice?.selectedPart} onSelectPart={(part) => currentPartChoice && setPartChoiceDraft({ key: currentPartChoice.key, part })} /></fieldset>
               <RecentWarResult state={state} /></ActionPanel>
-            <SecretFactionPanel state={state} playerId={multiplayer?.playerId ?? privacyPlayerId} visible={factionVisible}
+            <SecretFactionPanel state={state} playerId={viewerPlayerId} factionSuit={viewerFactionSuit} visible={factionVisible}
               onVisibleChange={setFactionVisible} localPassAndPlay={!multiplayer} onPlayerChange={setPrivacyPlayerId} />
             <PlayerPanel state={state} playerName={name} viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} />
             {selectedTerritoryId && <TerritoryDetails state={state} territoryId={selectedTerritoryId} playerName={name} />}
             <EventLog events={state.events} playerName={name} />
           </div>
         </div>
-        {!multiplayer && <div className="inspector-row panel">
-          <label className="debug-toggle"><input type="checkbox" checked={showHidden}
-            onChange={(event) => setShowHidden(event.target.checked)} /> Verdeckte Informationen anzeigen</label>
-          <StateInspector state={state} showHidden={showHidden} />
+        {DEVELOPER_TOOLS_ENABLED && !multiplayer && <div className="inspector-row panel">
+          <StateInspector state={state} />
           <button type="button" className="text-button" onClick={() => dispatch({
             type: GameActionType.OpenAuction, playerId: "__ungueltig__", territoryId: state.territories[0]?.id ?? "",
           })}>Ungültige Aktion testen</button>
         </div>}
       </main>
       <HelpDrawer state={state} viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} open={helpOpen} initialTopic={helpTopic}
-        onClose={() => setHelpOpen(false)} onReplayIntroduction={replayIntroduction} onResetTutorial={resetTutorial} />
+        onClose={() => setHelpOpen(false)} onReplayIntroduction={replayIntroduction} onResetTutorial={resetTutorial} buildId={BUILD_ID} />
     </>}
     <IntroductionTour open={showIntroduction} onComplete={completeIntroduction} />
   </div>;

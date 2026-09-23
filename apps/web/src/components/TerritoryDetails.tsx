@@ -1,8 +1,9 @@
-import { getPointOfInterestTerritory, getStateAdjacentTerritoryIds, getStateTerritoryArea, type GameState } from "@vedras/game-core";
+import { getPointOfInterestTerritory, getStateAdjacentTerritoryIds, getStateTerritoryArea } from "@vedras/game-core";
+import type { GameReadModel } from "../game-read-model";
 import { suitClass, suitName, suitSymbol } from "../formatters/suit-label";
 
 interface TerritoryDetailsProps {
-  state: GameState;
+  state: GameReadModel;
   territoryId: string | undefined;
   playerName: (id: string) => string;
 }

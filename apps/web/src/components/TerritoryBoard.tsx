@@ -7,7 +7,6 @@ import {
   getStateTerritoryArea,
   getTerritoryCells,
   mapScreenPointToLocal,
-  type GameState,
   type Territory,
   type GridCell,
   type SetupBorderEdge,
@@ -16,9 +15,10 @@ import { suitClass, suitName, suitSymbol } from "../formatters/suit-label";
 import type { MapEditor } from "./WarControls";
 import { createPenStroke, setupBorderEdgeToSegment, type GridVertex } from "../map/setup-draft";
 import { getCellLabelAnchor, getTerritoryLabelAnchor } from "../map/territory-label-anchor";
+import type { GameReadModel } from "../game-read-model";
 
 interface TerritoryBoardProps {
-  state: GameState;
+  state: GameReadModel;
   selectedId: string | undefined;
   onSelect: (territoryId: string) => void;
   onClearSelection: () => void;
@@ -130,6 +130,8 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
         : editor ? editor.mode === "CUT"
         ? editor.selectable.length > 0 ? "Teilung: Klicke Zellen des Verlierergebiets, um Teil A zu formen."
           : "Die vorgeschlagenen Teile A und B sind auf der Karte markiert. Wähle den gewünschten Teil direkt auf der Karte oder im Aktionsbereich."
+        : editor.annexedDisconnectedCells.length > 0
+        ? "Grenzeditor: Ocker zeigt den direkten Vorstoß, türkis abgeschnittenes Land, das automatisch annektiert wird."
         : "Grenzeditor: Klicke markierte Korridorzellen, um sie zu übertragen."
         : state.pendingSplit ? state.pendingSplit.stage === "AWAITING_CHOICE"
         ? "Teil A (ocker) und Teil B (blau) sind bestätigt. Die zuerst wählende Person entscheidet im Aktionsbereich."
@@ -157,7 +159,7 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
 }
 
 interface RasterMapProps {
-  readonly state: GameState;
+  readonly state: GameReadModel;
   readonly selectedId: string | undefined;
   readonly onSelect: (territoryId: string) => void;
   readonly onClearSelection: () => void;
@@ -187,6 +189,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [hovered, setHovered] = useState<string>();
+  const svgRef = useRef<SVGSVGElement>(null);
   const panPointer = useRef<{ readonly pointerId: number; readonly clientX: number; readonly clientY: number; readonly pan: { readonly x: number; readonly y: number } } | undefined>(undefined);
   const setupPointer = useRef<{ readonly pointerId: number; readonly points: GridVertex[] } | undefined>(undefined);
   const activeId = hovered ?? selectedId;
@@ -236,6 +239,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
   }) : [];
   const editorAllowed = new Set(editor?.selectable.map((cell) => `${cell.x},${cell.y}`) ?? []);
   const editorSelected = new Set(editor?.selected.map((cell) => `${cell.x},${cell.y}`) ?? []);
+  const editorAnnexed = new Set(editor?.annexedDisconnectedCells.map((cell) => `${cell.x},${cell.y}`) ?? []);
   const setupAllowed = new Set(setupEditor?.selectable.map((cell) => `${cell.x},${cell.y}`) ?? []);
   const previewRegionIndexByCell = new Map<string, number>();
   setupEditor?.previewRegions?.forEach((region, index) => region.cells.forEach((cell) => previewRegionIndexByCell.set(`${cell.x},${cell.y}`, index)));
@@ -266,6 +270,18 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       y: Math.min(nextBaseY, Math.max(-nextBaseY, nextViewY - nextBaseY)),
     });
   };
+  useEffect(() => {
+    const element = svgRef.current;
+    if (element === null) return undefined;
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setZoomAround(zoom + (event.deltaY < 0 ? .16 : -.16), {
+        currentTarget: element, clientX: event.clientX, clientY: event.clientY,
+      });
+    };
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    return () => element.removeEventListener("wheel", handleWheel);
+  }, [zoom, pan, viewX, viewY, viewportWidth, viewportHeight, width, height]);
   useEffect(() => {
     if (focusTerritoryId === undefined) return;
     const anchor = getTerritoryLabelAnchor(map, focusTerritoryId);
@@ -303,14 +319,10 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       <button type="button" className="secondary-button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Auf Karte einpassen</button>
       <span className="map-legend">{Math.round(zoom * 100)} % · mittlere Maustaste zum Verschieben{activeId ? ` · ${activeId}${hovered ? " Hover" : " ausgewählt"}` : ""}</span>
     </div>
-    <svg className={`raster-map ${split || editor || setupEditor ? "is-splitting" : ""}`}
+    <svg ref={svgRef} className={`raster-map ${split || editor || setupEditor ? "is-splitting" : ""}`}
       viewBox={`${viewX} ${viewY} ${viewportWidth} ${viewportHeight}`}
       preserveAspectRatio="xMidYMid meet"
       role="img" aria-label="Vedras Rasterkarte"
-      onWheel={(event) => {
-        event.preventDefault();
-        setZoomAround(zoom + (event.deltaY < 0 ? .16 : -.16), event);
-      }}
       onPointerDown={(event) => {
         if (event.button === 1) {
           event.preventDefault();
@@ -330,11 +342,13 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       onPointerMove={(event) => {
         const panning = panPointer.current;
         if (panning?.pointerId === event.pointerId) {
-          const bounds = event.currentTarget.getBoundingClientRect();
-          if (bounds.width <= 0 || bounds.height <= 0) return;
+          const transform = event.currentTarget.getScreenCTM();
+          if (transform === null) return;
+          const start = mapScreenPointToLocal(new DOMPoint(panning.clientX, panning.clientY), transform);
+          const current = mapScreenPointToLocal(new DOMPoint(event.clientX, event.clientY), transform);
           setPan(clampPan({
-            x: panning.pan.x - (event.clientX - panning.clientX) / bounds.width * viewportWidth,
-            y: panning.pan.y - (event.clientY - panning.clientY) / bounds.height * viewportHeight,
+            x: panning.pan.x - (current.x - start.x),
+            y: panning.pan.y - (current.y - start.y),
           }));
           return;
         }
@@ -377,12 +391,13 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
           ? splitA.has(key) ? "map-cell-part-a" : "map-cell-part-b" : "";
         const editPart = editor && territoryId === editor.targetId
           ? editorSelected.has(key) ? "map-cell-part-a" : editorAllowed.has(key) ? "map-cell-corridor" : editor.mode === "CUT" ? "map-cell-part-b" : "" : "";
+        const annexedPart = editor && territoryId === editor.targetId && editorAnnexed.has(key) ? "map-cell-annexed" : "";
         const setupPart = setupEditor && setupAllowed.has(key)
           ? setupEditor.editable ? "map-cell-setup-available" : "map-cell-setup-locked" : "";
         const realm = territoryId === null ? undefined : realmByTerritoryId.get(territoryId);
         const realmClass = realm === undefined ? "" : realm.selected ? "map-cell-largest-realm" : `map-cell-realm-candidate-${realm.index % 4}`;
         return <rect key={key} x={cell.x} y={cell.y} width="1" height="1"
-          className={`map-cell ${ownerClass} ${ownedByViewer ? "map-cell-own" : ""} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${isHighlighted ? "map-cell-activated" : ""} ${splitPart} ${editPart} ${setupPart} ${realmClass} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""} ${partChoice?.selectedPart === (splitA.has(key) ? "A" : "B") && territoryId === partChoice.territoryId ? "map-cell-part-selected" : ""}`}
+          className={`map-cell ${ownerClass} ${ownedByViewer ? "map-cell-own" : ""} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${isHighlighted ? "map-cell-activated" : ""} ${splitPart} ${editPart} ${annexedPart} ${setupPart} ${realmClass} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""} ${partChoice?.selectedPart === (splitA.has(key) ? "A" : "B") && territoryId === partChoice.territoryId ? "map-cell-part-selected" : ""}`}
           onClick={() => {
             if (setupEditor !== undefined) {
               if (setupEditor.mode === "POI" && setupEditor.editable && setupAllowed.has(key)) onSetupSelectCell?.(cell);
@@ -423,11 +438,11 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
           y={(edge.cell.y + edge.neighbor.y) / 2 + .72} className="map-border-mark">♦</text>;
       })}
       {state.mapCreation && setupEditor?.previewRegions?.map((region) => {
-        const minX = Math.min(...region.cells.map((cell) => cell.x));
-        const minY = Math.min(...region.cells.map((cell) => cell.y));
+        const anchor = getCellLabelAnchor(region.cells);
+        if (anchor === undefined) return null;
         return <g key={`setup-label-${region.id}`} className="map-territory-label map-setup-region-label">
-          <text x={minX + .2} y={minY + .42}>{region.id}</text>
-          <text x={minX + .2} y={minY + .88}>{region.cells.length}</text>
+          <text x={anchor.x} y={anchor.y - .17}>{region.id}</text>
+          <text x={anchor.x} y={anchor.y + .28}>{region.cells.length}</text>
         </g>;
       })}
       {hasSplitOverlay && (() => {

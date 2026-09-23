@@ -41,9 +41,13 @@ test("current help follows public phase state without exposing a faction", () =>
 
 test("help values use the current map instead of a fixed digital threshold", () => {
   const values = getHelpValues({ map: { width: 20, height: 15 } });
-  assert.deepEqual(values, { minimumTerritoryArea: 3, cutAndChooseThreshold: 6 });
+  assert.deepEqual(values, {
+    minimumTerritoryArea: 3, cutAndChooseThreshold: 6,
+    neutralDiamondDepth: 1, normalAdvanceDepth: 1, strongAdvanceDepth: 1,
+  });
   assert.match(renderRuleHelp(RULE_HELP.cutAndChoose, values).long, /mindestens 3 Kästchen/);
   assert.match(renderRuleHelp(RULE_HELP.breakthrough, values).long, /bei 6 Kästchen/);
+  assert.match(renderRuleHelp(RULE_HELP.borderGains, values).long, /bis zu 1 Kästchen tief/);
 });
 
 test("domain errors receive understandable neutral messages", () => {

@@ -148,7 +148,7 @@ test("the first three-way tie allows ending the turn; a second tie ends it autom
   assert.equal(ended.state.activePlayerId, "C");
   assert.deepEqual(ended.state.actionPhase.completedPlayerIds, ["B"]);
 
-  const repeated = auction(first.state, "B", "N1", bids);
+  const repeated = auction(first.state, "B", "N1", [["A", 1], ["B", 1], ["C", 1]]);
   assert.equal(repeated.state.activePlayerId, "C");
   assert.deepEqual(repeated.state.actionPhase.completedPlayerIds, ["B"]);
   assert.equal(repeated.state.actionPhase.secondAuctionAvailable, false);
