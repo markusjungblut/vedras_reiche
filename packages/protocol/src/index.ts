@@ -20,6 +20,7 @@ export enum NetworkErrorCode {
   InvalidStartConfiguration = "INVALID_START_CONFIGURATION",
   PersistenceFailed = "PERSISTENCE_FAILED",
   SessionReplaced = "SESSION_REPLACED",
+  PlayerRemoved = "PLAYER_REMOVED",
   OriginNotAllowed = "ORIGIN_NOT_ALLOWED"
 }
 
@@ -66,6 +67,9 @@ export interface PublicRoomState {
   readonly players: readonly PublicRoomPlayer[];
   readonly hostPlayerId: string;
   readonly map: MapDimensionsDto;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly rematchOfRoomId?: string;
 }
 
 export interface RoomSnapshotMessage {
@@ -101,12 +105,20 @@ export interface PongMessage {
   readonly type: "PONG";
 }
 
+/** Sent only to currently connected players of a finished room after its host creates a new lobby. */
+export interface RematchOfferMessage {
+  readonly type: "REMATCH_OFFER";
+  readonly roomId: string;
+  readonly rematchOfRoomId: string;
+}
+
 export type ServerMessage =
   | RoomSnapshotMessage
   | CommandAcceptedMessage
   | CommandRejectedMessage
   | ServerErrorMessage
-  | PongMessage;
+  | PongMessage
+  | RematchOfferMessage;
 
 export interface CreateRoomRequest {
   readonly playerName: string;
@@ -132,4 +144,8 @@ export interface StartRoomRequest {
 export interface UpdateRoomMapRequest {
   readonly sessionToken: string;
   readonly map: MapDimensionsDto;
+}
+
+export interface SessionTokenRequest {
+  readonly sessionToken: string;
 }

@@ -71,7 +71,7 @@ export function ResultPanel({ state, playerName, factionSuits }: Pick<ScoringPan
     if (lastGroup && lastGroup[0]?.totalScoreHundredths === score.totalScoreHundredths) lastGroup.push(score);
     else groups.push([score]);
   }
-  return <section className="control-section result-panel" aria-label="Endergebnis">
+  return <section id="result-panel" className="control-section result-panel" aria-label="Endergebnis">
     <div className="section-kicker">Endwertung</div>
     <h3>Spiel beendet</h3>
     <p className="winner-message">{winners.length > 1 ? "Gemeinsamer Sieg: " : "Sieger: "}<strong>{winners.map((winner) => playerName(winner.playerId)).join(" · ")}</strong></p>

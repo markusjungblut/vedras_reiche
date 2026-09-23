@@ -34,6 +34,7 @@ export interface PersistedRoom {
   readonly acceptedCommands: readonly PersistedAcceptedCommand[];
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly rematchOfRoomId?: string;
 }
 
 export interface RoomStore {
@@ -101,6 +102,9 @@ export function deserializePersistedRoom(value: unknown): { readonly room?: Pers
   if (!isMapConfig(value.map)) return { reason: "invalid map configuration" };
   if (!isNonNegativeSafeInteger(value.revision)) return { reason: "invalid revision" };
   if (!isIsoTimestamp(value.createdAt) || !isIsoTimestamp(value.updatedAt)) return { reason: "invalid timestamps" };
+  if (value.rematchOfRoomId !== undefined && (!isNonEmptyString(value.rematchOfRoomId, 32) || !/^[A-Z0-9]+$/.test(value.rematchOfRoomId))) {
+    return { reason: "invalid rematch origin" };
+  }
   if (!Array.isArray(value.acceptedCommands) || value.acceptedCommands.length > MAX_ACCEPTED_COMMANDS) return { reason: "invalid accepted commands" };
 
   const participants: PersistedParticipant[] = [];
@@ -141,6 +145,7 @@ export function deserializePersistedRoom(value: unknown): { readonly room?: Pers
       acceptedCommands,
       createdAt: value.createdAt,
       updatedAt: value.updatedAt,
+      ...(value.rematchOfRoomId === undefined ? {} : { rematchOfRoomId: value.rematchOfRoomId }),
     },
   };
 }

@@ -11,7 +11,7 @@ import {
 export interface GameControllerSnapshot {
   readonly view?: GameState | PlayerGameView;
   readonly revision: number;
-  readonly connectionStatus?: "CONNECTING" | "CONNECTED" | "RECONNECTING" | "DISCONNECTED" | "INVALID_SESSION" | "ROOM_NOT_FOUND" | "SESSION_REPLACED";
+  readonly connectionStatus?: "CONNECTING" | "CONNECTED" | "RECONNECTING" | "DISCONNECTED" | "INVALID_SESSION" | "ROOM_NOT_FOUND" | "SESSION_REPLACED" | "PLAYER_REMOVED";
   readonly connectionMessage?: string;
 }
 

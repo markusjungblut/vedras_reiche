@@ -13,6 +13,7 @@ import {
   type UpdateRoomMapRequest,
   type RoomSnapshotMessage,
   type ServerErrorMessage,
+  type SessionTokenRequest,
   type StartRoomRequest,
 } from "@vedras/protocol";
 import type { GameRoom, RoomConnection, RoomManager } from "./room-manager.js";
@@ -162,6 +163,10 @@ function bodyIsUpdateMapRequest(body: unknown): body is UpdateRoomMapRequest {
     "width" in body.map && typeof body.map.width === "number" && "height" in body.map && typeof body.map.height === "number";
 }
 
+function bodyHasSessionToken(body: unknown): body is SessionTokenRequest {
+  return body !== null && typeof body === "object" && "sessionToken" in body && typeof body.sessionToken === "string" && body.sessionToken.length > 0;
+}
+
 function errorPayload(error: unknown): { code: NetworkErrorCode; message: string } {
   if (error instanceof RoomError) return { code: error.code, message: error.message };
   return { code: NetworkErrorCode.InvalidMessage, message: "The request could not be processed." };
@@ -303,6 +308,31 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, corsOrigin(origin));
         return;
       }
+      const removeMatch = /^\/api\/rooms\/([^/]+)\/players\/([^/]+)\/remove$/.exec(url.pathname);
+      if (request.method === "POST" && removeMatch?.[1] !== undefined && removeMatch[2] !== undefined) {
+        const body = await readJson(request);
+        if (!bodyHasSessionToken(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A session token is required.");
+        const result = await options.roomManager.removeWaitingParticipant(decodeURIComponent(removeMatch[1]), body.sessionToken, decodeURIComponent(removeMatch[2]));
+        if (result.removed.connection !== undefined) {
+          sendError(result.removed.connection, NetworkErrorCode.PlayerRemoved, "Du wurdest aus diesem Raum entfernt.");
+          result.removed.connection.close(4004, NetworkErrorCode.PlayerRemoved);
+        }
+        log("waiting_player_removed", { roomId: result.room.roomId, playerId: result.removed.playerId, revision: result.room.revision });
+        broadcastRoom(options.roomManager, result.room);
+        writeJson(response, 200, { room: options.roomManager.getPublicRoomState(result.room), revision: result.room.revision }, corsOrigin(origin));
+        return;
+      }
+      const rematchMatch = /^\/api\/rooms\/([^/]+)\/rematch$/.exec(url.pathname);
+      if (request.method === "POST" && rematchMatch?.[1] !== undefined) {
+        const body = await readJson(request);
+        if (!bodyHasSessionToken(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A session token is required.");
+        const sourceRoom = options.roomManager.getRoom(decodeURIComponent(rematchMatch[1]));
+        const rematch = await options.roomManager.createRematch(sourceRoom.roomId, body.sessionToken);
+        log("rematch_created", { roomId: rematch.room.roomId, playerId: rematch.participant.playerId });
+        broadcastRematchOffer(sourceRoom, rematch.room.roomId);
+        writeJson(response, 201, { roomId: rematch.room.roomId, playerId: rematch.participant.playerId, sessionToken: rematch.sessionToken }, corsOrigin(origin));
+        return;
+      }
       if (isReservedStaticPath(url.pathname)) {
         writeJson(response, 404, { code: NetworkErrorCode.RoomNotFound, message: "Route not found." }, corsOrigin(origin));
         return;
@@ -315,7 +345,8 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
     } catch (error) {
       const payload = errorPayload(error);
       const status = payload.code === NetworkErrorCode.PersistenceFailed ? 500 : payload.code === NetworkErrorCode.RoomNotFound ? 404 :
-        payload.code === NetworkErrorCode.RoomAlreadyStarted || payload.code === NetworkErrorCode.RoomFull ? 409 : 400;
+        payload.code === NetworkErrorCode.NotHost || payload.code === NetworkErrorCode.OriginNotAllowed ? 403 :
+          payload.code === NetworkErrorCode.RoomAlreadyStarted || payload.code === NetworkErrorCode.RoomFull ? 409 : 400;
       if (!(error instanceof RoomError)) log("request_failed", { route: url.pathname, code: payload.code });
       writeJson(response, status, payload, corsOrigin(origin));
     }
@@ -492,5 +523,11 @@ export function broadcastRoom(roomManager: RoomManager, room: GameRoom): void {
       ...(room.gameState === undefined ? {} : { gameView: roomManager.getPlayerView(room, participant.playerId) }),
     };
     participant.connection.send(snapshot);
+  }
+}
+
+function broadcastRematchOffer(room: GameRoom, rematchRoomId: string): void {
+  for (const participant of room.participants.values()) {
+    participant.connection?.send({ type: "REMATCH_OFFER", roomId: rematchRoomId, rematchOfRoomId: room.roomId });
   }
 }

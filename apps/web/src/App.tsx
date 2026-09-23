@@ -107,6 +107,16 @@ interface NewGamePlayerInput { readonly key: string; readonly name: string; }
 
 interface MultiplayerSession extends MultiplayerCredentials {
   readonly playerName?: string;
+  readonly lastOpenedAt?: string;
+  readonly room?: {
+    readonly status: "WAITING" | "RUNNING" | "FINISHED";
+    readonly playerNames: readonly string[];
+    readonly round?: number;
+    readonly maxRounds?: number;
+    readonly updatedAt: string;
+  };
+  /** Only a definite terminal server response marks a stored session unavailable. */
+  readonly availability?: "UNAVAILABLE";
 }
 
 function multiplayerSocketUrl(baseUrl: string): string {
@@ -121,7 +131,22 @@ function isMultiplayerSession(value: unknown): value is MultiplayerSession {
   if (value === null || typeof value !== "object") return false;
   const candidate = value as Partial<MultiplayerSession>;
   return typeof candidate.roomId === "string" && typeof candidate.playerId === "string" && typeof candidate.sessionToken === "string" &&
-    (candidate.playerName === undefined || typeof candidate.playerName === "string");
+    (candidate.playerName === undefined || typeof candidate.playerName === "string") &&
+    (candidate.lastOpenedAt === undefined || typeof candidate.lastOpenedAt === "string");
+}
+
+function normalizeMultiplayerSession(value: MultiplayerSession): MultiplayerSession {
+  return {
+    ...value,
+    playerName: value.playerName ?? "",
+    lastOpenedAt: value.lastOpenedAt ?? new Date(0).toISOString(),
+  };
+}
+
+function writeMultiplayerSessions(sessions: Readonly<Record<string, MultiplayerSession>>): void {
+  try {
+    localStorage.setItem(MULTIPLAYER_SESSIONS_KEY, JSON.stringify(sessions));
+  } catch { /* Browser storage is optional for local development. */ }
 }
 
 function storedMultiplayerSessions(): Readonly<Record<string, MultiplayerSession>> {
@@ -130,27 +155,48 @@ function storedMultiplayerSessions(): Readonly<Record<string, MultiplayerSession
     if (stored === null) return {};
     const parsed: unknown = JSON.parse(stored);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).filter(([, session]) => isMultiplayerSession(session))) as Readonly<Record<string, MultiplayerSession>>;
+    return Object.fromEntries(Object.entries(parsed).flatMap(([roomId, session]) => isMultiplayerSession(session)
+      ? [[roomId, normalizeMultiplayerSession(session)]] : [])) as Readonly<Record<string, MultiplayerSession>>;
   } catch {
     return {};
   }
 }
 
-function lastStoredMultiplayerSession(sessions = storedMultiplayerSessions()): MultiplayerSession | undefined {
-  try {
-    const roomId = localStorage.getItem(MULTIPLAYER_LAST_ROOM_KEY);
-    return roomId === null ? undefined : sessions[roomId];
-  } catch {
-    return undefined;
-  }
-}
-
 function rememberMultiplayerSession(session: MultiplayerSession): Readonly<Record<string, MultiplayerSession>> {
-  const sessions = { ...storedMultiplayerSessions(), [session.roomId]: session };
+  const { availability: _availability, ...availableSession } = session;
+  const remembered = normalizeMultiplayerSession({ ...availableSession, lastOpenedAt: new Date().toISOString() });
+  const sessions = { ...storedMultiplayerSessions(), [session.roomId]: remembered };
   try {
-    localStorage.setItem(MULTIPLAYER_SESSIONS_KEY, JSON.stringify(sessions));
+    writeMultiplayerSessions(sessions);
     localStorage.setItem(MULTIPLAYER_LAST_ROOM_KEY, session.roomId);
   } catch { /* Browser storage is optional for local development. */ }
+  return sessions;
+}
+
+function cacheMultiplayerRoom(session: MultiplayerSession, room: PublicRoomState, state?: GameReadModel): Readonly<Record<string, MultiplayerSession>> {
+  const existing = storedMultiplayerSessions()[session.roomId] ?? normalizeMultiplayerSession(session);
+  const { availability: _availability, ...availableExisting } = existing;
+  const cached: MultiplayerSession = {
+    ...availableExisting,
+    playerName: session.playerName ?? existing.playerName ?? "",
+    room: {
+      status: room.status,
+      playerNames: room.players.map((player) => player.name),
+      ...(state === undefined ? {} : { round: state.round, maxRounds: state.maxRounds }),
+      updatedAt: room.updatedAt,
+    },
+  };
+  const sessions = { ...storedMultiplayerSessions(), [session.roomId]: cached };
+  writeMultiplayerSessions(sessions);
+  return sessions;
+}
+
+function markSavedSessionUnavailable(roomId: string): Readonly<Record<string, MultiplayerSession>> {
+  const existing = storedMultiplayerSessions();
+  const session = existing[roomId];
+  if (session === undefined) return existing;
+  const sessions = { ...existing, [roomId]: { ...session, availability: "UNAVAILABLE" as const } };
+  writeMultiplayerSessions(sessions);
   return sessions;
 }
 
@@ -746,9 +792,12 @@ export default function App() {
   const [multiplayerRoom, setMultiplayerRoom] = useState<PublicRoomState | undefined>();
   const [multiplayerName, setMultiplayerName] = useState("Anna");
   const [joinRoomCode, setJoinRoomCode] = useState(() => inviteRoomCode() ?? "");
-  const [showMultiplayer, setShowMultiplayer] = useState(() => inviteRoomCode() !== undefined);
+  const [showMultiplayer, setShowMultiplayer] = useState(() => inviteRoomCode() !== undefined || Object.keys(storedMultiplayerSessions()).length > 0);
   const [savedMultiplayerSessions, setSavedMultiplayerSessions] = useState<Readonly<Record<string, MultiplayerSession>>>(() => storedMultiplayerSessions());
   const [remoteConnectionStatus, setRemoteConnectionStatus] = useState<RemoteConnectionStatus>("DISCONNECTED");
+  const [rematchOfferRoomId, setRematchOfferRoomId] = useState<string | undefined>();
+  const [rematchCreating, setRematchCreating] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [lobbyOrder, setLobbyOrder] = useState<readonly string[]>([]);
   const [firstMultiplayerDrawerId, setFirstMultiplayerDrawerId] = useState<string | undefined>();
   const [lobbyMap, setLobbyMap] = useState({ width: DIGITAL_BOARD_WIDTH, height: DIGITAL_BOARD_HEIGHT });
@@ -775,19 +824,26 @@ export default function App() {
     unsubscribeController.current?.();
     controller.current?.dispose();
     controller.current = nextController;
+    const remoteSession = remote && nextController instanceof RemoteGameController ? nextController.credentials : undefined;
     if (remote) setView(null);
     else {
       setMultiplayer(null);
       setMultiplayerRoom(undefined);
       setRemoteConnectionStatus("DISCONNECTED");
+      setRematchOfferRoomId(undefined);
     }
     unsubscribeController.current = nextController.subscribe((snapshot) => {
       if (snapshot.view !== undefined) setView(snapshot.view);
       if (remote && snapshot.connectionStatus !== undefined) {
         setRemoteConnectionStatus(snapshot.connectionStatus);
         if (snapshot.connectionStatus !== "CONNECTED") setSetupDraft({ mode: "PEN", strokes: [] });
+        if (remoteSession !== undefined && (snapshot.connectionStatus === "INVALID_SESSION" || snapshot.connectionStatus === "ROOM_NOT_FOUND" || snapshot.connectionStatus === "PLAYER_REMOVED")) {
+          setSavedMultiplayerSessions(markSavedSessionUnavailable(remoteSession.roomId));
+        }
       }
-      const room = (snapshot as { readonly room?: PublicRoomState }).room;
+      const remoteSnapshot = snapshot as { readonly room?: PublicRoomState; readonly rematchRoomId?: string };
+      if (remoteSnapshot.rematchRoomId !== undefined) setRematchOfferRoomId(remoteSnapshot.rematchRoomId);
+      const room = remoteSnapshot.room;
       if (room !== undefined) {
         setMultiplayerRoom(room);
         setLobbyMap({ width: room.map.width, height: room.map.height });
@@ -798,14 +854,17 @@ export default function App() {
         });
         setFirstMultiplayerDrawerId((current) => current !== undefined && room.players.some((player) => player.playerId === current)
           ? current : room.players[0]?.playerId);
+        if (remoteSession !== undefined) setSavedMultiplayerSessions(cacheMultiplayerRoom(remoteSession, room, snapshot.view));
       }
     });
   };
 
   const connectMultiplayer = async (session: MultiplayerSession) => {
-    const storedSession: MultiplayerSession = { ...session, playerName: session.playerName ?? multiplayerName.trim() };
+    const storedSession: MultiplayerSession = { ...session, playerName: session.playerName?.trim() || multiplayerName.trim() };
     const remote = new RemoteGameController(storedSession, multiplayerSocketUrl(SERVER_BASE_URL));
     setMultiplayer(storedSession);
+    setMultiplayerName(storedSession.playerName ?? multiplayerName);
+    setRematchOfferRoomId(undefined);
     setScenario(null);
     setShowNewGameConfig(false);
     setShowDebugScenarios(false);
@@ -837,6 +896,7 @@ export default function App() {
     setMultiplayer(null);
     setMultiplayerRoom(undefined);
     setRemoteConnectionStatus("DISCONNECTED");
+    setRematchOfferRoomId(undefined);
     setShowMultiplayer(true);
     setError(null);
   };
@@ -844,6 +904,12 @@ export default function App() {
   const forgetSavedMultiplayerSession = (roomId: string) => {
     setSavedMultiplayerSessions(forgetMultiplayerSession(roomId));
     if (multiplayer?.roomId === roomId) returnToMultiplayerStart();
+  };
+
+  const requestForgetSavedMultiplayerSession = (roomId: string) => {
+    if (!window.confirm("Diese Partie wirklich von diesem Gerät entfernen?")) return;
+    forgetSavedMultiplayerSession(roomId);
+    setNotice("Lokale Spielersitzung entfernt.");
   };
 
   const loadScenario = (kind: ScenarioKind, chosenSeed: number) => {
@@ -916,21 +982,21 @@ export default function App() {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
   };
-  const updateMultiplayerMap = async () => {
+  const updateMultiplayerMap = async (map = lobbyMap) => {
     if (multiplayer === null || multiplayerRoom === undefined ||
-        !Number.isSafeInteger(lobbyMap.width) || lobbyMap.width <= 0 ||
-        !Number.isSafeInteger(lobbyMap.height) || lobbyMap.height <= 0) {
+        !Number.isSafeInteger(map.width) || map.width <= 0 ||
+        !Number.isSafeInteger(map.height) || map.height <= 0) {
       setError("Breite und Höhe müssen positive ganze Zahlen sein.");
       return;
     }
-    if (!isTechnicallyValidMapSize(lobbyMap)) {
+    if (!isTechnicallyValidMapSize(map)) {
       setError(mapSizeError());
       return;
     }
     if (!multiplayerConnected) return;
     try {
       await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/map`, {
-        sessionToken: multiplayer.sessionToken, map: lobbyMap,
+        sessionToken: multiplayer.sessionToken, map,
       });
       setError(null);
     } catch (caught) {
@@ -946,6 +1012,38 @@ export default function App() {
       [next[index], next[target]] = [next[target]!, next[index]!];
       return next;
     });
+  };
+  const setLobbyMapPreset = (map: { readonly width: number; readonly height: number }) => {
+    setLobbyMap(map);
+    void updateMultiplayerMap(map);
+  };
+  const removeWaitingPlayer = async (playerId: string, playerName: string) => {
+    if (multiplayer === null || multiplayerRoom === undefined || !multiplayerConnected) return;
+    try {
+      await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/players/${encodeURIComponent(playerId)}/remove`, {
+        sessionToken: multiplayer.sessionToken,
+      });
+      setNotice(`${playerName} wurde aus der Lobby entfernt.`);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+  const createRematch = async () => {
+    if (multiplayer === null || multiplayerRoom?.hostPlayerId !== multiplayer.playerId || rematchCreating) return;
+    setRematchCreating(true);
+    try {
+      const session = await postMultiplayer<MultiplayerSession>(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/rematch`, {
+        sessionToken: multiplayer.sessionToken,
+      });
+      await connectMultiplayer({ ...session, playerName: multiplayer.playerName ?? multiplayerName });
+      setNotice("Rematch erstellt. Die neue Lobby hat einen eigenen Raumcode.");
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setRematchCreating(false);
+    }
   };
   const startConfiguredGame = () => {
     const selected = selectedSeed();
@@ -1183,13 +1281,19 @@ export default function App() {
   })() : undefined;
   const scoreHundredthsByTerritoryId = state?.result ? Object.fromEntries(state.result.playerResults.flatMap((player) =>
     player.territoryScores.map((score) => [score.territoryId, score.scoreHundredths]))) : undefined;
-  const invitedRoomId = inviteRoomCode();
-  const savedSessionForInvite = invitedRoomId === undefined ? undefined : savedMultiplayerSessions[invitedRoomId];
-  const resumeSession = savedSessionForInvite ?? lastStoredMultiplayerSession(savedMultiplayerSessions);
-  const copyToClipboard = async (value: string) => {
+  const savedSessions = Object.values(savedMultiplayerSessions).sort((left, right) => right.lastOpenedAt!.localeCompare(left.lastOpenedAt!));
+  const savedSessionGroups: readonly { readonly title: string; readonly sessions: readonly MultiplayerSession[] }[] = [
+    { title: "Laufende Partien", sessions: savedSessions.filter((session) => session.availability !== "UNAVAILABLE" && session.room?.status === "RUNNING") },
+    { title: "Wartende Partien", sessions: savedSessions.filter((session) => session.availability !== "UNAVAILABLE" && session.room?.status === "WAITING") },
+    { title: "Beendete Partien", sessions: savedSessions.filter((session) => session.availability !== "UNAVAILABLE" && session.room?.status === "FINISHED") },
+    { title: "Status derzeit nicht abrufbar", sessions: savedSessions.filter((session) => session.availability !== "UNAVAILABLE" && session.room === undefined) },
+    { title: "Nicht mehr verfügbar", sessions: savedSessions.filter((session) => session.availability === "UNAVAILABLE") },
+  ];
+  const copyToClipboard = async (value: string, message: string) => {
     try {
       await navigator.clipboard.writeText(value);
       setError(null);
+      setNotice(message);
     } catch {
       setError("Kopieren ist in diesem Browser nicht verfügbar.");
     }
@@ -1199,6 +1303,24 @@ export default function App() {
     url.search = `?room=${encodeURIComponent(multiplayerRoom.roomId)}`;
     return url.toString();
   })();
+  const shareInvite = async () => {
+    if (inviteLink === undefined) return;
+    if (typeof navigator.share !== "function") {
+      await copyToClipboard(inviteLink, "Einladungslink kopiert.");
+      return;
+    }
+    try {
+      await navigator.share({ title: "Vedras Reiche", text: `Komm in Raum ${multiplayerRoom?.roomId}.`, url: inviteLink });
+      setNotice("Einladung geteilt.");
+    } catch { /* The share sheet was dismissed; this is not an application error. */ }
+  };
+  const activeRoomPlayer = multiplayerRoom?.players.find((player) => player.playerId === state?.activePlayerId);
+  const openRematchOffer = () => {
+    if (rematchOfferRoomId === undefined) return;
+    returnToMultiplayerStart();
+    setJoinRoomCode(rematchOfferRoomId);
+    setNotice("Für das Rematch bitte mit deinem Namen beitreten.");
+  };
 
   return <div className="app-shell">
     {!state ? <main className="welcome-screen">
@@ -1214,26 +1336,41 @@ export default function App() {
       {showMultiplayer && <section className="new-game-config panel multiplayer-panel">
         <div className="panel-heading"><div><span className="section-kicker">Mehrspieler</span><h2>{multiplayerRoom ? `Raum ${multiplayerRoom.roomId}` : "Gemeinsame Partie"}</h2></div>
           {!multiplayer && <button type="button" className="text-button" onClick={() => setShowMultiplayer(false)}>Schließen</button>}</div>
+        {multiplayer && (remoteConnectionStatus === "INVALID_SESSION" || remoteConnectionStatus === "ROOM_NOT_FOUND" || remoteConnectionStatus === "SESSION_REPLACED" || remoteConnectionStatus === "PLAYER_REMOVED") && <div role="status" className="connection-banner">
+          <strong>{remoteConnectionStatus === "PLAYER_REMOVED" ? "Du wurdest aus diesem Raum entfernt." : remoteConnectionStatus === "INVALID_SESSION" ? "Diese lokale Spielersitzung ist nicht mehr gültig." : remoteConnectionStatus === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." : "Diese Spielersitzung wurde in einem anderen Fenster geöffnet."}</strong>
+          <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="text-button" onClick={() => requestForgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>
+        </div>}
         {multiplayerRoom === undefined ? <div className="config-stack">
           <Field label="Name"><input value={multiplayerName} maxLength={80} onChange={(event) => setMultiplayerName(event.target.value)} /></Field>
           <div className="button-row"><button type="button" className="primary-button" onClick={() => void createMultiplayerRoom()}>Neues Spiel erstellen</button></div>
           <div className="join-room-row"><Field label="Raumcode"><input value={joinRoomCode} maxLength={8} placeholder="ABC123" onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())} /></Field>
             <button type="button" className="secondary-button" onClick={() => void joinMultiplayerRoom()}>Raum beitreten</button></div>
-          {resumeSession && <div className="lobby-resume-card"><strong>Letzte Partie: {resumeSession.roomId}</strong>
-            <div className="button-row"><button type="button" className="secondary-button" onClick={() => void connectMultiplayer(resumeSession)}>Partie{resumeSession.playerName ? ` als ${resumeSession.playerName}` : ""} fortsetzen</button>
-              <button type="button" className="text-button" onClick={() => forgetSavedMultiplayerSession(resumeSession.roomId)}>Vergessen</button></div>
-            <small>Vergessen löscht nur diese lokale Spielersitzung.</small></div>}
+          {savedSessions.length > 0 && <section className="saved-room-list" aria-label="Gespeicherte Partien">
+            <div><strong>Gespeicherte Partien</strong><small>Diese Liste gilt nur für diesen Browser.</small></div>
+            {savedSessionGroups.map((group) => group.sessions.length === 0 ? null : <div key={group.title} className="saved-room-group">
+              <h3>{group.title}</h3>
+              {group.sessions.map((session) => <article key={session.roomId} className="lobby-resume-card">
+                <div><strong>Raum {session.roomId}</strong>{session.room?.round !== undefined && <span> · Runde {session.room.round}{session.room.maxRounds === undefined ? "" : ` / ${session.room.maxRounds}`}</span>}</div>
+                <p>{session.room?.playerNames.join(" · ") || "Status wird beim Fortsetzen geprüft."}</p>
+                <small>{session.availability === "UNAVAILABLE" ? "Diese Sitzung wurde vom Server abgelehnt." : session.room ? `Zuletzt bekannt: ${new Date(session.room.updatedAt).toLocaleString("de-DE")}` : "Status derzeit nicht abrufbar."}</small>
+                <div className="button-row"><button type="button" className="secondary-button" disabled={session.availability === "UNAVAILABLE"} onClick={() => void connectMultiplayer(session)}>{session.room?.status === "FINISHED" ? "Ergebnis ansehen" : "Fortsetzen"}</button>
+                  <button type="button" className="text-button" onClick={() => requestForgetSavedMultiplayerSession(session.roomId)}>{session.room?.status === "FINISHED" ? "Lokal entfernen" : "Lokal vergessen"}</button></div>
+              </article>)}
+            </div>)}
+          </section>}
           {multiplayer && remoteConnectionStatus !== "CONNECTED" && <p className="muted">{remoteConnectionStatus === "RECONNECTING" ? "Verbindung wird wiederhergestellt …" : "Verbindung wird hergestellt …"}</p>}
         </div> : <div className="config-stack">
-          <div className="invite-panel"><strong>Mitspieler einladen</strong><p className="room-code">Raum: <strong>{multiplayerRoom.roomId}</strong></p>
-            <div className="button-row"><button type="button" className="secondary-button" onClick={() => void copyToClipboard(multiplayerRoom.roomId)}>Code kopieren</button>
-              {inviteLink && <button type="button" className="secondary-button" onClick={() => void copyToClipboard(inviteLink)}>Einladungslink kopieren</button>}</div></div>
+          <div className="invite-panel"><strong>Freunde einladen</strong><p className="room-code">Raum: <strong>{multiplayerRoom.roomId}</strong></p>
+            <div className="button-row"><button type="button" className="secondary-button" onClick={() => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.")}>Raumcode kopieren</button>
+              {inviteLink && <button type="button" className="secondary-button" onClick={() => void copyToClipboard(inviteLink, "Einladungslink kopiert.")}>Einladungslink kopieren</button>}
+              {inviteLink && typeof navigator.share === "function" && <button type="button" className="text-button" onClick={() => void shareInvite()}>Teilen</button>}</div></div>
           <div className="lobby-player-list">{lobbyOrder.map((playerId, index) => {
             const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
             if (player === undefined) return null;
             const host = multiplayerRoom.hostPlayerId === multiplayer?.playerId;
-            return <div key={playerId} className="lobby-player"><span>{index + 1}. {player.name} {playerId === multiplayerRoom.hostPlayerId ? "· Host" : ""} · {player.connected ? "verbunden" : "getrennt"}</span>
-              {host && <span className="button-row"><button type="button" className="secondary-button" disabled={!multiplayerConnected || index === 0} onClick={() => moveLobbyPlayer(playerId, -1)}>↑</button><button type="button" className="secondary-button" disabled={!multiplayerConnected || index === lobbyOrder.length - 1} onClick={() => moveLobbyPlayer(playerId, 1)}>↓</button></span>}
+            return <div key={playerId} className="lobby-player"><span>{index + 1}. {playerId === multiplayer?.playerId ? "Du · " : ""}{player.name} {playerId === multiplayerRoom.hostPlayerId ? "· Host" : ""} · {player.connected ? "● verbunden" : "○ getrennt"}</span>
+              {host && <span className="button-row"><button type="button" className="secondary-button" aria-label={`${player.name} nach oben`} disabled={!multiplayerConnected || index === 0} onClick={() => moveLobbyPlayer(playerId, -1)}>↑</button><button type="button" className="secondary-button" aria-label={`${player.name} nach unten`} disabled={!multiplayerConnected || index === lobbyOrder.length - 1} onClick={() => moveLobbyPlayer(playerId, 1)}>↓</button>
+                {playerId !== multiplayer?.playerId && <button type="button" className="text-button" disabled={!multiplayerConnected} onClick={() => void removeWaitingPlayer(playerId, player.name)}>Entfernen</button>}</span>}
             </div>;
           })}</div>
           {multiplayerRoom.hostPlayerId === multiplayer?.playerId ? <>
@@ -1243,13 +1380,15 @@ export default function App() {
               <Field label="Kartenhöhe"><input type="number" min="1" max={MAX_MAP_HEIGHT} step="1" value={lobbyMap.height}
                 disabled={!multiplayerConnected} onChange={(event) => setLobbyMap((current) => ({ ...current, height: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
             </div>
-            <small>Aktuelle Karte: {lobbyMap.width} × {lobbyMap.height} · Mindestgebiet: {isTechnicallyValidMapSize(lobbyMap) ? getMinimumTerritoryArea(lobbyMap) : "—"} · technisch maximal {MAX_MAP_CELLS.toLocaleString("de-DE")} Zellen</small>
+            <div className="button-row"><button type="button" className="secondary-button" disabled={!multiplayerConnected} onClick={() => setLobbyMapPreset({ width: 50, height: 50 })}>50 × 50</button><button type="button" className="secondary-button" disabled={!multiplayerConnected} onClick={() => setLobbyMapPreset({ width: 100, height: 50 })}>100 × 50</button><button type="button" className="secondary-button" disabled={!multiplayerConnected} onClick={() => setLobbyMapPreset({ width: 100, height: 100 })}>100 × 100</button></div>
+            <small>Aktuelle Karte: {lobbyMap.width} × {lobbyMap.height} · Mindestgebiet: {isTechnicallyValidMapSize(lobbyMap) ? getMinimumTerritoryArea(lobbyMap) : "—"} · Cut-and-Choose ab: {isTechnicallyValidMapSize(lobbyMap) ? 2 * getMinimumTerritoryArea(lobbyMap) : "—"} · technisch maximal {MAX_MAP_CELLS.toLocaleString("de-DE")} Zellen</small>
             <Field label="Erster Kartenzeichner"><select value={firstMultiplayerDrawerId ?? ""} disabled={!multiplayerConnected} onChange={(event) => setFirstMultiplayerDrawerId(event.target.value)}>{lobbyOrder.map((playerId) => {
               const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
               return player ? <option key={playerId} value={playerId}>{player.name}</option> : null;
             })}</select></Field>
             <button type="button" className="primary-button" disabled={!multiplayerConnected || multiplayerRoom.players.length < 2 || firstMultiplayerDrawerId === undefined} onClick={() => void startMultiplayerRoom()}>Spiel starten</button>
           </> : <p className="muted">Der Host legt Reihenfolge, Kartengröße und ersten Kartenzeichner fest. Aktuelle Karte: {multiplayerRoom.map.width} × {multiplayerRoom.map.height}.</p>}
+          <button type="button" className="text-button" onClick={returnToMultiplayerStart}>Zu gespeicherten Partien</button>
         </div>}
       </section>}
       {showNewGameConfig && <section className="new-game-config panel">
@@ -1284,6 +1423,7 @@ export default function App() {
         <Field label="Debug-Seed"><input type="number" min="0" step="1" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} /></Field>
         <div className="scenario-grid">{SCENARIOS.map((item) => <button type="button" key={item.kind} className="scenario-tile" onClick={() => startSelectedScenario(item.kind)}><strong>{item.label}</strong><span>{item.detail}</span></button>)}</div>
       </section>}
+      {notice && <p role="status" className="connection-banner">{notice}</p>}
       {error && <p role="alert" className="error-banner">Aktion nicht möglich: {error}</p>}
     </main> : <>
       <GameHeader state={state} playerName={name} mode={multiplayer ? "MULTIPLAYER" : "LOCAL"}
@@ -1306,18 +1446,34 @@ export default function App() {
           {multiplayer && <p className={`connection-status ${remoteConnectionStatus.toLowerCase()}`}>
             {remoteConnectionStatus === "CONNECTED" ? "● Verbunden" : remoteConnectionStatus === "RECONNECTING" ? "◌ Verbindung wird wiederhergestellt …" :
               remoteConnectionStatus === "INVALID_SESSION" ? "● Lokale Sitzung ungültig" : remoteConnectionStatus === "ROOM_NOT_FOUND" ? "● Raum nicht gefunden" :
-                remoteConnectionStatus === "SESSION_REPLACED" ? "● Sitzung in anderem Fenster geöffnet" : "◌ Verbindung wird hergestellt …"}
+                remoteConnectionStatus === "SESSION_REPLACED" ? "● Sitzung in anderem Fenster geöffnet" : remoteConnectionStatus === "PLAYER_REMOVED" ? "● Aus Raum entfernt" : "◌ Verbindung wird hergestellt …"}
           </p>}
+          {multiplayer && multiplayerRoom && <details className="room-menu"><summary>Partie</summary><div className="config-stack">
+            <strong>Raumcode: {multiplayerRoom.roomId}</strong>
+            <button type="button" className="secondary-button" onClick={() => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.")}>Raumcode kopieren</button>
+            <div>{multiplayerRoom.players.map((player) => <span key={player.playerId}>{player.playerId === multiplayer.playerId ? "Du" : player.name} · {player.connected ? "● verbunden" : "○ getrennt"}<br /></span>)}</div>
+            {multiplayerRoom.status === "RUNNING" && <small>Der Raumcode dient während der Partie nur zur Identifikation. Neue Spieler können jetzt nicht beitreten.</small>}
+          </div></details>}
           {state.phase === GamePhase.Finished && <label className="debug-toggle"><input type="checkbox" checked={showScoreLabels}
             onChange={(event) => setShowScoreLabels(event.target.checked)} /> Wertungsansicht auf der Karte</label>}
+          {state.phase === GamePhase.Finished && multiplayer && <div className="button-row" aria-label="Beendete Partie">
+            <button type="button" className="secondary-button" onClick={() => document.getElementById("result-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Ergebnis ansehen</button>
+            <button type="button" className="secondary-button" onClick={() => document.querySelector(".board-column")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Karte ansehen</button>
+            <button type="button" className="secondary-button" onClick={() => document.querySelector(".event-log")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Spielverlauf</button>
+            {multiplayerRoom?.hostPlayerId === multiplayer.playerId && <button type="button" className="primary-button" disabled={rematchCreating || remoteConnectionStatus !== "CONNECTED"} onClick={() => void createRematch()}>{rematchCreating ? "Rematch wird erstellt …" : "Noch einmal spielen"}</button>}
+            <button type="button" className="text-button" onClick={returnToMultiplayerStart}>Zur Startseite</button>
+          </div>}
         </section>
+        {notice && <div role="status" className="connection-banner">{notice}</div>}
         {error && <div role="alert" className="error-banner">Aktion nicht möglich: <strong>{error}</strong></div>}
         {multiplayer && remoteConnectionStatus !== "CONNECTED" && <div role="status" className="connection-banner">
           <strong>{remoteConnectionStatus === "RECONNECTING" ? "Verbindung verloren" : remoteConnectionStatus === "INVALID_SESSION" ? "Diese lokale Spielersitzung ist nicht mehr gültig." :
-            remoteConnectionStatus === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." : remoteConnectionStatus === "SESSION_REPLACED" ? "Diese Spielersitzung wurde in einem anderen Fenster geöffnet." : "Verbindung wird hergestellt …"}</strong>
+            remoteConnectionStatus === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." : remoteConnectionStatus === "SESSION_REPLACED" ? "Diese Spielersitzung wurde in einem anderen Fenster geöffnet." : remoteConnectionStatus === "PLAYER_REMOVED" ? "Du wurdest aus diesem Raum entfernt." : "Verbindung wird hergestellt …"}</strong>
           {remoteConnectionStatus === "RECONNECTING" && <span>Aktionen bleiben gesperrt, bis der Server den aktuellen Stand bestätigt hat.</span>}
-          {(remoteConnectionStatus === "INVALID_SESSION" || remoteConnectionStatus === "ROOM_NOT_FOUND" || remoteConnectionStatus === "SESSION_REPLACED") && <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="text-button" onClick={() => multiplayer && forgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>}
+          {(remoteConnectionStatus === "INVALID_SESSION" || remoteConnectionStatus === "ROOM_NOT_FOUND" || remoteConnectionStatus === "SESSION_REPLACED" || remoteConnectionStatus === "PLAYER_REMOVED") && <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="text-button" onClick={() => multiplayer && requestForgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>}
         </div>}
+        {multiplayer && activeRoomPlayer !== undefined && activeRoomPlayer.playerId !== multiplayer.playerId && <div role="status" className="connection-banner">Warte auf {activeRoomPlayer.name} …{activeRoomPlayer.connected ? "" : ` ${activeRoomPlayer.name} ist derzeit getrennt.`}</div>}
+        {multiplayer && state.phase === GamePhase.Finished && rematchOfferRoomId !== undefined && rematchOfferRoomId !== multiplayer.roomId && <div role="status" className="connection-banner">Der Host hat ein Rematch erstellt. <button type="button" className="secondary-button" onClick={openRematchOffer}>Rematch beitreten</button></div>}
         <div className="main-grid">
           <div className="board-column">
             <TerritoryBoard state={state} selectedId={selectedTerritoryId}
@@ -1345,7 +1501,7 @@ export default function App() {
               <RecentWarResult state={state} /></ActionPanel>
             <SecretFactionPanel state={state} playerId={viewerPlayerId} factionSuit={viewerFactionSuit} visible={factionVisible}
               onVisibleChange={setFactionVisible} localPassAndPlay={!multiplayer} onPlayerChange={setPrivacyPlayerId} />
-            <PlayerPanel state={state} playerName={name} viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} />
+            <PlayerPanel state={state} playerName={name} viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} room={multiplayerRoom} />
             {selectedTerritoryId && <TerritoryDetails state={state} territoryId={selectedTerritoryId} playerName={name} />}
             <EventLog events={state.events} playerName={name} />
           </div>

@@ -59,6 +59,7 @@ export interface GameRoom {
   revision: number;
   readonly createdAt: string;
   updatedAt: string;
+  rematchOfRoomId?: string;
   commandQueue: Promise<void>;
 }
 
@@ -103,6 +104,7 @@ interface PersistenceChanges {
   readonly gameState?: GameState;
   readonly acceptedCommands?: readonly AcceptedCommand[];
   readonly updatedAt?: string;
+  readonly rematchOfRoomId?: string;
 }
 
 export class RoomError extends Error {
@@ -207,9 +209,7 @@ export class RoomManager {
 
   async createRoom(playerName: string): Promise<CreatedRoom> {
     if (!playerNameIsValid(playerName)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
-    let roomId = this.roomIdFactory();
-    while (this.rooms.has(roomId) || this.pendingRoomIds.has(roomId)) roomId = this.roomIdFactory();
-    this.pendingRoomIds.add(roomId);
+    const roomId = this.reserveRoomId();
     const created = this.createParticipant(playerName);
     const now = this.now();
     const room: GameRoom = {
@@ -296,6 +296,60 @@ export class RoomManager {
     });
   }
 
+  async removeWaitingParticipant(roomId: string, sessionToken: string, playerId: string): Promise<{ readonly room: GameRoom; readonly removed: RoomParticipant }> {
+    const initialSession = this.authenticate(roomId, sessionToken);
+    return this.inRoomQueue(initialSession.room, async () => {
+      const session = this.authenticate(roomId, sessionToken);
+      const room = session.room;
+      if (session.participant.playerId !== room.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host can remove waiting players.");
+      if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "Players can only be removed before the game starts.");
+      if (playerId === room.hostPlayerId) throw new RoomError(NetworkErrorCode.InvalidMessage, "The host cannot remove themself.");
+      const removed = room.participants.get(playerId);
+      if (removed === undefined) throw new RoomError(NetworkErrorCode.RoomNotFound, "The player was not found in this room.");
+      const participants = [...room.participants.values()].filter((participant) => participant.playerId !== playerId);
+      const revision = room.revision + 1;
+      const updatedAt = this.now();
+      await this.persist(room, { participants, revision, updatedAt });
+      room.participants.delete(playerId);
+      room.revision = revision;
+      room.updatedAt = updatedAt;
+      return { room, removed };
+    });
+  }
+
+  async createRematch(roomId: string, sessionToken: string): Promise<CreatedRoom> {
+    const initialSession = this.authenticate(roomId, sessionToken);
+    return this.inRoomQueue(initialSession.room, async () => {
+      const session = this.authenticate(roomId, sessionToken);
+      const source = session.room;
+      if (session.participant.playerId !== source.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host of the finished room can create a rematch.");
+      if (source.status !== "FINISHED") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "A rematch can only be created after the game has finished.");
+      const newRoomId = this.reserveRoomId();
+      const created = this.createParticipant(session.participant.name);
+      const now = this.now();
+      const rematch: GameRoom = {
+        roomId: newRoomId,
+        status: "WAITING",
+        hostPlayerId: created.participant.playerId,
+        map: copyMap(source.map),
+        participants: new Map([[created.participant.playerId, created.participant]]),
+        acceptedCommands: [],
+        revision: 0,
+        createdAt: now,
+        updatedAt: now,
+        rematchOfRoomId: source.roomId,
+        commandQueue: Promise.resolve(),
+      };
+      try {
+        await this.persist(rematch);
+        this.rooms.set(rematch.roomId, rematch);
+        return { room: rematch, participant: created.participant, sessionToken: created.sessionToken };
+      } finally {
+        this.pendingRoomIds.delete(newRoomId);
+      }
+    });
+  }
+
   authenticate(roomId: string, sessionToken: string): Session {
     const room = this.getRoom(roomId);
     const participant = [...room.participants.values()].find((candidate) => tokensMatch(candidate.sessionTokenHash, sessionToken));
@@ -336,6 +390,9 @@ export class RoomManager {
       hostPlayerId: room.hostPlayerId,
       map: copyMap(room.map),
       players: [...room.participants.values()].map((participant) => ({ playerId: participant.playerId, name: participant.name, connected: participant.connected })),
+      createdAt: room.createdAt,
+      updatedAt: room.updatedAt,
+      ...(room.rematchOfRoomId === undefined ? {} : { rematchOfRoomId: room.rematchOfRoomId }),
     };
   }
 
@@ -410,6 +467,7 @@ export class RoomManager {
       acceptedCommands: [...(changes.acceptedCommands ?? room.acceptedCommands)].slice(-MAX_ACCEPTED_COMMANDS),
       createdAt: room.createdAt,
       updatedAt: changes.updatedAt ?? room.updatedAt,
+      ...((changes.rematchOfRoomId ?? room.rematchOfRoomId) === undefined ? {} : { rematchOfRoomId: changes.rematchOfRoomId ?? room.rematchOfRoomId }),
     };
   }
 
@@ -427,6 +485,7 @@ export class RoomManager {
       revision: snapshot.revision,
       createdAt: snapshot.createdAt,
       updatedAt: snapshot.updatedAt,
+      ...(snapshot.rematchOfRoomId === undefined ? {} : { rematchOfRoomId: snapshot.rematchOfRoomId }),
       commandQueue: Promise.resolve(),
     };
   }
@@ -437,6 +496,13 @@ export class RoomManager {
       participant: { playerId: this.playerIdFactory(), name: playerName.trim(), sessionTokenHash: hashSessionToken(sessionToken), joinedAt: this.now(), connected: false },
       sessionToken,
     };
+  }
+
+  private reserveRoomId(): string {
+    let roomId = this.roomIdFactory();
+    while (this.rooms.has(roomId) || this.pendingRoomIds.has(roomId)) roomId = this.roomIdFactory();
+    this.pendingRoomIds.add(roomId);
+    return roomId;
   }
 
   private context(): { readonly randomSource: RandomSource; readonly cardSource: CardSource; readonly timestamp: string } {

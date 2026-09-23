@@ -99,7 +99,9 @@ npm run dev:multiplayer
 
 Öffne [http://localhost:5173](http://localhost:5173) in zwei Browser-Tabs. Im ersten Tab `Mehrspieler` wählen, einen Namen eingeben und `Spiel erstellen` wählen. Den angezeigten Raumcode im zweiten Tab zusammen mit einem Namen eingeben und `Raum beitreten` wählen. Der Host legt Sitzreihenfolge, Kartengröße und ersten Kartenzeichner fest und startet anschließend die Partie. Die Größe gehört zum öffentlichen Raumzustand und wird beim Start vom Server an den Core übergeben.
 
-Der Browser speichert Room-ID, Spieler-ID und Session-Token lokal und bietet beim Öffnen des Mehrspielerbereichs die letzte Partie zum Fortsetzen an. Invite-Links enthalten nur den Roomcode. Die Lobby kann Code und Einladungslink kopieren, ohne ein Token preiszugeben.
+Der Browser speichert Room-ID, Spieler-ID, Session-Token, Namen und eine kleine, nicht autoritative Room-Zusammenfassung lokal. Die Mehrspieler-Startseite gruppiert damit wartende, laufende und beendete eigene Partien; `Fortsetzen` prüft anschließend wieder den Server. `Lokal vergessen` entfernt nur diese Browser-Sitzung und nie den Serverroom. Invite-Links enthalten ausschließlich den Roomcode, können kopiert oder über die Share-Funktion geteilt werden und füllen den Join-Bereich automatisch vor.
+
+Der Host kann Gäste nur vor Spielstart aus der Lobby entfernen. Ein entfernter Browser erhält einen terminalen Hinweis und versucht keine erneute Verbindung. Nach einer beendeten Partie kann ihr Host ein Rematch erzeugen: Es entsteht ein neuer WAITING-Room mit gleicher Kartengröße, neuen Zugangsdaten und normalem Setup; die alte Ergebnispartie bleibt erhalten.
 
 Der Server legt jeden Room als atomaren JSON-Snapshot unter `data/rooms/` ab; `data/` wird nicht committed. Beim Neustart lädt er WAITING-, RUNNING- und FINISHED-Rooms wieder ein. Zum Testen eines Neustarts `npm run dev:multiplayer` beenden, erneut starten und die gespeicherte Partie im Browser fortsetzen. `VEDRAS_DATA_DIR=/pfad/zum/volume` setzt das Datenverzeichnis; ohne Angabe gilt `./data`. Für andere Entwicklungs-Origins kann der Server mit `WEB_ORIGIN=http://host:port` gestartet werden; `PORT` setzt den Server-Port.
 

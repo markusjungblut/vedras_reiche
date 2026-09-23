@@ -21,6 +21,7 @@ export type RemoteConnectionStatus = NonNullable<GameControllerSnapshot["connect
 export interface RemoteGameControllerSnapshot extends GameControllerSnapshot {
   readonly room?: PublicRoomState;
   readonly connectionStatus: RemoteConnectionStatus;
+  readonly rematchRoomId?: string;
 }
 
 interface PendingCommand {
@@ -49,6 +50,7 @@ export class RemoteGameController implements GameController {
   private resolveConnected: (() => void) | undefined;
   private rejectConnected: ((reason: Error) => void) | undefined;
   private sequence = 0;
+  private rematchRoomId: string | undefined;
 
   constructor(readonly credentials: MultiplayerCredentials, private readonly endpoint: string) {}
 
@@ -71,6 +73,7 @@ export class RemoteGameController implements GameController {
       ...(this.connectionMessage === undefined ? {} : { connectionMessage: this.connectionMessage }),
       ...(this.view === undefined ? {} : { view: this.view }),
       ...(this.room === undefined ? {} : { room: this.room }),
+      ...(this.rematchRoomId === undefined ? {} : { rematchRoomId: this.rematchRoomId }),
     };
   }
 
@@ -139,6 +142,11 @@ export class RemoteGameController implements GameController {
       this.handleServerError(message.code, message.message, socket);
       return;
     }
+    if (message.type === "REMATCH_OFFER") {
+      this.rematchRoomId = message.roomId;
+      this.emit();
+      return;
+    }
     if (message.type === "COMMAND_ACCEPTED") {
       this.resolveCommand(message);
       return;
@@ -160,14 +168,14 @@ export class RemoteGameController implements GameController {
   }
 
   private handleServerError(code: NetworkErrorCode, message: string, socket: WebSocket): void {
-    if (code === NetworkErrorCode.InvalidSession || code === NetworkErrorCode.RoomNotFound || code === NetworkErrorCode.SessionReplaced) {
+    if (code === NetworkErrorCode.InvalidSession || code === NetworkErrorCode.RoomNotFound || code === NetworkErrorCode.SessionReplaced || code === NetworkErrorCode.PlayerRemoved) {
       this.terminal = true;
       this.connected = false;
       const status: RemoteConnectionStatus = code === NetworkErrorCode.InvalidSession ? "INVALID_SESSION" :
-        code === NetworkErrorCode.RoomNotFound ? "ROOM_NOT_FOUND" : "SESSION_REPLACED";
+        code === NetworkErrorCode.RoomNotFound ? "ROOM_NOT_FOUND" : code === NetworkErrorCode.PlayerRemoved ? "PLAYER_REMOVED" : "SESSION_REPLACED";
       const displayMessage = status === "INVALID_SESSION" ? "Diese lokale Spielersitzung ist nicht mehr gültig." :
         status === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." :
-        "Diese Spielersitzung wurde in einem anderen Fenster geöffnet.";
+          status === "PLAYER_REMOVED" ? "Du wurdest aus diesem Raum entfernt." : "Diese Spielersitzung wurde in einem anderen Fenster geöffnet.";
       this.setConnection(status, displayMessage);
       this.rejectPending(displayMessage);
       this.rejectInitial(new Error(displayMessage));

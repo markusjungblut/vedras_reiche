@@ -160,6 +160,59 @@ test("a failed durable save keeps the previous authoritative state and revision"
   assert.equal(room.gameState.mapCreation.regionCount, 1);
 });
 
+test("waiting-room removal is host-only, durable, and unavailable after the game starts", async () => {
+  const store = new TestRoomStore();
+  const rooms = manager(store);
+  const host = await rooms.createRoom("Anna");
+  const guest = await rooms.joinRoom(host.room.roomId, "Ben");
+  await assert.rejects(() => rooms.removeWaitingParticipant(host.room.roomId, guest.sessionToken, host.participant.playerId),
+    (error) => error.code === NetworkErrorCode.NotHost);
+
+  store.failSaves = true;
+  await assert.rejects(() => rooms.removeWaitingParticipant(host.room.roomId, host.sessionToken, guest.participant.playerId),
+    (error) => error.code === NetworkErrorCode.PersistenceFailed);
+  assert.equal(host.room.participants.has(guest.participant.playerId), true);
+
+  store.failSaves = false;
+  const removed = await rooms.removeWaitingParticipant(host.room.roomId, host.sessionToken, guest.participant.playerId);
+  assert.equal(removed.removed.playerId, guest.participant.playerId);
+  assert.equal(host.room.participants.has(guest.participant.playerId), false);
+  assert.equal((await store.load(host.room.roomId)).participants.some((player) => player.playerId === guest.participant.playerId), false);
+  assert.throws(() => rooms.authenticate(host.room.roomId, guest.sessionToken), (error) => error.code === NetworkErrorCode.InvalidSession);
+
+  const replacement = await rooms.joinRoom(host.room.roomId, "Clara");
+  await rooms.startRoom(host.room.roomId, host.sessionToken, [host.participant.playerId, replacement.participant.playerId], host.participant.playerId);
+  await assert.rejects(() => rooms.removeWaitingParticipant(host.room.roomId, host.sessionToken, replacement.participant.playerId),
+    (error) => error.code === NetworkErrorCode.RoomAlreadyStarted);
+});
+
+test("a rematch creates and persists an independent waiting room", async () => {
+  const store = new TestRoomStore();
+  const rooms = manager(store);
+  const { room: source, participant: host, guest, annaToken, guestToken } = await startTwoPlayers(rooms);
+  source.status = "FINISHED";
+  const sourceMap = { ...source.map };
+  await assert.rejects(() => rooms.createRematch(source.roomId, guestToken), (error) => error.code === NetworkErrorCode.NotHost);
+
+  const rematch = await rooms.createRematch(source.roomId, annaToken);
+  assert.notEqual(rematch.room.roomId, source.roomId);
+  assert.equal(rematch.room.status, "WAITING");
+  assert.equal(rematch.room.rematchOfRoomId, source.roomId);
+  assert.deepEqual(rematch.room.map, sourceMap);
+  assert.equal(rematch.room.participants.size, 1);
+  assert.notEqual(rematch.participant.playerId, host.playerId);
+  assert.notEqual(rematch.sessionToken, annaToken);
+  assert.equal(source.status, "FINISHED");
+  assert.deepEqual(source.map, sourceMap);
+
+  const restored = manager(store);
+  await restored.restore();
+  const restoredRematch = restored.getRoom(rematch.room.roomId);
+  assert.equal(restoredRematch.status, "WAITING");
+  assert.equal(restoredRematch.rematchOfRoomId, source.roomId);
+  assert.deepEqual(restoredRematch.map, sourceMap);
+});
+
 test("restored snapshots still create redacted player views for hidden bids, spades, and factions", async () => {
   const store = new TestRoomStore();
   const roomsA = manager(store);
@@ -256,6 +309,79 @@ test("HTTP and WebSocket transport still sends individual player views", async (
   annaSocket.close();
   benSocket.close();
   await server.close();
+});
+
+test("HTTP removal sends a terminal PLAYER_REMOVED state to the connected guest", async () => {
+  const rooms = manager();
+  const server = createVedrasServer({ roomManager: rooms, port: 0, logger: () => {} });
+  if (!server.httpServer.listening) await once(server.httpServer, "listening");
+  const base = "http://127.0.0.1:" + server.port;
+  try {
+    const host = await fetch(base + "/api/rooms", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ playerName: "Anna" }),
+    }).then((response) => response.json());
+    const guest = await fetch(base + "/api/rooms/" + host.roomId + "/join", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ playerName: "Ben" }),
+    }).then((response) => response.json());
+    const socket = new WebSocket("ws://127.0.0.1:" + server.port + "/ws");
+    await once(socket, "open");
+    const joined = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "AUTHENTICATE", protocolVersion: 1, roomId: guest.roomId, sessionToken: guest.sessionToken }));
+    await joined;
+
+    const notHost = await fetch(base + "/api/rooms/" + host.roomId + "/players/" + host.playerId + "/remove", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionToken: guest.sessionToken }),
+    });
+    assert.equal(notHost.status, 403);
+    assert.equal((await notHost.json()).code, NetworkErrorCode.NotHost);
+
+    const removed = nextMessage(socket);
+    const response = await fetch(base + "/api/rooms/" + host.roomId + "/players/" + guest.playerId + "/remove", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionToken: host.sessionToken }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await removed, { type: "SERVER_ERROR", code: NetworkErrorCode.PlayerRemoved, message: "Du wurdest aus diesem Raum entfernt." });
+    assert.equal(rooms.getRoom(host.roomId).participants.has(guest.playerId), false);
+    socket.close();
+  } finally {
+    await server.close();
+  }
+});
+
+test("a finished-room rematch notifies connected former players without changing the old room", async () => {
+  const rooms = manager();
+  const server = createVedrasServer({ roomManager: rooms, port: 0, logger: () => {} });
+  if (!server.httpServer.listening) await once(server.httpServer, "listening");
+  const base = "http://127.0.0.1:" + server.port;
+  try {
+    const host = await fetch(base + "/api/rooms", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ playerName: "Anna" }),
+    }).then((response) => response.json());
+    const guest = await fetch(base + "/api/rooms/" + host.roomId + "/join", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ playerName: "Ben" }),
+    }).then((response) => response.json());
+    const guestSocket = new WebSocket("ws://127.0.0.1:" + server.port + "/ws");
+    await once(guestSocket, "open");
+    const connected = nextMessage(guestSocket);
+    guestSocket.send(JSON.stringify({ type: "AUTHENTICATE", protocolVersion: 1, roomId: guest.roomId, sessionToken: guest.sessionToken }));
+    await connected;
+    const source = rooms.getRoom(host.roomId);
+    source.status = "FINISHED";
+    const offer = nextMessage(guestSocket);
+    const response = await fetch(base + "/api/rooms/" + host.roomId + "/rematch", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionToken: host.sessionToken }),
+    });
+    assert.equal(response.status, 201);
+    const rematch = await response.json();
+    assert.notEqual(rematch.roomId, host.roomId);
+    assert.notEqual(rematch.sessionToken, host.sessionToken);
+    assert.deepEqual(await offer, { type: "REMATCH_OFFER", roomId: rematch.roomId, rematchOfRoomId: host.roomId });
+    assert.equal(rooms.getRoom(host.roomId).status, "FINISHED");
+    assert.equal(rooms.getRoom(rematch.roomId).status, "WAITING");
+    guestSocket.close();
+  } finally {
+    await server.close();
+  }
 });
 
 test("transport rejects malformed and oversized WebSocket input", async () => {
