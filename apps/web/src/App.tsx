@@ -39,7 +39,7 @@ import { EventLog } from "./components/EventLog";
 import { GameHeader } from "./components/GameHeader";
 import { PlayerPanel } from "./components/PlayerPanel";
 import { StateInspector } from "./components/StateInspector";
-import { TerritoryBoard } from "./components/TerritoryBoard";
+import { TerritoryBoard, TerritoryOverview } from "./components/TerritoryBoard";
 import { TerritoryDetails } from "./components/TerritoryDetails";
 import { ResultPanel, ScoringPanel } from "./components/ScoringPanel";
 import { getMapEditor, NeutralDiamondControls, RecentWarResult, WarControls, type MapEditor } from "./components/WarControls";
@@ -1615,7 +1615,14 @@ export default function App() {
         </div>}
         {multiplayer && activeRoomPlayer !== undefined && activeRoomPlayer.playerId !== multiplayer.playerId && <div role="status" className="connection-banner">Warte auf {activeRoomPlayer.name} …{activeRoomPlayer.connected ? "" : ` ${activeRoomPlayer.name} ist derzeit getrennt.`}</div>}
         {multiplayer && state.phase === GamePhase.Finished && rematchOfferRoomId !== undefined && rematchOfferRoomId !== multiplayer.roomId && <div role="status" className="connection-banner">Der Host hat ein Rematch erstellt. <button type="button" className="secondary-button" onClick={openRematchOffer}>Rematch beitreten</button></div>}
-        <div className="main-grid">
+        <div className="game-table">
+          <aside className="personal-column" aria-label="Persönliche Informationen">
+            <SecretFactionPanel state={state} playerId={viewerPlayerId} factionSuit={viewerFactionSuit} visible={factionVisible}
+              onVisibleChange={setFactionVisible} localPassAndPlay={!multiplayer} onPlayerChange={setPrivacyPlayerId} />
+            <FirstGameHint state={state} viewerPlayerId={viewerPlayerId} progress={tutorialProgress}
+              onDismiss={dismissTutorialHint} onOpenHelp={openHelp} />
+            {selectedTerritoryId && <TerritoryDetails state={state} territoryId={selectedTerritoryId} playerName={name} />}
+          </aside>
           <div className="board-column">
             <TerritoryBoard state={state} selectedId={selectedTerritoryId}
               onSelect={toggleTerritorySelection} onClearSelection={() => setSelectedTerritoryId(undefined)} highlightedIds={highlightedIds}
@@ -1628,9 +1635,7 @@ export default function App() {
               setupEditor={setupEditor} onSetupSelectCell={selectSetupCell}
               onSetupStrokePreview={previewSetupStroke} onSetupStrokeCommit={commitSetupStroke} onSetupStrokeErase={eraseSetupStroke} />
           </div>
-          <div className="sidebar-column">
-            <FirstGameHint state={state} viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} progress={tutorialProgress}
-              onDismiss={dismissTutorialHint} onOpenHelp={openHelp} />
+          <div className="action-column">
             <ActionPanel><fieldset className="action-lock" disabled={!multiplayerConnected}><PhaseControls state={state} actionTerritoryId={actionTerritoryId}
                 onSelectActionTerritory={setActionTerritoryId} onAction={dispatch} onStartRound={beginRound}
                 splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
@@ -1641,13 +1646,16 @@ export default function App() {
                 factionSuits={factionSuits}
                 selectedPart={currentPartChoice?.selectedPart} onSelectPart={(part) => currentPartChoice && setPartChoiceDraft({ key: currentPartChoice.key, part })} /></fieldset>
               <RecentWarResult state={state} /></ActionPanel>
-            <SecretFactionPanel state={state} playerId={viewerPlayerId} factionSuit={viewerFactionSuit} visible={factionVisible}
-              onVisibleChange={setFactionVisible} localPassAndPlay={!multiplayer} onPlayerChange={setPrivacyPlayerId} />
+          </div>
+          <div className="players-column">
             <PlayerPanel state={state} playerName={name} viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} room={multiplayerRoom} />
-            {selectedTerritoryId && <TerritoryDetails state={state} territoryId={selectedTerritoryId} playerName={name} />}
+          </div>
+          <div className="event-column">
             <EventLog events={state.events} playerName={name} />
           </div>
         </div>
+        <TerritoryOverview state={state} selectedId={selectedTerritoryId} viewerPlayerId={viewerPlayerId} highlightedIds={highlightedIds}
+          onSelect={toggleTerritorySelection} playerName={name} />
         {DEVELOPER_TOOLS_ENABLED && !multiplayer && <div className="inspector-row panel">
           <StateInspector state={state} />
           <button type="button" className="text-button" onClick={() => dispatch({

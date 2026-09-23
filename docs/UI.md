@@ -16,6 +16,12 @@ Die Kartenansichten `Gebiete`, `Mein Reich`, `Reiche` und `Boni` sind lokale Anz
 
 Mehrspieleransichten richten aktive Bedienelemente ausschließlich nach dem vom Core projizierten persönlichen Eingabezustand. Öffentliche Fortschritte wie die Zahl abgegebener Gebote bleiben sichtbar, fremde Gebotswerte und fremde Eingabeformulare nicht.
 
+## Desktop-Spielansicht
+
+Auf breiten Bildschirmen steht die persönliche Spalte links neben der Karte. Aktion und Spielerübersicht liegen rechts nebeneinander; das Ereignisprotokoll nutzt die Breite beider Boxen darunter. Die Karte wird dafür nicht zugunsten von Seitenpanels verkleinert. Bei mittleren und kleinen Breiten ordnen sich die Panels kontrolliert untereinander an.
+
+Die Gebietsübersicht folgt als eigener Abschnitt unter dem Spieltisch. Besitzerfilter und Sortierungen nach Gebiet, Symbol oder Fläche sind lokaler UI-Zustand. Die Karte lässt sich nach dem Hineinzoomen direkt ziehen. Ein Gebietsklick bleibt bis zur kleinen Drag-Schwelle ein Klick. Nachbarn behalten bei Auswahl ihre Grundfarbe und werden nur daraus abgeleitet abgedunkelt.
+
 Übergänge sind kurz und rein visuell. `prefers-reduced-motion` schaltet Animationen und Übergänge praktisch aus.
 
 ## Einstellungen

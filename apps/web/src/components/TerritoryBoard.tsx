@@ -6,6 +6,7 @@ import {
   getSharedBorder,
   getStateTerritoryArea,
   mapScreenPointToLocal,
+  Suit,
   type Territory,
   type GridCell,
   type SetupBorderEdge,
@@ -13,7 +14,7 @@ import {
 import { suitClass, suitName, suitSymbol } from "../formatters/suit-label";
 import type { MapEditor } from "./WarControls";
 import { createPenStroke, setupBorderEdgeToSegment, type GridVertex } from "../map/setup-draft";
-import { getCellLabelAnchor } from "../map/territory-label-anchor";
+import { getCellLabelAnchor, getCellLabelAnchorAwayFromPoints } from "../map/territory-label-anchor";
 import type { GameReadModel } from "../game-read-model";
 
 export type MapViewMode = "TERRITORIES" | "MY_REALM" | "REALMS" | "BONUSES";
@@ -93,6 +94,32 @@ interface TerritoryCardProps {
   playerName: (id: string) => string;
 }
 
+type TerritoryFilter = "ALL" | "MINE" | "NEUTRAL" | `PLAYER:${string}`;
+type TerritorySort = "TERRITORY" | "SUIT" | "AREA";
+
+const SUIT_ORDER = [Suit.Diamonds, Suit.Clubs, Suit.Hearts, Suit.Spades] as const;
+
+function territoryOrder(state: GameReadModel): ReadonlyMap<string, number> {
+  return new Map(state.territories.map((territory, index) => [territory.id, index]));
+}
+
+function sortTerritories(state: GameReadModel, territories: readonly Territory[], sort: TerritorySort, areaDirection: "ASC" | "DESC"): Territory[] {
+  const order = territoryOrder(state);
+  const byCanonicalOrder = (left: Territory, right: Territory) => (order.get(left.id) ?? 0) - (order.get(right.id) ?? 0);
+  return [...territories].sort((left, right) => {
+    if (sort === "SUIT") {
+      const leftSuit = left.card === undefined ? SUIT_ORDER.length : SUIT_ORDER.indexOf(left.card.suit);
+      const rightSuit = right.card === undefined ? SUIT_ORDER.length : SUIT_ORDER.indexOf(right.card.suit);
+      return leftSuit - rightSuit || byCanonicalOrder(left, right);
+    }
+    if (sort === "AREA") {
+      const difference = getStateTerritoryArea(state, left.id) - getStateTerritoryArea(state, right.id);
+      return (areaDirection === "DESC" ? -difference : difference) || byCanonicalOrder(left, right);
+    }
+    return byCanonicalOrder(left, right);
+  });
+}
+
 function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highlighted, activated, borderMarked, onSelect, playerName }: TerritoryCardProps) {
   const card = territory.card;
   const localInfluence = Object.entries(territory.localInfluenceByPlayerId ?? {}).filter(([, amount]) => amount > 0);
@@ -106,7 +133,9 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
   ].filter(Boolean).join(" ");
 
   return (
-    <button type="button" className={classes} onClick={onSelect} aria-pressed={selected} aria-label={`${territory.id}, ${ownerName}${card ? `, ${suitName(card.suit)} ${card.activationNumber}` : ""}`}>
+    <button type="button" className={classes} onClick={onSelect} aria-pressed={selected} data-territory-id={territory.id} data-territory-area={area}
+      data-territory-owner={territory.ownerId ?? "NEUTRAL"} data-territory-suit={card?.suit ?? "NONE"}
+      aria-label={`${territory.id}, ${ownerName}${card ? `, ${suitName(card.suit)} ${card.activationNumber}` : ""}`}>
       <span className="territory-card-top"><strong>{territory.id}</strong><span>{activated ? "● Aktiviert" : "Gebiet"}</span></span>
       <span className="territory-card-center">
         {card ? <>
@@ -133,9 +162,6 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
 export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, highlightedIds, changedCellKeys, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
   realmHighlights, scoreHundredthsByTerritoryId, showScoreLabels, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: TerritoryBoardProps) {
   const [viewMode, setViewMode] = useState<MapViewMode>("TERRITORIES");
-  const highlighted = new Set(highlightedIds);
-  const activated = new Set(state.activation?.pendingTerritoryIds ?? []);
-  const marked = new Set(state.borderMarks.flatMap((mark) => mark.territoryIds));
 
   const map = state.map;
   const selectedTerritory = selectedId && state.territories.find((item) => item.id === selectedId);
@@ -144,7 +170,7 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
     : [];
   return (
     <section className="panel board-panel" aria-labelledby="board-title">
-      <div className="panel-heading"><div><p className="eyebrow">Rasterkarte{state.map ? ` · ${state.map.width} × ${state.map.height}` : ""}</p><h2 id="board-title">Gebietsübersicht</h2></div><span className="panel-count">{state.mapCreation ? state.mapCreation.regionCount : state.territories.length} {state.mapCreation ? "Regionen" : "Gebiete"}</span></div>
+      <div className="panel-heading"><div><p className="eyebrow">Rasterkarte{state.map ? ` · ${state.map.width} × ${state.map.height}` : ""}</p><h2 id="board-title">Karte</h2></div><span className="panel-count">{state.mapCreation ? state.mapCreation.regionCount : state.territories.length} {state.mapCreation ? "Regionen" : "Gebiete"}</span></div>
       {!state.mapCreation && <div className="map-view-modes" aria-label="Kartenansicht">
         {(["TERRITORIES", "MY_REALM", "REALMS", "BONUSES"] as const).map((mode) => <button key={mode} type="button"
           className={viewMode === mode ? "selected-button" : "secondary-button"} onClick={() => setViewMode(mode)}>
@@ -173,25 +199,79 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
         ? "Teil A (ocker) und Teil B (blau) sind bestätigt. Die zuerst wählende Person entscheidet im Aktionsbereich."
         : "Teilungsmodus: Klicke die Kästchen des umkämpften Gebiets direkt auf der Karte an, um zwischen A und B zu wechseln."
         : "Klicke auf ein Kästchen, um sein Gebiet auszuwählen. Gebietsgrenzen entstehen aus gemeinsamen Rasterkanten."}</p>
-      <div className="territory-grid">
-        {state.territories.map((territory) => (
-          <TerritoryCard
-            key={territory.id}
-            territory={territory}
-            area={state.map ? getStateTerritoryArea(state, territory.id) : territory.area ?? 0}
-            ownerIndex={state.players.findIndex((player) => player.id === territory.ownerId)}
-            ownerName={territory.ownerId === null ? "Neutral" : playerName(territory.ownerId)}
-            selected={selectedId === territory.id}
-            highlighted={highlighted.has(territory.id)}
-            activated={activated.has(territory.id)}
-            borderMarked={marked.has(territory.id)}
-            onSelect={() => onSelect(territory.id)}
-            playerName={playerName}
-          />
-        ))}
-      </div>
     </section>
   );
+}
+
+export function TerritoryOverview({ state, selectedId, viewerPlayerId, highlightedIds, onSelect, playerName }: {
+  readonly state: GameReadModel;
+  readonly selectedId?: string | undefined;
+  readonly viewerPlayerId?: string | undefined;
+  readonly highlightedIds: readonly string[];
+  readonly onSelect: (territoryId: string) => void;
+  readonly playerName: (id: string) => string;
+}) {
+  const [filter, setFilter] = useState<TerritoryFilter>("ALL");
+  const [sort, setSort] = useState<TerritorySort>("TERRITORY");
+  const [areaDirection, setAreaDirection] = useState<"ASC" | "DESC">("DESC");
+  const highlighted = useMemo(() => new Set(highlightedIds), [highlightedIds]);
+  const activated = useMemo(() => new Set(state.activation?.pendingTerritoryIds ?? []), [state.activation?.pendingTerritoryIds]);
+  const marked = useMemo(() => new Set(state.borderMarks.flatMap((mark) => mark.territoryIds)), [state.borderMarks]);
+  const hasNeutralTerritories = state.territories.some((territory) => territory.ownerId === null);
+
+  const filteredTerritories = useMemo(() => {
+    const matching = state.territories.filter((territory) => {
+      if (filter === "MINE") return viewerPlayerId !== undefined && territory.ownerId === viewerPlayerId;
+      if (filter === "NEUTRAL") return territory.ownerId === null;
+      if (filter.startsWith("PLAYER:")) return territory.ownerId === filter.slice("PLAYER:".length);
+      return true;
+    });
+    return sortTerritories(state, matching, sort, areaDirection);
+  }, [areaDirection, filter, sort, state, viewerPlayerId]);
+
+  const chooseAreaSort = () => {
+    if (sort === "AREA") setAreaDirection((direction) => direction === "DESC" ? "ASC" : "DESC");
+    else {
+      setSort("AREA");
+      setAreaDirection("DESC");
+    }
+  };
+
+  return <section className="panel territory-overview" aria-labelledby="territory-overview-title">
+    <div className="panel-heading"><div><p className="eyebrow">Analyse</p><h2 id="territory-overview-title">Gebietsübersicht</h2></div><span className="panel-count">{filteredTerritories.length} von {state.territories.length} Gebieten</span></div>
+    <div className="territory-overview-controls">
+      <div className="territory-filter-tabs" aria-label="Besitzerfilter">
+        <button type="button" className={filter === "ALL" ? "selected-button" : "secondary-button"} aria-pressed={filter === "ALL"} onClick={() => setFilter("ALL")}>Alle</button>
+        {viewerPlayerId !== undefined && <button type="button" className={filter === "MINE" ? "selected-button" : "secondary-button"} aria-pressed={filter === "MINE"} onClick={() => setFilter("MINE")}>Meine</button>}
+        {state.players.filter((player) => player.id !== viewerPlayerId).map((player) => {
+          const key = `PLAYER:${player.id}` as TerritoryFilter;
+          return <button type="button" key={player.id} className={filter === key ? "selected-button" : "secondary-button"} aria-pressed={filter === key} onClick={() => setFilter(key)}>{playerName(player.id)}</button>;
+        })}
+        {hasNeutralTerritories && <button type="button" className={filter === "NEUTRAL" ? "selected-button" : "secondary-button"} aria-pressed={filter === "NEUTRAL"} onClick={() => setFilter("NEUTRAL")}>Neutral</button>}
+      </div>
+      <div className="territory-sort-tabs" aria-label="Sortierung">
+        <span className="eyebrow">Sortierung</span>
+        <button type="button" className={sort === "TERRITORY" ? "selected-button" : "secondary-button"} aria-pressed={sort === "TERRITORY"} onClick={() => setSort("TERRITORY")}>Gebiet</button>
+        <button type="button" className={sort === "SUIT" ? "selected-button" : "secondary-button"} aria-pressed={sort === "SUIT"} onClick={() => setSort("SUIT")}>Symbol</button>
+        <button type="button" className={sort === "AREA" ? "selected-button" : "secondary-button"} aria-pressed={sort === "AREA"} onClick={chooseAreaSort}>Größe {areaDirection === "DESC" ? "↓" : "↑"}</button>
+      </div>
+    </div>
+    <div className="territory-grid">
+      {filteredTerritories.map((territory) => <TerritoryCard
+        key={territory.id}
+        territory={territory}
+        area={state.map ? getStateTerritoryArea(state, territory.id) : territory.area ?? 0}
+        ownerIndex={state.players.findIndex((player) => player.id === territory.ownerId)}
+        ownerName={territory.ownerId === null ? "Neutral" : playerName(territory.ownerId)}
+        selected={selectedId === territory.id}
+        highlighted={highlighted.has(territory.id)}
+        activated={activated.has(territory.id)}
+        borderMarked={marked.has(territory.id)}
+        onSelect={() => onSelect(territory.id)}
+        playerName={playerName}
+      />)}
+    </div>
+  </section>;
 }
 
 interface RasterMapProps {
@@ -226,11 +306,14 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
   const map = state.map!;
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
   const [hovered, setHovered] = useState<string>();
   const [activePoiId, setActivePoiId] = useState<string>();
   const svgRef = useRef<SVGSVGElement>(null);
-  const panPointer = useRef<{ readonly pointerId: number; readonly clientX: number; readonly clientY: number; readonly pan: { readonly x: number; readonly y: number } } | undefined>(undefined);
+  const panPointer = useRef<{ readonly pointerId: number; readonly clientX: number; readonly clientY: number; readonly pan: { readonly x: number; readonly y: number }; readonly dragging: boolean } | undefined>(undefined);
+  const mousePan = useRef<{ readonly clientX: number; readonly clientY: number; readonly pan: { readonly x: number; readonly y: number }; readonly dragging: boolean } | undefined>(undefined);
   const setupPointer = useRef<{ readonly pointerId: number; readonly points: GridVertex[] } | undefined>(undefined);
+  const suppressNextClick = useRef(false);
   const activeId = hovered ?? selectedId;
   const width = map.width;
   const height = map.height;
@@ -259,8 +342,9 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
   }, [cellEntries]);
   const territoryLabels = useMemo(() => state.territories.map((territory) => {
     const cells = cellsByTerritoryId.get(territory.id) ?? [];
-    return { territory, cells, anchor: getCellLabelAnchor(cells) };
-  }), [cellsByTerritoryId, state.territories]);
+    const points = state.pointsOfInterest.filter((poi) => getPointOfInterestTerritory(state, poi) === territory.id).map((poi) => poi.position);
+    return { territory, cells, anchor: getCellLabelAnchorAwayFromPoints(cells, points) };
+  }), [cellsByTerritoryId, state]);
   const activeBorders = useMemo(() => activeId === undefined ? [] : state.territories.flatMap((territory) => {
     if (territory.id === activeId) return [];
     return getSharedBorder(map, activeId, territory.id).segments;
@@ -305,6 +389,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
   }, [setupEditor]);
   const setupDraftSegments = setupEditor?.draftEdges.map(setupBorderEdgeToSegment) ?? [];
   const setupCanDraw = setupEditor !== undefined && setupEditor.mode !== "POI" && setupEditor.editable && setupAllowed.size > 0;
+  const canPan = !setupCanDraw;
   const interactionOwnsMap = setupEditor !== undefined || editor !== undefined || (split !== undefined && split.stage !== "AWAITING_CHOICE") || partChoice?.canChoose === true;
   const pointerToGridPoint = (event: { readonly currentTarget: SVGSVGElement; readonly clientX: number; readonly clientY: number }): GridVertex | undefined => {
     const transform = event.currentTarget.getScreenCTM();
@@ -380,17 +465,21 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       <button type="button" className="secondary-button" onClick={() => setZoomAround(zoom + .2)}>+</button>
       <button type="button" className="secondary-button" onClick={() => setZoomAround(zoom - .2)}>−</button>
       <button type="button" className="secondary-button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Auf Karte einpassen</button>
-      <span className="map-legend">{Math.round(zoom * 100)} % · mittlere Maustaste zum Verschieben{activeId ? ` · ${activeId}${hovered ? " Hover" : " ausgewählt"}` : ""}</span>
+      <span className="map-legend">{Math.round(zoom * 100)} % · {canPan ? "ziehen zum Verschieben" : "Zeichenwerkzeug aktiv"}{activeId ? ` · ${activeId}${hovered ? " Hover" : " ausgewählt"}` : ""}</span>
     </div>
-    <svg ref={svgRef} className={`raster-map map-view-${viewMode.toLowerCase()} ${split || editor || setupEditor ? "is-splitting" : ""} ${zoom <= 1.1 ? "is-zoomed-out" : ""}`}
+    <svg ref={svgRef} className={`raster-map map-view-${viewMode.toLowerCase()} ${split || editor || setupEditor ? "is-splitting" : ""} ${zoom <= 1.1 ? "is-zoomed-out" : ""} ${canPan ? "can-pan" : ""} ${isPanning ? "is-panning" : ""}`}
       viewBox={`${viewX} ${viewY} ${viewportWidth} ${viewportHeight}`}
       preserveAspectRatio="xMidYMid meet"
       role="img" aria-label="Vedras Rasterkarte"
       onPointerDown={(event) => {
         if (event.button === 1) {
-          event.preventDefault();
-          panPointer.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, pan };
-          event.currentTarget.setPointerCapture(event.pointerId);
+          const dragging = event.button === 1;
+          if (dragging) event.preventDefault();
+          panPointer.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, pan, dragging };
+          if (dragging) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setIsPanning(true);
+          }
           return;
         }
         if (!setupCanDraw) return;
@@ -405,8 +494,15 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       onPointerMove={(event) => {
         const panning = panPointer.current;
         if (panning?.pointerId === event.pointerId) {
+          const moved = Math.hypot(event.clientX - panning.clientX, event.clientY - panning.clientY);
+          if (!panning.dragging && moved < 6) return;
           const transform = event.currentTarget.getScreenCTM();
           if (transform === null) return;
+          if (!panning.dragging) {
+            panPointer.current = { ...panning, dragging: true };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setIsPanning(true);
+          }
           const start = mapScreenPointToLocal(new DOMPoint(panning.clientX, panning.clientY), transform);
           const current = mapScreenPointToLocal(new DOMPoint(event.clientX, event.clientY), transform);
           setPan(clampPan({
@@ -427,15 +523,79 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         else previewPointerStroke(points);
       }}
       onPointerUp={(event) => {
-        if (panPointer.current?.pointerId === event.pointerId) {
+        const panning = panPointer.current;
+        if (panning?.pointerId === event.pointerId) {
           panPointer.current = undefined;
-          event.currentTarget.releasePointerCapture(event.pointerId);
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          const moved = Math.hypot(event.clientX - panning.clientX, event.clientY - panning.clientY);
+          const didDrag = panning.dragging || moved >= 6;
+          if (didDrag && !panning.dragging) {
+            const transform = event.currentTarget.getScreenCTM();
+            if (transform !== null) {
+              const start = mapScreenPointToLocal(new DOMPoint(panning.clientX, panning.clientY), transform);
+              const current = mapScreenPointToLocal(new DOMPoint(event.clientX, event.clientY), transform);
+              setPan(clampPan({
+                x: panning.pan.x - (current.x - start.x),
+                y: panning.pan.y - (current.y - start.y),
+              }));
+            }
+          }
+          if (didDrag) suppressNextClick.current = true;
+          setIsPanning(false);
           return;
         }
         if (setupPointer.current?.pointerId !== event.pointerId) return;
         finishPointerStroke();
       }}
-      onPointerCancel={() => { panPointer.current = undefined; finishPointerStroke(); }}
+      onPointerCancel={() => { panPointer.current = undefined; setIsPanning(false); finishPointerStroke(); }}
+      onMouseDown={(event) => {
+        if (!canPan || event.button !== 0) return;
+        mousePan.current = { clientX: event.clientX, clientY: event.clientY, pan, dragging: false };
+      }}
+      onMouseMove={(event) => {
+        const panning = mousePan.current;
+        if (panning === undefined) return;
+        const moved = Math.hypot(event.clientX - panning.clientX, event.clientY - panning.clientY);
+        if (!panning.dragging && moved < 6) return;
+        const transform = event.currentTarget.getScreenCTM();
+        if (transform === null) return;
+        if (!panning.dragging) {
+          mousePan.current = { ...panning, dragging: true };
+          setIsPanning(true);
+        }
+        const start = mapScreenPointToLocal(new DOMPoint(panning.clientX, panning.clientY), transform);
+        const current = mapScreenPointToLocal(new DOMPoint(event.clientX, event.clientY), transform);
+        setPan(clampPan({
+          x: panning.pan.x - (current.x - start.x),
+          y: panning.pan.y - (current.y - start.y),
+        }));
+      }}
+      onMouseUp={(event) => {
+        const panning = mousePan.current;
+        if (panning === undefined) return;
+        mousePan.current = undefined;
+        const moved = Math.hypot(event.clientX - panning.clientX, event.clientY - panning.clientY);
+        const didDrag = panning.dragging || moved >= 6;
+        if (didDrag && !panning.dragging) {
+          const transform = event.currentTarget.getScreenCTM();
+          if (transform !== null) {
+            const start = mapScreenPointToLocal(new DOMPoint(panning.clientX, panning.clientY), transform);
+            const current = mapScreenPointToLocal(new DOMPoint(event.clientX, event.clientY), transform);
+            setPan(clampPan({
+              x: panning.pan.x - (current.x - start.x),
+              y: panning.pan.y - (current.y - start.y),
+            }));
+          }
+        }
+        if (didDrag) suppressNextClick.current = true;
+        setIsPanning(false);
+      }}
+      onClickCapture={(event) => {
+        if (!suppressNextClick.current) return;
+        suppressNextClick.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       onClick={(event) => {
         if ((event.target === event.currentTarget || (event.target as Element).classList.contains("map-background")) && !interactionOwnsMap) onClearSelection();
       }}>
@@ -533,7 +693,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         const compact = cells.length < 3 || anchor.boundaryDistance === 0;
         return <g key={`label-${territory.id}`} className={`map-territory-label ${compact ? "is-compact" : ""}`}>
           <text x={anchor.x} y={anchor.y - (compact ? 0 : .17)}>{territory.id}</text>
-          {!compact && territory.card && <text x={anchor.x} y={anchor.y + .28}>
+          {territory.card && <text x={anchor.x} y={anchor.y + (compact ? .18 : .28)}>
             {suitSymbol(territory.card.suit)} {territory.card.activationNumber}
           </text>}
           {showScoreLabels && scoreHundredthsByTerritoryId?.[territory.id] !== undefined && <text x={anchor.x} y={anchor.y + (compact ? .2 : .66)}>

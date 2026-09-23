@@ -62,12 +62,90 @@ test("map modes and strategic-point effects are available in the player view", a
   for (const name of ["Gebiete", "Mein Reich", "Reiche", "Boni"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   }
+  await expect(page.getByRole("img", { name: "Vedras Rasterkarte" })).toContainText(/G08\s*♠\s*12/);
   const bonusMode = page.getByRole("button", { name: "Boni", exact: true });
   await bonusMode.click();
   await expect(bonusMode).toHaveClass(/selected-button/);
 
   await page.getByRole("button", { name: /Wahrzeichen ★/ }).click();
   await expect(page.getByRole("status")).toContainText("+25 % Wertung für dieses Gebiet");
+});
+
+test("the desktop table uses side space and keeps the territory overview below it", async ({ page }) => {
+  await page.setViewportSize({ width: 2400, height: 1200 });
+  await openWithoutIntroduction(page, "/?developer=1");
+  await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Aktivierungsphase" }).click();
+
+  const [personal, board, action, players, events, overview] = await Promise.all([
+    page.locator(".personal-column").boundingBox(),
+    page.locator(".board-column").boundingBox(),
+    page.locator(".action-column").boundingBox(),
+    page.locator(".players-column").boundingBox(),
+    page.locator(".event-column").boundingBox(),
+    page.locator(".territory-overview").boundingBox(),
+  ]);
+  if (!personal || !board || !action || !players || !events || !overview) throw new Error("Desktop-Spielansicht hat keine vollständige Geometrie.");
+  expect(personal.x).toBeLessThan(board.x);
+  expect(board.width).toBeGreaterThan(1100);
+  expect(action.x).toBeGreaterThan(board.x + board.width - 1);
+  expect(players.x).toBeGreaterThan(action.x + action.width - 1);
+  expect(events.x).toBeGreaterThanOrEqual(action.x - 1);
+  expect(events.x + events.width).toBeGreaterThanOrEqual(players.x + players.width - 1);
+  expect(overview.y).toBeGreaterThan(board.y + board.height - 1);
+});
+
+test("territory overview combines owner filters and stable sorting", async ({ page }) => {
+  await openWithoutIntroduction(page, "/?developer=1");
+  await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Aktivierungsphase" }).click();
+
+  const overview = page.locator(".territory-overview");
+  const cards = overview.locator(".territory-card");
+  const allCount = await cards.count();
+  expect(allCount).toBeGreaterThan(0);
+  await overview.getByRole("button", { name: "Meine", exact: true }).click();
+  expect(await cards.count()).toBeGreaterThan(0);
+  expect(await cards.count()).toBeLessThan(allCount);
+
+  await overview.getByRole("button", { name: "Ben", exact: true }).click();
+  expect((await cards.evaluateAll((elements) => elements.every((element) => element.getAttribute("data-territory-owner") === "ben")))).toBe(true);
+
+  await overview.getByRole("button", { name: "Alle", exact: true }).click();
+  await overview.getByRole("button", { name: "Symbol", exact: true }).click();
+  const suits = await cards.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-territory-suit")));
+  const suitOrder = ["DIAMONDS", "CLUBS", "HEARTS", "SPADES"];
+  expect(suits.map((suit) => suitOrder.indexOf(suit))).toEqual([...suits].map((suit) => suitOrder.indexOf(suit)).sort((left, right) => left - right));
+
+  await overview.getByRole("button", { name: /Größe ↓/ }).click();
+  const descendingAreas = await cards.evaluateAll((elements) => elements.map((element) => Number(element.getAttribute("data-territory-area"))));
+  expect(descendingAreas).toEqual([...descendingAreas].sort((left, right) => right - left));
+  await overview.getByRole("button", { name: /Größe ↓/ }).click();
+  await expect(overview.getByRole("button", { name: "Größe ↑", exact: true })).toHaveAttribute("aria-pressed", "true");
+  const ascendingAreas = await cards.evaluateAll((elements) => elements.map((element) => Number(element.getAttribute("data-territory-area"))));
+  expect(ascendingAreas).toEqual([...ascendingAreas].sort((left, right) => left - right));
+});
+
+test("direct drag pans without consuming the next territory click", async ({ page }) => {
+  await openWithoutIntroduction(page, "/?developer=1");
+  await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Aktivierungsphase" }).click();
+  const map = page.getByRole("img", { name: "Vedras Rasterkarte" });
+  await page.getByRole("button", { name: "+", exact: true }).click();
+  await map.hover();
+  const box = await map.boundingBox();
+  if (box === null) throw new Error("Rasterkarte hat keine Bildschirmgeometrie.");
+  const beforePan = await map.getAttribute("viewBox");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 55, box.y + box.height / 2 + 20);
+  await page.mouse.up();
+  await expect(map).not.toHaveAttribute("viewBox", beforePan ?? "");
+  await expect(page.locator(".map-summary")).toHaveText("Gebiet auswählen");
+
+  await page.locator('rect.map-cell[x="15"][y="10"]').click();
+  await expect(page.locator(".map-summary")).not.toHaveText("Gebiet auswählen");
+  await expect(page.locator(".personal-column .details-panel")).toBeVisible();
 });
 
 test("the border editor shows direct and automatic transfer previews", async ({ page }) => {

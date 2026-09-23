@@ -59,6 +59,23 @@ export function getCellLabelAnchor(cells: readonly GridCell[]): LabelAnchor | un
   };
 }
 
+/** Moves a label away from a strategic point when the normal interior anchor
+ * would overlap it. The fallback stays on a cell centre of the same territory. */
+export function getCellLabelAnchorAwayFromPoints(cells: readonly GridCell[], points: readonly GridCell[]): LabelAnchor | undefined {
+  const defaultAnchor = getCellLabelAnchor(cells);
+  if (defaultAnchor === undefined || points.length === 0) return defaultAnchor;
+  const closestDistance = Math.min(...points.map((point) => Math.hypot(defaultAnchor.x - point.x - .5, defaultAnchor.y - point.y - .5)));
+  if (closestDistance > 1.1) return defaultAnchor;
+  const distanceToPoint = (cell: GridCell) => Math.min(...points.map((point) => Math.hypot(cell.x - point.x, cell.y - point.y)));
+  const candidate = [...cells].sort((left, right) => distanceToPoint(right) - distanceToPoint(left)
+    || Math.hypot(left.x + .5 - defaultAnchor.x, left.y + .5 - defaultAnchor.y) - Math.hypot(right.x + .5 - defaultAnchor.x, right.y + .5 - defaultAnchor.y))[0];
+  return candidate === undefined ? defaultAnchor : {
+    x: candidate.x + .5,
+    y: candidate.y + .5,
+    boundaryDistance: defaultAnchor.boundaryDistance,
+  };
+}
+
 export function getTerritoryLabelAnchor(map: GridMapState, territoryId: string): LabelAnchor | undefined {
   return getCellLabelAnchor(getTerritoryCells(map, territoryId));
 }
