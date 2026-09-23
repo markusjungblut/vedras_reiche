@@ -48,7 +48,7 @@ export function HelpDrawer({ state, viewerPlayerId, open, initialTopic, onClose,
   };
   return <aside className="help-drawer" role="dialog" aria-modal="false" aria-labelledby="help-title">
     <div className="help-drawer-header"><div><p className="eyebrow">Regelhilfe</p><h2 id="help-title">? Hilfe</h2></div>
-      <button type="button" className="text-button" aria-label="Regelhilfe schließen" onClick={onClose}>Schließen</button></div>
+      <button type="button" autoFocus className="text-button" aria-label="Regelhilfe schließen" onClick={onClose}>Schließen</button></div>
     <div className="help-tabs" role="tablist" aria-label="Regelhilfe-Bereiche">
       {(Object.keys(TAB_LABEL) as HelpTab[]).map((candidate) => <button key={candidate} type="button" role="tab"
         aria-selected={tab === candidate} className={tab === candidate ? "selected-button" : "secondary-button"}

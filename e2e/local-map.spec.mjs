@@ -6,6 +6,7 @@ async function openWithoutIntroduction(page, path = "/") {
 }
 
 test("local map creation, labels, zoom and pan use the live SVG map", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 });
   await openWithoutIntroduction(page);
   await expect(page.getByRole("button", { name: "Debug-Szenarien" })).toHaveCount(0);
   await page.getByRole("button", { name: "Lokales Testspiel" }).click();

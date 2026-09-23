@@ -3,6 +3,7 @@ import {
   applyAction,
   createGameState,
   GameActionType,
+  GameEventType,
   GamePhase,
   DIGITAL_BOARD_HEIGHT,
   DIGITAL_BOARD_WIDTH,
@@ -57,6 +58,7 @@ import { IntroductionTour } from "./components/IntroductionTour";
 import { formatDomainError, type RuleHelpId } from "./help/rule-help";
 import { loadTutorialProgress, markIntroductionSeen, markTutorialSeen, resetTutorialProgress, type TutorialStep } from "./help/tutorial-state";
 import type { GameReadModel } from "./game-read-model";
+import { loadSoundPreference, saveSoundPreference, soundManager, type SoundCue } from "./ui/sound-manager";
 
 const DEFAULT_SEED = 12345;
 const SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL ?? window.location.origin;
@@ -117,6 +119,17 @@ interface MultiplayerSession extends MultiplayerCredentials {
   };
   /** Only a definite terminal server response marks a stored session unavailable. */
   readonly availability?: "UNAVAILABLE";
+}
+
+type MultiplayerPendingAction = "CREATE" | "JOIN" | "START" | "MAP" | "REMOVE" | "REMATCH" | undefined;
+
+function soundCueForEvent(type: GameEventType): SoundCue | undefined {
+  if (type === GameEventType.GameFinished) return "FINISH";
+  if (type === GameEventType.CombatRolled || type === GameEventType.WarResolved) return "WAR";
+  if (type === GameEventType.AuctionBidsRevealed) return "REVEAL";
+  if (type === GameEventType.AuctionWon || type === GameEventType.TerritoryOwnerChanged || type === GameEventType.TerritoryConquered) return "GAIN";
+  if (type === GameEventType.RoundStarted || type === GameEventType.ActivationPhaseStarted) return "TURN";
+  return undefined;
 }
 
 function multiplayerSocketUrl(baseUrl: string): string {
@@ -798,6 +811,8 @@ export default function App() {
   const [rematchOfferRoomId, setRematchOfferRoomId] = useState<string | undefined>();
   const [rematchCreating, setRematchCreating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(loadSoundPreference);
+  const [multiplayerPendingAction, setMultiplayerPendingAction] = useState<MultiplayerPendingAction>();
   const [lobbyOrder, setLobbyOrder] = useState<readonly string[]>([]);
   const [firstMultiplayerDrawerId, setFirstMultiplayerDrawerId] = useState<string | undefined>();
   const [lobbyMap, setLobbyMap] = useState({ width: DIGITAL_BOARD_WIDTH, height: DIGITAL_BOARD_HEIGHT });
@@ -809,21 +824,42 @@ export default function App() {
   const controller = useRef<GameController | null>(null);
   const unsubscribeController = useRef<(() => void) | null>(null);
   const newSeatIndex = useRef(4);
+  const lastSoundEventId = useRef<string | undefined>(undefined);
 
   const state: GameReadModel | null = view;
 
   useEffect(() => {
     const clearInformationalSelection = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedTerritoryId(undefined);
+      if (event.key === "Escape") {
+        setSelectedTerritoryId(undefined);
+        setHelpOpen(false);
+        setShowIntroduction(false);
+      }
     };
     window.addEventListener("keydown", clearInformationalSelection);
     return () => window.removeEventListener("keydown", clearInformationalSelection);
   }, []);
 
+  useEffect(() => {
+    soundManager.setEnabled(soundEnabled);
+    saveSoundPreference(soundEnabled);
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    if (notice === null) return undefined;
+    const timeout = window.setTimeout(() => setNotice(null), 4_200);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
+  useEffect(() => {
+    document.title = multiplayer?.roomId === undefined ? "Vedras Reiche" : `Vedras Reiche – Raum ${multiplayer.roomId}`;
+  }, [multiplayer?.roomId]);
+
   const activateController = (nextController: GameController, remote: boolean) => {
     unsubscribeController.current?.();
     controller.current?.dispose();
     controller.current = nextController;
+    lastSoundEventId.current = undefined;
     const remoteSession = remote && nextController instanceof RemoteGameController ? nextController.credentials : undefined;
     if (remote) setView(null);
     else {
@@ -833,7 +869,17 @@ export default function App() {
       setRematchOfferRoomId(undefined);
     }
     unsubscribeController.current = nextController.subscribe((snapshot) => {
-      if (snapshot.view !== undefined) setView(snapshot.view);
+      if (snapshot.view !== undefined) {
+        setView(snapshot.view);
+        const event = snapshot.view.events.at(-1);
+        if (event !== undefined) {
+          if (lastSoundEventId.current !== undefined && lastSoundEventId.current !== event.id) {
+            const cue = soundCueForEvent(event.type);
+            if (cue) soundManager.play(cue);
+          }
+          lastSoundEventId.current = event.id;
+        }
+      }
       if (remote && snapshot.connectionStatus !== undefined) {
         setRemoteConnectionStatus(snapshot.connectionStatus);
         if (snapshot.connectionStatus !== "CONNECTED") setSetupDraft({ mode: "PEN", strokes: [] });
@@ -910,6 +956,15 @@ export default function App() {
     if (!window.confirm("Diese Partie wirklich von diesem Gerät entfernen?")) return;
     forgetSavedMultiplayerSession(roomId);
     setNotice("Lokale Spielersitzung entfernt.");
+    soundManager.play("CONFIRM");
+  };
+
+  const toggleSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    if (next) {
+      void soundManager.unlock().then(() => soundManager.play("CONFIRM"));
+    }
   };
 
   const loadScenario = (kind: ScenarioKind, chosenSeed: number) => {
@@ -948,15 +1003,22 @@ export default function App() {
     if (value !== undefined) loadScenario(kind, value);
   };
   const createMultiplayerRoom = async () => {
+    if (multiplayerPendingAction !== undefined) return;
+    setMultiplayerPendingAction("CREATE");
     try {
       const session = await postMultiplayer<MultiplayerSession>("/api/rooms", { playerName: multiplayerName });
       await connectMultiplayer(session);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      soundManager.play("ERROR");
+    } finally {
+      setMultiplayerPendingAction(undefined);
     }
   };
   const joinMultiplayerRoom = async () => {
+    if (multiplayerPendingAction !== undefined) return;
+    setMultiplayerPendingAction("JOIN");
     try {
       const roomId = joinRoomCode.trim().toUpperCase();
       if (roomId.length === 0) throw new Error("Bitte einen Raumcode eingeben.");
@@ -965,11 +1027,16 @@ export default function App() {
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      soundManager.play("ERROR");
+    } finally {
+      setMultiplayerPendingAction(undefined);
     }
   };
   const startMultiplayerRoom = async () => {
     if (multiplayer === null || multiplayerRoom === undefined || firstMultiplayerDrawerId === undefined) return;
     if (!multiplayerConnected) return;
+    if (multiplayerPendingAction !== undefined) return;
+    setMultiplayerPendingAction("START");
     try {
       await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/start`, {
         sessionToken: multiplayer.sessionToken,
@@ -980,6 +1047,9 @@ export default function App() {
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      soundManager.play("ERROR");
+    } finally {
+      setMultiplayerPendingAction(undefined);
     }
   };
   const updateMultiplayerMap = async (map = lobbyMap) => {
@@ -994,6 +1064,8 @@ export default function App() {
       return;
     }
     if (!multiplayerConnected) return;
+    if (multiplayerPendingAction !== undefined) return;
+    setMultiplayerPendingAction("MAP");
     try {
       await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/map`, {
         sessionToken: multiplayer.sessionToken, map,
@@ -1001,6 +1073,9 @@ export default function App() {
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      soundManager.play("ERROR");
+    } finally {
+      setMultiplayerPendingAction(undefined);
     }
   };
   const moveLobbyPlayer = (playerId: string, direction: -1 | 1) => {
@@ -1019,19 +1094,28 @@ export default function App() {
   };
   const removeWaitingPlayer = async (playerId: string, playerName: string) => {
     if (multiplayer === null || multiplayerRoom === undefined || !multiplayerConnected) return;
+    if (!window.confirm(`${playerName} wirklich aus dieser Lobby entfernen?`)) return;
+    if (multiplayerPendingAction !== undefined) return;
+    setMultiplayerPendingAction("REMOVE");
     try {
       await postMultiplayer(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/players/${encodeURIComponent(playerId)}/remove`, {
         sessionToken: multiplayer.sessionToken,
       });
       setNotice(`${playerName} wurde aus der Lobby entfernt.`);
       setError(null);
+      soundManager.play("CONFIRM");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      soundManager.play("ERROR");
+    } finally {
+      setMultiplayerPendingAction(undefined);
     }
   };
   const createRematch = async () => {
     if (multiplayer === null || multiplayerRoom?.hostPlayerId !== multiplayer.playerId || rematchCreating) return;
+    if (multiplayerPendingAction !== undefined) return;
     setRematchCreating(true);
+    setMultiplayerPendingAction("REMATCH");
     try {
       const session = await postMultiplayer<MultiplayerSession>(`/api/rooms/${encodeURIComponent(multiplayer.roomId)}/rematch`, {
         sessionToken: multiplayer.sessionToken,
@@ -1041,8 +1125,10 @@ export default function App() {
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      soundManager.play("ERROR");
     } finally {
       setRematchCreating(false);
+      setMultiplayerPendingAction(undefined);
     }
   };
   const startConfiguredGame = () => {
@@ -1082,6 +1168,7 @@ export default function App() {
     if (!state || controller.current === null) return;
     if (multiplayer !== null && remoteConnectionStatus !== "CONNECTED") {
       setError("Die Verbindung wird wiederhergestellt. Aktionen sind vorübergehend gesperrt.");
+      soundManager.play("ERROR");
       return;
     }
     void controller.current.dispatch(action).then(() => {
@@ -1097,6 +1184,7 @@ export default function App() {
       setError(null);
     }).catch((caught) => {
       setError(formatDomainError(caught));
+      soundManager.play("ERROR");
     });
   };
   const beginRound = () => {
@@ -1294,6 +1382,7 @@ export default function App() {
       await navigator.clipboard.writeText(value);
       setError(null);
       setNotice(message);
+      soundManager.play("CONFIRM");
     } catch {
       setError("Kopieren ist in diesem Browser nicht verfügbar.");
     }
@@ -1322,11 +1411,12 @@ export default function App() {
     setNotice("Für das Rematch bitte mit deinem Namen beitreten.");
   };
 
-  return <div className="app-shell">
+  return <div className="app-shell" onPointerDown={() => { if (soundEnabled) void soundManager.unlock(); }} onKeyDown={() => { if (soundEnabled) void soundManager.unlock(); }}>
     {!state ? <main className="welcome-screen">
       <span className="eyebrow">{showMultiplayer ? "Mehrspieler" : showNewGameConfig ? "Lokales Testspiel" : "Willkommen"}</span>
       <h1>Vedras Reiche</h1>
       <p>{showMultiplayer ? "Der Spielserver verwaltet die Partie. Dein Browser zeigt nur deine eigene Spielansicht." : "Erschafft gemeinsam eine Karte, ersteigert Gebiete und erreicht die höchste Wertung."}</p>
+      <button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={toggleSound}>{soundEnabled ? "🔊 Sound an" : "🔇 Sound aus"}</button>
       {!showNewGameConfig && !showDebugScenarios && !showMultiplayer && <div className="button-row welcome-actions">
         <button type="button" className="primary-button" onClick={() => setShowMultiplayer(true)}>Mehrspieler</button>
         <button type="button" className="secondary-button" onClick={() => setShowNewGameConfig(true)}>Lokales Testspiel</button>
@@ -1338,13 +1428,14 @@ export default function App() {
           {!multiplayer && <button type="button" className="text-button" onClick={() => setShowMultiplayer(false)}>Schließen</button>}</div>
         {multiplayer && (remoteConnectionStatus === "INVALID_SESSION" || remoteConnectionStatus === "ROOM_NOT_FOUND" || remoteConnectionStatus === "SESSION_REPLACED" || remoteConnectionStatus === "PLAYER_REMOVED") && <div role="status" className="connection-banner">
           <strong>{remoteConnectionStatus === "PLAYER_REMOVED" ? "Du wurdest aus diesem Raum entfernt." : remoteConnectionStatus === "INVALID_SESSION" ? "Diese lokale Spielersitzung ist nicht mehr gültig." : remoteConnectionStatus === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." : "Diese Spielersitzung wurde in einem anderen Fenster geöffnet."}</strong>
-          <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="text-button" onClick={() => requestForgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>
+          <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="destructive-button" onClick={() => requestForgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>
         </div>}
         {multiplayerRoom === undefined ? <div className="config-stack">
           <Field label="Name"><input value={multiplayerName} maxLength={80} onChange={(event) => setMultiplayerName(event.target.value)} /></Field>
-          <div className="button-row"><button type="button" className="primary-button" onClick={() => void createMultiplayerRoom()}>Neues Spiel erstellen</button></div>
+          <div className="button-row"><button type="button" className="primary-button" disabled={multiplayerPendingAction !== undefined} onClick={() => void createMultiplayerRoom()}>{multiplayerPendingAction === "CREATE" ? "Raum wird erstellt …" : "Neues Spiel erstellen"}</button></div>
           <div className="join-room-row"><Field label="Raumcode"><input value={joinRoomCode} maxLength={8} placeholder="ABC123" onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())} /></Field>
-            <button type="button" className="secondary-button" onClick={() => void joinMultiplayerRoom()}>Raum beitreten</button></div>
+            <button type="button" className="secondary-button" disabled={multiplayerPendingAction !== undefined} onClick={() => void joinMultiplayerRoom()}>{multiplayerPendingAction === "JOIN" ? "Beitritt läuft …" : "Raum beitreten"}</button></div>
+          {savedSessions.length === 0 && <p className="empty-state saved-room-empty">Noch keine gespeicherten Partien. Erstelle eine Partie oder tritt einem Raum bei.</p>}
           {savedSessions.length > 0 && <section className="saved-room-list" aria-label="Gespeicherte Partien">
             <div><strong>Gespeicherte Partien</strong><small>Diese Liste gilt nur für diesen Browser.</small></div>
             {savedSessionGroups.map((group) => group.sessions.length === 0 ? null : <div key={group.title} className="saved-room-group">
@@ -1354,7 +1445,7 @@ export default function App() {
                 <p>{session.room?.playerNames.join(" · ") || "Status wird beim Fortsetzen geprüft."}</p>
                 <small>{session.availability === "UNAVAILABLE" ? "Diese Sitzung wurde vom Server abgelehnt." : session.room ? `Zuletzt bekannt: ${new Date(session.room.updatedAt).toLocaleString("de-DE")}` : "Status derzeit nicht abrufbar."}</small>
                 <div className="button-row"><button type="button" className="secondary-button" disabled={session.availability === "UNAVAILABLE"} onClick={() => void connectMultiplayer(session)}>{session.room?.status === "FINISHED" ? "Ergebnis ansehen" : "Fortsetzen"}</button>
-                  <button type="button" className="text-button" onClick={() => requestForgetSavedMultiplayerSession(session.roomId)}>{session.room?.status === "FINISHED" ? "Lokal entfernen" : "Lokal vergessen"}</button></div>
+                  <button type="button" className="destructive-button" onClick={() => requestForgetSavedMultiplayerSession(session.roomId)}>{session.room?.status === "FINISHED" ? "Lokal entfernen" : "Lokal vergessen"}</button></div>
               </article>)}
             </div>)}
           </section>}
@@ -1370,7 +1461,7 @@ export default function App() {
             const host = multiplayerRoom.hostPlayerId === multiplayer?.playerId;
             return <div key={playerId} className="lobby-player"><span>{index + 1}. {playerId === multiplayer?.playerId ? "Du · " : ""}{player.name} {playerId === multiplayerRoom.hostPlayerId ? "· Host" : ""} · {player.connected ? "● verbunden" : "○ getrennt"}</span>
               {host && <span className="button-row"><button type="button" className="secondary-button" aria-label={`${player.name} nach oben`} disabled={!multiplayerConnected || index === 0} onClick={() => moveLobbyPlayer(playerId, -1)}>↑</button><button type="button" className="secondary-button" aria-label={`${player.name} nach unten`} disabled={!multiplayerConnected || index === lobbyOrder.length - 1} onClick={() => moveLobbyPlayer(playerId, 1)}>↓</button>
-                {playerId !== multiplayer?.playerId && <button type="button" className="text-button" disabled={!multiplayerConnected} onClick={() => void removeWaitingPlayer(playerId, player.name)}>Entfernen</button>}</span>}
+                {playerId !== multiplayer?.playerId && <button type="button" className="destructive-button" disabled={!multiplayerConnected || multiplayerPendingAction !== undefined} onClick={() => void removeWaitingPlayer(playerId, player.name)}>Entfernen</button>}</span>}
             </div>;
           })}</div>
           {multiplayerRoom.hostPlayerId === multiplayer?.playerId ? <>
@@ -1380,13 +1471,13 @@ export default function App() {
               <Field label="Kartenhöhe"><input type="number" min="1" max={MAX_MAP_HEIGHT} step="1" value={lobbyMap.height}
                 disabled={!multiplayerConnected} onChange={(event) => setLobbyMap((current) => ({ ...current, height: Number(event.target.value) }))} onBlur={() => void updateMultiplayerMap()} /></Field>
             </div>
-            <div className="button-row"><button type="button" className="secondary-button" disabled={!multiplayerConnected} onClick={() => setLobbyMapPreset({ width: 50, height: 50 })}>50 × 50</button><button type="button" className="secondary-button" disabled={!multiplayerConnected} onClick={() => setLobbyMapPreset({ width: 100, height: 50 })}>100 × 50</button><button type="button" className="secondary-button" disabled={!multiplayerConnected} onClick={() => setLobbyMapPreset({ width: 100, height: 100 })}>100 × 100</button></div>
+            <div className="button-row"><button type="button" className="secondary-button" disabled={!multiplayerConnected || multiplayerPendingAction !== undefined} onClick={() => setLobbyMapPreset({ width: 50, height: 50 })}>50 × 50</button><button type="button" className="secondary-button" disabled={!multiplayerConnected || multiplayerPendingAction !== undefined} onClick={() => setLobbyMapPreset({ width: 100, height: 50 })}>100 × 50</button><button type="button" className="secondary-button" disabled={!multiplayerConnected || multiplayerPendingAction !== undefined} onClick={() => setLobbyMapPreset({ width: 100, height: 100 })}>100 × 100</button></div>
             <small>Aktuelle Karte: {lobbyMap.width} × {lobbyMap.height} · Mindestgebiet: {isTechnicallyValidMapSize(lobbyMap) ? getMinimumTerritoryArea(lobbyMap) : "—"} · Cut-and-Choose ab: {isTechnicallyValidMapSize(lobbyMap) ? 2 * getMinimumTerritoryArea(lobbyMap) : "—"} · technisch maximal {MAX_MAP_CELLS.toLocaleString("de-DE")} Zellen</small>
             <Field label="Erster Kartenzeichner"><select value={firstMultiplayerDrawerId ?? ""} disabled={!multiplayerConnected} onChange={(event) => setFirstMultiplayerDrawerId(event.target.value)}>{lobbyOrder.map((playerId) => {
               const player = multiplayerRoom.players.find((item) => item.playerId === playerId);
               return player ? <option key={playerId} value={playerId}>{player.name}</option> : null;
             })}</select></Field>
-            <button type="button" className="primary-button" disabled={!multiplayerConnected || multiplayerRoom.players.length < 2 || firstMultiplayerDrawerId === undefined} onClick={() => void startMultiplayerRoom()}>Spiel starten</button>
+            <button type="button" className="primary-button" disabled={!multiplayerConnected || multiplayerPendingAction !== undefined || multiplayerRoom.players.length < 2 || firstMultiplayerDrawerId === undefined} onClick={() => void startMultiplayerRoom()}>{multiplayerPendingAction === "START" ? "Spiel wird gestartet …" : "Spiel starten"}</button>
           </> : <p className="muted">Der Host legt Reihenfolge, Kartengröße und ersten Kartenzeichner fest. Aktuelle Karte: {multiplayerRoom.map.width} × {multiplayerRoom.map.height}.</p>}
           <button type="button" className="text-button" onClick={returnToMultiplayerStart}>Zu gespeicherten Partien</button>
         </div>}
@@ -1423,7 +1514,7 @@ export default function App() {
         <Field label="Debug-Seed"><input type="number" min="0" step="1" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} /></Field>
         <div className="scenario-grid">{SCENARIOS.map((item) => <button type="button" key={item.kind} className="scenario-tile" onClick={() => startSelectedScenario(item.kind)}><strong>{item.label}</strong><span>{item.detail}</span></button>)}</div>
       </section>}
-      {notice && <p role="status" className="connection-banner">{notice}</p>}
+      {notice && <p role="status" aria-live="polite" className="toast-notice">{notice}</p>}
       {error && <p role="alert" className="error-banner">Aktion nicht möglich: {error}</p>}
     </main> : <>
       <GameHeader state={state} playerName={name} mode={multiplayer ? "MULTIPLAYER" : "LOCAL"}
@@ -1448,6 +1539,7 @@ export default function App() {
               remoteConnectionStatus === "INVALID_SESSION" ? "● Lokale Sitzung ungültig" : remoteConnectionStatus === "ROOM_NOT_FOUND" ? "● Raum nicht gefunden" :
                 remoteConnectionStatus === "SESSION_REPLACED" ? "● Sitzung in anderem Fenster geöffnet" : remoteConnectionStatus === "PLAYER_REMOVED" ? "● Aus Raum entfernt" : "◌ Verbindung wird hergestellt …"}
           </p>}
+          <button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={toggleSound}>{soundEnabled ? "🔊 Sound an" : "🔇 Sound aus"}</button>
           {multiplayer && multiplayerRoom && <details className="room-menu"><summary>Partie</summary><div className="config-stack">
             <strong>Raumcode: {multiplayerRoom.roomId}</strong>
             <button type="button" className="secondary-button" onClick={() => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.")}>Raumcode kopieren</button>
@@ -1460,17 +1552,17 @@ export default function App() {
             <button type="button" className="secondary-button" onClick={() => document.getElementById("result-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Ergebnis ansehen</button>
             <button type="button" className="secondary-button" onClick={() => document.querySelector(".board-column")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Karte ansehen</button>
             <button type="button" className="secondary-button" onClick={() => document.querySelector(".event-log")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Spielverlauf</button>
-            {multiplayerRoom?.hostPlayerId === multiplayer.playerId && <button type="button" className="primary-button" disabled={rematchCreating || remoteConnectionStatus !== "CONNECTED"} onClick={() => void createRematch()}>{rematchCreating ? "Rematch wird erstellt …" : "Noch einmal spielen"}</button>}
+            {multiplayerRoom?.hostPlayerId === multiplayer.playerId && <button type="button" className="primary-button" disabled={rematchCreating || multiplayerPendingAction !== undefined || remoteConnectionStatus !== "CONNECTED"} onClick={() => void createRematch()}>{rematchCreating ? "Rematch wird erstellt …" : "Noch einmal spielen"}</button>}
             <button type="button" className="text-button" onClick={returnToMultiplayerStart}>Zur Startseite</button>
           </div>}
         </section>
-        {notice && <div role="status" className="connection-banner">{notice}</div>}
+        {notice && <div role="status" aria-live="polite" className="toast-notice">{notice}</div>}
         {error && <div role="alert" className="error-banner">Aktion nicht möglich: <strong>{error}</strong></div>}
         {multiplayer && remoteConnectionStatus !== "CONNECTED" && <div role="status" className="connection-banner">
           <strong>{remoteConnectionStatus === "RECONNECTING" ? "Verbindung verloren" : remoteConnectionStatus === "INVALID_SESSION" ? "Diese lokale Spielersitzung ist nicht mehr gültig." :
             remoteConnectionStatus === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." : remoteConnectionStatus === "SESSION_REPLACED" ? "Diese Spielersitzung wurde in einem anderen Fenster geöffnet." : remoteConnectionStatus === "PLAYER_REMOVED" ? "Du wurdest aus diesem Raum entfernt." : "Verbindung wird hergestellt …"}</strong>
           {remoteConnectionStatus === "RECONNECTING" && <span>Aktionen bleiben gesperrt, bis der Server den aktuellen Stand bestätigt hat.</span>}
-          {(remoteConnectionStatus === "INVALID_SESSION" || remoteConnectionStatus === "ROOM_NOT_FOUND" || remoteConnectionStatus === "SESSION_REPLACED" || remoteConnectionStatus === "PLAYER_REMOVED") && <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="text-button" onClick={() => multiplayer && requestForgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>}
+          {(remoteConnectionStatus === "INVALID_SESSION" || remoteConnectionStatus === "ROOM_NOT_FOUND" || remoteConnectionStatus === "SESSION_REPLACED" || remoteConnectionStatus === "PLAYER_REMOVED") && <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="destructive-button" onClick={() => multiplayer && requestForgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>}
         </div>}
         {multiplayer && activeRoomPlayer !== undefined && activeRoomPlayer.playerId !== multiplayer.playerId && <div role="status" className="connection-banner">Warte auf {activeRoomPlayer.name} …{activeRoomPlayer.connected ? "" : ` ${activeRoomPlayer.name} ist derzeit getrennt.`}</div>}
         {multiplayer && state.phase === GamePhase.Finished && rematchOfferRoomId !== undefined && rematchOfferRoomId !== multiplayer.roomId && <div role="status" className="connection-banner">Der Host hat ein Rematch erstellt. <button type="button" className="secondary-button" onClick={openRematchOffer}>Rematch beitreten</button></div>}

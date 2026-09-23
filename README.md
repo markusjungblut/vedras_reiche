@@ -12,7 +12,7 @@ Lokaler Debug-Client → @vedras/game-core
 Mehrspieler-Client → WebSocket/Protocol → Server → @vedras/game-core
 ```
 
-Der direkte Core-Aufruf im Browser dient ausschließlich der lokalen Entwicklung mit mehreren Spielern an einem Fenster. Im Mehrspielermodus hält allein der Server den vollständigen Spielzustand. Browser senden Aktionen und erhalten nur ihre eigene, vom Core redigierte Spieleransicht. Die Zuständigkeiten und Zustandsübergänge stehen in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Der direkte Core-Aufruf im Browser dient ausschließlich der lokalen Entwicklung mit mehreren Spielern an einem Fenster. Im Mehrspielermodus hält allein der Server den vollständigen Spielzustand. Browser senden Aktionen und erhalten nur ihre eigene, vom Core redigierte Spieleransicht. Die Zuständigkeiten und Zustandsübergänge stehen in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); die visuellen Leitlinien in [docs/UI.md](docs/UI.md).
 
 ## Projektstruktur
 
@@ -27,6 +27,7 @@ packages/
   protocol/          versionierte Transport-DTOs ohne Spiellogik
 docs/
   ARCHITECTURE.md
+  UI.md
 OPEN_QUESTIONS.md
 ```
 

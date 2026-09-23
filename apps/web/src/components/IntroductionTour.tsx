@@ -16,7 +16,7 @@ export function IntroductionTour({ open, onComplete }: { readonly open: boolean;
   const complete = () => { setIndex(0); onComplete(); };
   return <div className="intro-backdrop" role="dialog" aria-modal="true" aria-labelledby="intro-title">
     <section className="intro-card"><p className="eyebrow">Einführung · {index + 1} / {SLIDES.length}</p><h2 id="intro-title">{title}</h2><p>{text}</p>
-      <div className="button-row"><button type="button" className="primary-button" onClick={() => last ? complete() : setIndex((current) => current + 1)}>{last ? "Los geht’s" : "Weiter"}</button>
+      <div className="button-row"><button type="button" autoFocus className="primary-button" onClick={() => last ? complete() : setIndex((current) => current + 1)}>{last ? "Los geht’s" : "Weiter"}</button>
         <button type="button" className="text-button" onClick={complete}>Überspringen</button></div>
     </section>
   </div>;

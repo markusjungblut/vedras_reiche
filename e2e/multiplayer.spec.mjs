@@ -43,7 +43,7 @@ test("two browsers create, join and start an authoritative room", async ({ brows
 });
 
 test("saved rooms can be resumed individually and forgotten only in this browser", async ({ browser }) => {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   try {
     await openWithoutIntroduction(page);
@@ -93,6 +93,7 @@ test("a host can remove a waiting guest and the guest receives a terminal status
     await guest.getByRole("button", { name: "Raum beitreten" }).click();
     await expect(host.getByText(/2\. Ben/)).toBeVisible();
 
+    host.once("dialog", (dialog) => dialog.accept());
     await host.locator(".lobby-player").filter({ hasText: "Ben" }).getByRole("button", { name: "Entfernen" }).click();
     await expect(host.getByText(/Ben wurde aus der Lobby entfernt/)).toBeVisible();
     await expect(guest.getByText("Du wurdest aus diesem Raum entfernt.")).toBeVisible();
