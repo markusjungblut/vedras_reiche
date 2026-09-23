@@ -97,8 +97,11 @@ export function RecentWarResult({ state }: { state: GameState }) {
   </section>;
 }
 
-export function WarControls({ state, editor, onAction }: {
+export function WarControls({ state, editor, onAction, viewerPlayerId, selectedPart, onSelectPart }: {
   state: GameState; editor?: MapEditor | undefined; onAction: (action: GameAction) => void;
+  viewerPlayerId?: string | undefined;
+  selectedPart?: "A" | "B" | undefined;
+  onSelectPart?: ((part: "A" | "B") => void) | undefined;
 }) {
   const war = state.pendingWar;
   const map = state.map;
@@ -108,6 +111,9 @@ export function WarControls({ state, editor, onAction }: {
   const loserId = combat?.loserTerritoryId;
   const winnerPlayerId = winnerId === war.attackerTerritoryId ? war.attackerPlayerId : war.defenderPlayerId;
   const loserPlayerId = winnerPlayerId === war.attackerPlayerId ? war.defenderPlayerId : war.attackerPlayerId;
+  const mayResolveWar = viewerPlayerId === undefined || viewerPlayerId === winnerPlayerId;
+  const mayChooseWarCut = viewerPlayerId === undefined || viewerPlayerId === loserPlayerId;
+  const mayCorrectDiamond = viewerPlayerId === undefined || viewerPlayerId === war.borderMark?.playerId;
   const validation = editor && editor.mode === "CLAIM" && winnerId && loserId && war.maximumDepth
     ? validateBorderAdvance(map, winnerId, loserId, war.originalSharedBorder, war.maximumDepth, editor.selected) : undefined;
   const splitValidation = editor?.mode === "CUT" && loserId ? validateTerritorySplit(map, loserId, editor.selected) : undefined;
@@ -127,7 +133,8 @@ export function WarControls({ state, editor, onAction }: {
       <p><strong>Angreifer</strong><br/><Name state={state} id={war.attackerPlayerId}/> · {war.attackerTerritoryId}<br/>Fläche {war.attackerArea}</p>
       <p><strong>Verteidiger</strong><br/><Name state={state} id={war.defenderPlayerId}/> · {war.defenderTerritoryId}<br/>Fläche {war.defenderArea} · Festungen {state.pointsOfInterest.filter((poi) => poi.type === "FORTRESS" && map.cells[`${poi.position.x},${poi.position.y}`] === war.defenderTerritoryId).length}</p>
     </div>
-    {war.stage === "AWAITING_COMBAT_CHOICES" && [war.attackerPlayerId, war.defenderPlayerId].map((playerId) => {
+    {war.stage === "AWAITING_COMBAT_CHOICES" && [war.attackerPlayerId, war.defenderPlayerId]
+      .filter((playerId) => viewerPlayerId === undefined || playerId === viewerPlayerId).map((playerId) => {
       const locked = Object.hasOwn(war.spadeChoices, playerId);
       const opponentId = playerId === war.attackerPlayerId ? war.defenderTerritoryId : war.attackerTerritoryId;
       const options = getAvailableWarSpades(state, playerId, opponentId);
@@ -151,7 +158,8 @@ export function WarControls({ state, editor, onAction }: {
       {war.borderMark && <p>♦ Grenzmarkierung aktiv · Standard {war.maximumDepth! - (war.borderMark.playerId === winnerPlayerId ? 1 : -1)} → {war.maximumDepth}</p>}
       <p>Übernahme: {editor.selected.length} Kästchen · Gewinner: {getTerritoryCells(map, winnerId).length + editor.selected.length} · Verlierer: {getTerritoryCells(map, loserId).length - editor.selected.length} · Mindestfläche {getMinimumTerritoryArea(map)}</p>
       <p>{validation.valid ? "Zusammenhang und Mindestfläche ✓" : `Ungültig: ${validation.reason}`}</p>
-      <button className="primary-button" disabled={!validation.valid} onClick={() => onAction({ type: GameActionType.ProposeBorderAdvance,
+      {!mayResolveWar && <p className="winner-message">Warte auf den Grenzentscheid von <Name state={state} id={winnerPlayerId}/>.</p>}
+      <button className="primary-button" disabled={!mayResolveWar || !validation.valid} onClick={() => onAction({ type: GameActionType.ProposeBorderAdvance,
         warId: war.id, playerId: winnerPlayerId, claimedCells: editor.selected })}>Grenzgewinn bestätigen</button>
     </>}
     {war.stage === "AWAITING_CUT_DIVISION" && editor && splitValidation && <>
@@ -159,14 +167,19 @@ export function WarControls({ state, editor, onAction }: {
       <p>Teil A {editor.selected.length} · Teil B {splitValidation.partBCells.length} · Mindestfläche {getMinimumTerritoryArea(map)}</p>
       <p>Zusammenhang A {areCellsOrthogonallyConnected(editor.selected) ? "✓" : "✗"} · B {areCellsOrthogonallyConnected(splitValidation.partBCells) ? "✓" : "✗"}</p>
       <p>Der Verlierer wählt zuerst. Sein Teil behält automatisch die ursprüngliche Karte.</p>
-      <button className="primary-button" disabled={!splitValidation.valid} onClick={() => onAction({ type: GameActionType.ProposeWarCut,
+      {!mayResolveWar && <p className="winner-message">Warte darauf, dass <Name state={state} id={winnerPlayerId}/> die Grenze zeichnet.</p>}
+      <button className="primary-button" disabled={!mayResolveWar || !splitValidation.valid} onClick={() => onAction({ type: GameActionType.ProposeWarCut,
         warId: war.id, playerId: winnerPlayerId, partACells: editor.selected })}>Teilung bestätigen</button>
     </>}
     {war.stage === "AWAITING_CUT_CHOICE" && war.proposal && <>
-      <h4><Name state={state} id={loserPlayerId}/> wählt zuerst</h4>
-      <p>Teil A {war.proposal.partACells.length} · Teil B {war.proposal.partBCells.length}. Der gewählte Teil behält die ursprüngliche Gebietskarte.</p>
-      <div className="button-row">{(["A", "B"] as const).map((part) => <button key={part} className="primary-button" onClick={() => onAction({ type: GameActionType.ChooseWarCut,
-        warId: war.id, playerId: loserPlayerId, chosenPart: part })}>Teil {part} behalten</button>)}</div>
+      <h4><Name state={state} id={loserPlayerId}/> wählt den Teil, den er behält</h4>
+      <p>Teil A {war.proposal.partACells.length} · Teil B {war.proposal.partBCells.length}. Beide Teile sind auf der Karte markiert.</p>
+      {!mayChooseWarCut && <p className="winner-message">Warte auf die Auswahl von <Name state={state} id={loserPlayerId}/>.</p>}
+      {mayChooseWarCut && <div className="button-row">{(["A", "B"] as const).map((part) => <button key={part} className={selectedPart === part ? "selected-button" : "secondary-button"}
+        onClick={() => onSelectPart?.(part)}>Teil {part} behalten</button>)}</div>}
+      {mayChooseWarCut && selectedPart && <><p className="winner-message"><Name state={state} id={loserPlayerId}/> behält Teil {selectedPart}. <Name state={state} id={winnerPlayerId}/> erhält Teil {selectedPart === "A" ? "B" : "A"}.</p>
+        <button className="primary-button" onClick={() => onAction({ type: GameActionType.ChooseWarCut,
+          warId: war.id, playerId: loserPlayerId, chosenPart: selectedPart })}>Auswahl bestätigen</button></>}
     </>}
     {war.stage === "AWAITING_DIAMOND_CORRECTION" && war.borderMark && editor && <>
       <h4>♦ Korrektur für <Name state={state} id={war.borderMark.playerId}/></h4>
@@ -174,9 +187,9 @@ export function WarControls({ state, editor, onAction }: {
       <p>Übernahme: {editor.selected.length} Kästchen</p>
       {correctionValidation && <p>{correctionValidation.valid ? "Zusammenhang und Mindestfläche ✓" : `Ungültig: ${correctionValidation.reason}`}</p>}
       <div className="button-row">
-        <button className="primary-button" disabled={!correctionValidation?.valid} onClick={() => onAction({ type: GameActionType.ResolveDiamondCorrection,
+        <button className="primary-button" disabled={!mayCorrectDiamond || !correctionValidation?.valid} onClick={() => onAction({ type: GameActionType.ResolveDiamondCorrection,
           warId: war.id, playerId: war.borderMark!.playerId, claimedCells: editor.selected })}>Korrektur bestätigen</button>
-        <button className="secondary-button" onClick={() => onAction({ type: GameActionType.ResolveDiamondCorrection,
+        <button className="secondary-button" disabled={!mayCorrectDiamond} onClick={() => onAction({ type: GameActionType.ResolveDiamondCorrection,
           warId: war.id, playerId: war.borderMark!.playerId, claimedCells: [] })}>Überspringen</button>
       </div>
     </>}
@@ -193,7 +206,9 @@ export function NeutralDiamondControls({ state, editor, onAction }: {
   return <section className="control-section" aria-label="Neutrale ♦-Grenze">
     <div className="section-kicker">♦ Neutrale Grenze</div>
     <h3>{effect.sourceTerritoryId} zu {effect.neutralTerritoryId}</h3>
-    <p>Klicke Zellen im markierten Korridor an. Bis zu 2 Kästchen Tiefe.</p>
+    <p>Die maximal legale Vorauswahl ist bereits auf der Karte markiert. Klicke Zellen im Korridor an, um sie anzupassen.</p>
+    <p>Du würdest {editor.selected.length} Kästchen übernehmen.</p>
+    {editor.selected.length === 0 && <p className="winner-message">Du übernimmst keine Fläche.</p>}
     <p>Eigenes Gebiet: {getTerritoryCells(state.map, effect.sourceTerritoryId).length + editor.selected.length} · neutrales Gebiet: {getTerritoryCells(state.map, effect.neutralTerritoryId).length - editor.selected.length}</p>
     <p>{validation.valid ? "Zusammenhang und Mindestfläche ✓" : `Ungültig: ${validation.reason}`}</p>
     <div className="button-row">

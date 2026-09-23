@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   fromCellKey,
   formatScoreHundredths,
@@ -15,12 +15,23 @@ import {
 import { suitClass, suitName, suitSymbol } from "../formatters/suit-label";
 import type { MapEditor } from "./WarControls";
 import { createPenStroke, setupBorderEdgeToSegment, type GridVertex } from "../map/setup-draft";
+import { getCellLabelAnchor, getTerritoryLabelAnchor } from "../map/territory-label-anchor";
 
 interface TerritoryBoardProps {
   state: GameState;
   selectedId: string | undefined;
   onSelect: (territoryId: string) => void;
+  onClearSelection: () => void;
   highlightedIds: readonly string[];
+  viewerPlayerId?: string | undefined;
+  focusTerritoryId?: string | undefined;
+  partChoice?: {
+    readonly territoryId: string;
+    readonly partAKeys: readonly string[];
+    readonly selectedPart?: "A" | "B" | undefined;
+    readonly canChoose: boolean;
+    readonly onChoose: (part: "A" | "B") => void;
+  } | undefined;
   playerName: (id: string) => string;
   splitDraft?: { readonly splitId: string; readonly partAKeys: readonly string[] } | undefined;
   onToggleSplitCell: (cell: GridCell) => void;
@@ -92,7 +103,7 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
   );
 }
 
-export function TerritoryBoard({ state, selectedId, onSelect, highlightedIds, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
+export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, highlightedIds, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
   realmHighlights, scoreHundredthsByTerritoryId, showScoreLabels, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: TerritoryBoardProps) {
   const highlighted = new Set(highlightedIds);
   const activated = new Set(state.activation?.pendingTerritoryIds ?? []);
@@ -106,7 +117,8 @@ export function TerritoryBoard({ state, selectedId, onSelect, highlightedIds, pl
   return (
     <section className="panel board-panel" aria-labelledby="board-title">
       <div className="panel-heading"><div><p className="eyebrow">Rasterkarte{state.map ? ` · ${state.map.width} × ${state.map.height}` : ""}</p><h2 id="board-title">Gebietsübersicht</h2></div><span className="panel-count">{state.mapCreation ? state.mapCreation.regionCount : state.territories.length} {state.mapCreation ? "Regionen" : "Gebiete"}</span></div>
-      {map ? <RasterMap state={state} selectedId={selectedId} onSelect={onSelect} neighborIds={neighborIds} playerName={playerName}
+      {map ? <RasterMap state={state} selectedId={selectedId} onSelect={onSelect} onClearSelection={onClearSelection} neighborIds={neighborIds} highlightedIds={highlightedIds}
+        viewerPlayerId={viewerPlayerId} focusTerritoryId={focusTerritoryId} partChoice={partChoice} playerName={playerName}
         splitDraft={splitDraft} onToggleSplitCell={onToggleSplitCell} editor={editor} onToggleMapCell={onToggleMapCell}
         realmHighlights={realmHighlights} scoreHundredthsByTerritoryId={scoreHundredthsByTerritoryId} showScoreLabels={showScoreLabels}
         setupEditor={setupEditor} onSetupSelectCell={onSetupSelectCell} onSetupStrokePreview={onSetupStrokePreview}
@@ -117,7 +129,7 @@ export function TerritoryBoard({ state, selectedId, onSelect, highlightedIds, pl
           : "Kartenbau: Ziehe von Rastervertex zu Rastervertex. Es entstehen ausschließlich Grenzkanten zwischen Zellen."
         : editor ? editor.mode === "CUT"
         ? editor.selectable.length > 0 ? "Teilung: Klicke Zellen des Verlierergebiets, um Teil A zu formen."
-          : "Die vorgeschlagenen Teile A und B sind auf der Karte markiert. Der Verlierer wählt im Aktionsbereich."
+          : "Die vorgeschlagenen Teile A und B sind auf der Karte markiert. Wähle den gewünschten Teil direkt auf der Karte oder im Aktionsbereich."
         : "Grenzeditor: Klicke markierte Korridorzellen, um sie zu übertragen."
         : state.pendingSplit ? state.pendingSplit.stage === "AWAITING_CHOICE"
         ? "Teil A (ocker) und Teil B (blau) sind bestätigt. Die zuerst wählende Person entscheidet im Aktionsbereich."
@@ -148,7 +160,12 @@ interface RasterMapProps {
   readonly state: GameState;
   readonly selectedId: string | undefined;
   readonly onSelect: (territoryId: string) => void;
+  readonly onClearSelection: () => void;
   readonly neighborIds: readonly string[];
+  readonly highlightedIds: readonly string[];
+  readonly viewerPlayerId?: string | undefined;
+  readonly focusTerritoryId?: string | undefined;
+  readonly partChoice?: TerritoryBoardProps["partChoice"];
   readonly playerName: (id: string) => string;
   readonly splitDraft?: { readonly splitId: string; readonly partAKeys: readonly string[] } | undefined;
   readonly onToggleSplitCell: (cell: GridCell) => void;
@@ -164,15 +181,27 @@ interface RasterMapProps {
   readonly onSetupStrokeErase?: TerritoryBoardProps["onSetupStrokeErase"];
 }
 
-function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
+function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds, highlightedIds, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
   realmHighlights, scoreHundredthsByTerritoryId, showScoreLabels, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: RasterMapProps) {
   const map = state.map!;
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [hovered, setHovered] = useState<string>();
+  const panPointer = useRef<{ readonly pointerId: number; readonly clientX: number; readonly clientY: number; readonly pan: { readonly x: number; readonly y: number } } | undefined>(undefined);
   const setupPointer = useRef<{ readonly pointerId: number; readonly points: GridVertex[] } | undefined>(undefined);
   const activeId = hovered ?? selectedId;
   const width = map.width;
   const height = map.height;
+  const viewportWidth = width / zoom;
+  const viewportHeight = height / zoom;
+  const baseX = (width - viewportWidth) / 2;
+  const baseY = (height - viewportHeight) / 2;
+  const clampPan = (next: { readonly x: number; readonly y: number }) => ({
+    x: Math.min(baseX, Math.max(-baseX, next.x)),
+    y: Math.min(baseY, Math.max(-baseY, next.y)),
+  });
+  const viewX = baseX + pan.x;
+  const viewY = baseY + pan.y;
   const cellEntries = Object.entries(map.cells).map(([key, territoryId]) => ({ key, cell: fromCellKey(key), territoryId }));
   const activeBorders = activeId === undefined ? [] : state.territories.flatMap((territory) => {
     if (territory.id === activeId) return [];
@@ -188,9 +217,10 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
     ].filter((edge) => edge.neighbor !== territoryId);
   });
   const split = state.pendingSplit;
-  const splitA = new Set(split?.proposal?.partACells.map((cell) => `${cell.x},${cell.y}`) ?? splitDraft?.partAKeys ?? []);
-  const splitId = split?.originalTerritoryId;
-  const hasSplitOverlay = split !== undefined && (split.proposal !== undefined || splitDraft?.splitId === split.id);
+  const overlayTerritoryId = partChoice?.territoryId ?? split?.originalTerritoryId;
+  const splitA = new Set(partChoice?.partAKeys ?? split?.proposal?.partACells.map((cell) => `${cell.x},${cell.y}`) ?? splitDraft?.partAKeys ?? []);
+  const splitId = overlayTerritoryId;
+  const hasSplitOverlay = overlayTerritoryId !== undefined && splitA.size > 0;
   const splitBoundary = hasSplitOverlay ? cellEntries.flatMap(({ cell, key, territoryId }) => {
     if (territoryId !== splitId || !splitA.has(key)) return [];
     const right = `${cell.x + 1},${cell.y}`;
@@ -211,12 +241,46 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
   setupEditor?.previewRegions?.forEach((region, index) => region.cells.forEach((cell) => previewRegionIndexByCell.set(`${cell.x},${cell.y}`, index)));
   const setupDraftSegments = setupEditor?.draftEdges.map(setupBorderEdgeToSegment) ?? [];
   const setupCanDraw = setupEditor !== undefined && setupEditor.mode !== "POI" && setupEditor.editable && setupAllowed.size > 0;
+  const interactionOwnsMap = setupEditor !== undefined || editor !== undefined || (split !== undefined && split.stage !== "AWAITING_CHOICE") || partChoice?.canChoose === true;
   const pointerToGridPoint = (event: { readonly currentTarget: SVGSVGElement; readonly clientX: number; readonly clientY: number }): GridVertex | undefined => {
     const transform = event.currentTarget.getScreenCTM();
     if (transform === null) return undefined;
     const local = mapScreenPointToLocal(new DOMPoint(event.clientX, event.clientY), transform);
     return { x: local.x, y: local.y };
   };
+  const setZoomAround = (nextZoom: number, event?: { readonly currentTarget: SVGSVGElement; readonly clientX: number; readonly clientY: number }) => {
+    const normalizedZoom = Math.min(2.5, Math.max(1, nextZoom));
+    if (normalizedZoom === zoom) return;
+    const nextWidth = width / normalizedZoom;
+    const nextHeight = height / normalizedZoom;
+    const nextBaseX = (width - nextWidth) / 2;
+    const nextBaseY = (height - nextHeight) / 2;
+    const point = event === undefined ? undefined : pointerToGridPoint(event);
+    const ratioX = point === undefined ? .5 : (point.x - viewX) / viewportWidth;
+    const ratioY = point === undefined ? .5 : (point.y - viewY) / viewportHeight;
+    const nextViewX = point === undefined ? nextBaseX : point.x - ratioX * nextWidth;
+    const nextViewY = point === undefined ? nextBaseY : point.y - ratioY * nextHeight;
+    setZoom(normalizedZoom);
+    setPan({
+      x: Math.min(nextBaseX, Math.max(-nextBaseX, nextViewX - nextBaseX)),
+      y: Math.min(nextBaseY, Math.max(-nextBaseY, nextViewY - nextBaseY)),
+    });
+  };
+  useEffect(() => {
+    if (focusTerritoryId === undefined) return;
+    const anchor = getTerritoryLabelAnchor(map, focusTerritoryId);
+    if (anchor === undefined) return;
+    const nextZoom = 1.65;
+    const nextWidth = width / nextZoom;
+    const nextHeight = height / nextZoom;
+    const nextBaseX = (width - nextWidth) / 2;
+    const nextBaseY = (height - nextHeight) / 2;
+    setZoom(nextZoom);
+    setPan({
+      x: Math.min(nextBaseX, Math.max(-nextBaseX, anchor.x - nextWidth / 2 - nextBaseX)),
+      y: Math.min(nextBaseY, Math.max(-nextBaseY, anchor.y - nextHeight / 2 - nextBaseY)),
+    });
+  }, [focusTerritoryId, map, width, height]);
   const strokeForPointerPoints = (points: readonly GridVertex[]): SetupBorderEdge[] => createPenStroke(points, width, height);
   const previewPointerStroke = (points: readonly GridVertex[]) => onSetupStrokePreview?.(strokeForPointerPoints(points));
   const finishPointerStroke = () => {
@@ -234,17 +298,28 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
     realmByTerritoryId.set(territoryId, { index, selected: component.selected })));
   return <div className="raster-map-wrap">
     <div className="map-controls" aria-label="Kartensteuerung">
-      <button type="button" className="secondary-button" onClick={() => setZoom((value) => Math.min(2, value + .2))}>+</button>
-      <button type="button" className="secondary-button" onClick={() => setZoom((value) => Math.max(.8, value - .2))}>−</button>
-      <button type="button" className="secondary-button" onClick={() => setZoom(1)}>Auf Karte einpassen</button>
-      <span className="map-legend">{activeId ? `${activeId}${hovered ? " · Hover" : " · ausgewählt"}` : "Karte"}</span>
+      <button type="button" className="secondary-button" onClick={() => setZoomAround(zoom + .2)}>+</button>
+      <button type="button" className="secondary-button" onClick={() => setZoomAround(zoom - .2)}>−</button>
+      <button type="button" className="secondary-button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Auf Karte einpassen</button>
+      <span className="map-legend">{Math.round(zoom * 100)} % · mittlere Maustaste zum Verschieben{activeId ? ` · ${activeId}${hovered ? " Hover" : " ausgewählt"}` : ""}</span>
     </div>
     <svg className={`raster-map ${split || editor || setupEditor ? "is-splitting" : ""}`}
-      viewBox={`${(width - width / zoom) / 2} ${(height - height / zoom) / 2} ${width / zoom} ${height / zoom}`}
+      viewBox={`${viewX} ${viewY} ${viewportWidth} ${viewportHeight}`}
       preserveAspectRatio="xMidYMid meet"
       role="img" aria-label="Vedras Rasterkarte"
+      onWheel={(event) => {
+        event.preventDefault();
+        setZoomAround(zoom + (event.deltaY < 0 ? .16 : -.16), event);
+      }}
       onPointerDown={(event) => {
+        if (event.button === 1) {
+          event.preventDefault();
+          panPointer.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, pan };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          return;
+        }
         if (!setupCanDraw) return;
+        if (event.button !== 0) return;
         event.preventDefault();
         const point = pointerToGridPoint(event);
         if (point === undefined) return;
@@ -253,6 +328,16 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
         if (setupEditor?.mode !== "ERASER") previewPointerStroke([point]);
       }}
       onPointerMove={(event) => {
+        const panning = panPointer.current;
+        if (panning?.pointerId === event.pointerId) {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          if (bounds.width <= 0 || bounds.height <= 0) return;
+          setPan(clampPan({
+            x: panning.pan.x - (event.clientX - panning.clientX) / bounds.width * viewportWidth,
+            y: panning.pan.y - (event.clientY - panning.clientY) / bounds.height * viewportHeight,
+          }));
+          return;
+        }
         const drawing = setupPointer.current;
         if (drawing === undefined || drawing.pointerId !== event.pointerId) return;
         const point = pointerToGridPoint(event);
@@ -265,15 +350,25 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
         else previewPointerStroke(points);
       }}
       onPointerUp={(event) => {
+        if (panPointer.current?.pointerId === event.pointerId) {
+          panPointer.current = undefined;
+          event.currentTarget.releasePointerCapture(event.pointerId);
+          return;
+        }
         if (setupPointer.current?.pointerId !== event.pointerId) return;
         finishPointerStroke();
       }}
-      onPointerCancel={finishPointerStroke}>
+      onPointerCancel={() => { panPointer.current = undefined; finishPointerStroke(); }}
+      onClick={(event) => {
+        if ((event.target === event.currentTarget || (event.target as Element).classList.contains("map-background")) && !interactionOwnsMap) onClearSelection();
+      }}>
       <rect x="0" y="0" width={width} height={height} className="map-background" />
       {cellEntries.map(({ key, cell, territoryId }) => {
         const territory = territoryId ? state.territories.find((item) => item.id === territoryId) : undefined;
         const selected = territoryId === selectedId;
         const neighbor = territoryId !== null && neighborIds.includes(territoryId);
+        const isHighlighted = territoryId !== null && highlightedIds.includes(territoryId);
+        const ownedByViewer = territory?.ownerId !== null && territory?.ownerId === viewerPlayerId;
         const setupRegionIndex = state.mapCreation ? previewRegionIndexByCell.get(key) : undefined;
         const ownerClass = setupRegionIndex !== undefined ? `map-cell-setup-region-${setupRegionIndex}`
           : territory?.ownerId === null || territory === undefined
@@ -287,13 +382,14 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
         const realm = territoryId === null ? undefined : realmByTerritoryId.get(territoryId);
         const realmClass = realm === undefined ? "" : realm.selected ? "map-cell-largest-realm" : `map-cell-realm-candidate-${realm.index % 4}`;
         return <rect key={key} x={cell.x} y={cell.y} width="1" height="1"
-          className={`map-cell ${ownerClass} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${splitPart} ${editPart} ${setupPart} ${realmClass} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""}`}
+          className={`map-cell ${ownerClass} ${ownedByViewer ? "map-cell-own" : ""} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${isHighlighted ? "map-cell-activated" : ""} ${splitPart} ${editPart} ${setupPart} ${realmClass} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""} ${partChoice?.selectedPart === (splitA.has(key) ? "A" : "B") && territoryId === partChoice.territoryId ? "map-cell-part-selected" : ""}`}
           onClick={() => {
             if (setupEditor !== undefined) {
               if (setupEditor.mode === "POI" && setupEditor.editable && setupAllowed.has(key)) onSetupSelectCell?.(cell);
               return;
             }
             if (editorAllowed.has(key)) onToggleMapCell(cell);
+            else if (partChoice?.canChoose && territoryId === partChoice.territoryId) partChoice.onChoose(splitA.has(key) ? "A" : "B");
             else if (territoryId === splitId && split?.stage !== "AWAITING_CHOICE") onToggleSplitCell(cell);
             else if (territoryId !== null) onSelect(territoryId);
           }}
@@ -334,17 +430,27 @@ function RasterMap({ state, selectedId, onSelect, neighborIds, playerName, split
           <text x={minX + .2} y={minY + .88}>{region.cells.length}</text>
         </g>;
       })}
+      {hasSplitOverlay && (() => {
+        const partACells = cellEntries.filter((entry) => entry.territoryId === splitId && splitA.has(entry.key)).map((entry) => entry.cell);
+        const partBCells = cellEntries.filter((entry) => entry.territoryId === splitId && !splitA.has(entry.key)).map((entry) => entry.cell);
+        const partAAnchor = getCellLabelAnchor(partACells);
+        const partBAnchor = getCellLabelAnchor(partBCells);
+        return <>
+          {partAAnchor && <text x={partAAnchor.x} y={partAAnchor.y} className={`map-part-label map-part-label-a ${partChoice?.selectedPart === "A" ? "is-selected" : ""}`}>A{partChoice?.selectedPart === "A" ? " ✓" : ""}</text>}
+          {partBAnchor && <text x={partBAnchor.x} y={partBAnchor.y} className={`map-part-label map-part-label-b ${partChoice?.selectedPart === "B" ? "is-selected" : ""}`}>B{partChoice?.selectedPart === "B" ? " ✓" : ""}</text>}
+        </>;
+      })()}
       {!state.mapCreation && state.territories.map((territory) => {
         const cells = getTerritoryCells(map, territory.id);
-        if (cells.length === 0) return null;
-        const minX = Math.min(...cells.map((cell) => cell.x));
-        const minY = Math.min(...cells.map((cell) => cell.y));
-        return <g key={`label-${territory.id}`} className="map-territory-label">
-          <text x={minX + .2} y={minY + .42}>{territory.id}</text>
-          {territory.card && <text x={minX + .2} y={minY + .88}>
+        const anchor = getTerritoryLabelAnchor(map, territory.id);
+        if (anchor === undefined) return null;
+        const compact = cells.length < 3 || anchor.boundaryDistance === 0;
+        return <g key={`label-${territory.id}`} className={`map-territory-label ${compact ? "is-compact" : ""}`}>
+          <text x={anchor.x} y={anchor.y - (compact ? 0 : .17)}>{territory.id}</text>
+          {!compact && territory.card && <text x={anchor.x} y={anchor.y + .28}>
             {suitSymbol(territory.card.suit)} {territory.card.activationNumber}
           </text>}
-          {showScoreLabels && scoreHundredthsByTerritoryId?.[territory.id] !== undefined && <text x={minX + .2} y={minY + 1.34}>
+          {showScoreLabels && scoreHundredthsByTerritoryId?.[territory.id] !== undefined && <text x={anchor.x} y={anchor.y + (compact ? .2 : .66)}>
             {formatScoreHundredths(scoreHundredthsByTerritoryId[territory.id]!)}
           </text>}
         </g>;

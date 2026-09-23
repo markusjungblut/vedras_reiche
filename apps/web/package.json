@@ -8,6 +8,7 @@
     "pretypecheck": "npm run build --workspace @vedras/game-core",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.help-test.json && node --test tests/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
