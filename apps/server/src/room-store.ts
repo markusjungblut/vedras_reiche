@@ -34,6 +34,8 @@ export interface PersistedRoom {
   readonly acceptedCommands: readonly PersistedAcceptedCommand[];
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Presentation-only shared music anchor. Older snapshots may not have one. */
+  readonly musicStartedAt?: string;
   readonly rematchOfRoomId?: string;
 }
 
@@ -102,6 +104,7 @@ export function deserializePersistedRoom(value: unknown): { readonly room?: Pers
   if (!isMapConfig(value.map)) return { reason: "invalid map configuration" };
   if (!isNonNegativeSafeInteger(value.revision)) return { reason: "invalid revision" };
   if (!isIsoTimestamp(value.createdAt) || !isIsoTimestamp(value.updatedAt)) return { reason: "invalid timestamps" };
+  if (value.musicStartedAt !== undefined && !isIsoTimestamp(value.musicStartedAt)) return { reason: "invalid music timestamp" };
   if (value.rematchOfRoomId !== undefined && (!isNonEmptyString(value.rematchOfRoomId, 32) || !/^[A-Z0-9]+$/.test(value.rematchOfRoomId))) {
     return { reason: "invalid rematch origin" };
   }
@@ -145,6 +148,7 @@ export function deserializePersistedRoom(value: unknown): { readonly room?: Pers
       acceptedCommands,
       createdAt: value.createdAt,
       updatedAt: value.updatedAt,
+      ...(value.musicStartedAt === undefined ? {} : { musicStartedAt: value.musicStartedAt }),
       ...(value.rematchOfRoomId === undefined ? {} : { rematchOfRoomId: value.rematchOfRoomId }),
     },
   };

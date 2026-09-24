@@ -1,0 +1,100 @@
+{
+  "tracks": [
+    {
+      "id": "crusade",
+      "title": "Crusade",
+      "file": "/music/Crusade.mp3",
+      "durationMs": 198740
+    },
+    {
+      "id": "dangerous",
+      "title": "Dangerous",
+      "file": "/music/Dangerous.mp3",
+      "durationMs": 58175
+    },
+    {
+      "id": "devastation-and-revenge",
+      "title": "Devastation and Revenge",
+      "file": "/music/Devastation%20and%20Revenge.mp3",
+      "durationMs": 185260
+    },
+    {
+      "id": "evil-march",
+      "title": "Evil March",
+      "file": "/music/Evil%20March.mp3",
+      "durationMs": 71016
+    },
+    {
+      "id": "five-armies",
+      "title": "Five Armies",
+      "file": "/music/Five%20Armies.mp3",
+      "durationMs": 155847
+    },
+    {
+      "id": "industrial-revolution",
+      "title": "Industrial Revolution",
+      "file": "/music/Industrial%20Revolution.mp3",
+      "durationMs": 145711
+    },
+    {
+      "id": "interloper",
+      "title": "Interloper",
+      "file": "/music/Interloper.mp3",
+      "durationMs": 262661
+    },
+    {
+      "id": "machinations",
+      "title": "Machinations",
+      "file": "/music/Machinations.mp3",
+      "durationMs": 104647
+    },
+    {
+      "id": "oppressive-gloom",
+      "title": "Oppressive Gloom",
+      "file": "/music/Oppressive%20Gloom.mp3",
+      "durationMs": 199393
+    },
+    {
+      "id": "second-coming-no-percussion",
+      "title": "Second Coming - no percussion",
+      "file": "/music/Second%20Coming%20-%20no%20percussion.mp3",
+      "durationMs": 131788
+    },
+    {
+      "id": "showdown",
+      "title": "Showdown",
+      "file": "/music/Showdown.mp3",
+      "durationMs": 73117
+    },
+    {
+      "id": "tectonic",
+      "title": "Tectonic",
+      "file": "/music/Tectonic.mp3",
+      "durationMs": 82678
+    },
+    {
+      "id": "the-descent",
+      "title": "The Descent",
+      "file": "/music/The%20Descent.mp3",
+      "durationMs": 191765
+    },
+    {
+      "id": "the-pyre",
+      "title": "The Pyre",
+      "file": "/music/The%20Pyre.mp3",
+      "durationMs": 233404
+    },
+    {
+      "id": "thunderbird",
+      "title": "Thunderbird",
+      "file": "/music/Thunderbird.mp3",
+      "durationMs": 361613
+    },
+    {
+      "id": "virtutes-instrumenti",
+      "title": "Virtutes Instrumenti",
+      "file": "/music/Virtutes%20Instrumenti.mp3",
+      "durationMs": 262060
+    }
+  ]
+}

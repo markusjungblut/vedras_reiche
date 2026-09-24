@@ -42,6 +42,7 @@ import { StateInspector } from "./components/StateInspector";
 import { TerritoryBoard, TerritoryOverview } from "./components/TerritoryBoard";
 import { TerritoryDetails } from "./components/TerritoryDetails";
 import { ResultPanel, ScoringPanel } from "./components/ScoringPanel";
+import { MusicControls } from "./components/MusicControls";
 import { getMapEditor, NeutralDiamondControls, RecentWarResult, WarControls, type MapEditor } from "./components/WarControls";
 import { createScenario, type ScenarioKind } from "./debug/scenarios";
 import type { CardSource, RandomSource } from "@vedras/game-core";
@@ -59,6 +60,7 @@ import { formatDomainError, type RuleHelpId } from "./help/rule-help";
 import { loadTutorialProgress, markIntroductionSeen, markTutorialSeen, resetTutorialProgress, type TutorialStep } from "./help/tutorial-state";
 import type { GameReadModel } from "./game-read-model";
 import { loadSoundPreference, saveSoundPreference, soundManager, type SoundCue } from "./ui/sound-manager";
+import { musicManager, type MusicPlaybackState } from "./ui/music-manager";
 
 const DEFAULT_SEED = 12345;
 const SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL ?? window.location.origin;
@@ -834,6 +836,7 @@ export default function App() {
   const [rematchCreating, setRematchCreating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundPreference);
+  const [musicState, setMusicState] = useState<MusicPlaybackState>(() => musicManager.getState());
   const [multiplayerPendingAction, setMultiplayerPendingAction] = useState<MultiplayerPendingAction>();
   const [lobbyOrder, setLobbyOrder] = useState<readonly string[]>([]);
   const [firstMultiplayerDrawerId, setFirstMultiplayerDrawerId] = useState<string | undefined>();
@@ -885,6 +888,16 @@ export default function App() {
     soundManager.setEnabled(soundEnabled);
     saveSoundPreference(soundEnabled);
   }, [soundEnabled]);
+
+  useEffect(() => {
+    const unsubscribe = musicManager.subscribe(setMusicState);
+    void musicManager.loadManifest();
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    musicManager.updateRoom(multiplayerRoom);
+  }, [multiplayerRoom]);
 
   useEffect(() => {
     if (notice === null) return undefined;
@@ -972,6 +985,7 @@ export default function App() {
     return () => {
       unsubscribeController.current?.();
       controller.current?.dispose();
+      musicManager.dispose();
     };
   }, []);
 
@@ -1007,6 +1021,13 @@ export default function App() {
       void soundManager.unlock().then(() => soundManager.play("CONFIRM"));
     }
   };
+
+  const setMusicEnabled = (enabled: boolean) => {
+    musicManager.setEnabled(enabled);
+    if (enabled) void musicManager.unlock();
+  };
+
+  const startMusic = () => { void musicManager.unlock(); };
 
   const loadScenario = (kind: ScenarioKind, chosenSeed: number) => {
     try {
@@ -1460,12 +1481,13 @@ export default function App() {
     setNotice("Für das Rematch bitte mit deinem Namen beitreten.");
   };
 
-  return <div className="app-shell" onPointerDown={() => { if (soundEnabled) void soundManager.unlock(); }} onKeyDown={() => { if (soundEnabled) void soundManager.unlock(); }}>
+  return <div className="app-shell" onPointerDown={() => { if (soundEnabled) void soundManager.unlock(); if (musicState.enabled) void musicManager.unlock(); }} onKeyDown={() => { if (soundEnabled) void soundManager.unlock(); if (musicState.enabled) void musicManager.unlock(); }}>
     {!state ? <main className="welcome-screen">
       <span className="eyebrow">{showMultiplayer ? "Mehrspieler" : showNewGameConfig ? "Lokales Testspiel" : "Willkommen"}</span>
       <h1>Vedras Reiche</h1>
       <p>{showMultiplayer ? "Der Spielserver verwaltet die Partie. Dein Browser zeigt nur deine eigene Spielansicht." : "Erschafft gemeinsam eine Karte, ersteigert Gebiete und erreicht die höchste Wertung."}</p>
       <button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={toggleSound}>{soundEnabled ? "🔊 Sound an" : "🔇 Sound aus"}</button>
+      <MusicControls state={musicState} onEnabledChange={setMusicEnabled} onVolumeChange={(volume) => musicManager.setVolume(volume)} onStart={startMusic} />
       {!showNewGameConfig && !showDebugScenarios && !showMultiplayer && <div className="button-row welcome-actions">
         <button type="button" className="primary-button" onClick={() => setShowMultiplayer(true)}>Mehrspieler</button>
         <button type="button" className="secondary-button" onClick={() => setShowNewGameConfig(true)}>Lokales Testspiel</button>
@@ -1589,6 +1611,7 @@ export default function App() {
                 remoteConnectionStatus === "SESSION_REPLACED" ? "● Sitzung in anderem Fenster geöffnet" : remoteConnectionStatus === "PLAYER_REMOVED" ? "● Aus Raum entfernt" : "◌ Verbindung wird hergestellt …"}
           </p>}
           <button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={toggleSound}>{soundEnabled ? "🔊 Sound an" : "🔇 Sound aus"}</button>
+          <MusicControls state={musicState} onEnabledChange={setMusicEnabled} onVolumeChange={(volume) => musicManager.setVolume(volume)} onStart={startMusic} />
           {multiplayer && multiplayerRoom && <details className="room-menu"><summary>Partie</summary><div className="config-stack">
             <strong>Raumcode: {multiplayerRoom.roomId}</strong>
             <button type="button" className="secondary-button" onClick={() => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.")}>Raumcode kopieren</button>

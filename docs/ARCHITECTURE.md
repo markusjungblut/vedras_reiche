@@ -209,6 +209,8 @@ WebSocket-Verbindungen erhalten einen Heartbeat. Ein Disconnect behält den Teil
 
 Der Browser führt keine öffentliche Roomliste. Er speichert ausschließlich seine eigenen Session-Credentials mit einer ungefährlichen, lokalen Anzeigezusammenfassung. Erst nach Verbindung ist der Serverstatus maßgeblich. Die Hostoperation `remove waiting player` läuft in derselben Room-Serialisierung wie Start und Map-Konfiguration, persistiert vor der Runtime-Mutation und ist nur im `WAITING`-Status gültig. Der entfernte Socket erhält `PLAYER_REMOVED` und wird terminal geschlossen.
 
+Beim Spielstart speichert der Room außerdem einen präsentationalen Musikzeitanker. Öffentliche Room-Snapshots enthalten diesen unveränderten Wert sowie eine aktuelle Serverzeit. Der Browser berechnet daraus die gemeinsame Musiktimeline und verwendet danach eine monotone Browserzeit; die Audiodateien und ihre Wiedergabe bleiben vollständig im Webclient.
+
 Ein Rematch mutiert niemals einen `FINISHED`-Room. Nur dessen Host kann einen neuen, sofort persistierten `WAITING`-Room erzeugen. Er übernimmt die Kartenabmessungen und hält optional `rematchOfRoomId`; Spieler, Tokens, Setup, Fraktionen und Zufall entstehen neu. Der Server sendet verbundenen Teilnehmern des alten Rooms nur ein unverbindliches Rematch-Angebot. Ein späterer Beitritt verwendet den normalen Invite- und Joinablauf.
 
 ## Production-Transport

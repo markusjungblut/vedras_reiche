@@ -59,6 +59,8 @@ export interface GameRoom {
   revision: number;
   readonly createdAt: string;
   updatedAt: string;
+  /** Shared presentation-only anchor, set when this room starts. */
+  musicStartedAt?: string;
   rematchOfRoomId?: string;
   commandQueue: Promise<void>;
 }
@@ -104,6 +106,7 @@ interface PersistenceChanges {
   readonly gameState?: GameState;
   readonly acceptedCommands?: readonly AcceptedCommand[];
   readonly updatedAt?: string;
+  readonly musicStartedAt?: string;
   readonly rematchOfRoomId?: string;
 }
 
@@ -268,12 +271,13 @@ export class RoomManager {
       state = applyAction(state, { type: GameActionType.BeginMapCreation, firstPlayerId: firstMapDrawerPlayerId, map: selectedMap }, this.context()).state;
       const revision = room.revision + 1;
       const updatedAt = this.now();
-      await this.persist(room, { status: "RUNNING", map: selectedMap, gameState: state, revision, updatedAt });
+      await this.persist(room, { status: "RUNNING", map: selectedMap, gameState: state, revision, updatedAt, musicStartedAt: updatedAt });
       room.gameState = state;
       room.map = copyMap(selectedMap);
       room.status = "RUNNING";
       room.revision = revision;
       room.updatedAt = updatedAt;
+      room.musicStartedAt = updatedAt;
       return room;
     });
   }
@@ -392,6 +396,8 @@ export class RoomManager {
       players: [...room.participants.values()].map((participant) => ({ playerId: participant.playerId, name: participant.name, connected: participant.connected })),
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
+      serverTime: this.now(),
+      ...(room.musicStartedAt === undefined ? {} : { musicStartedAt: room.musicStartedAt }),
       ...(room.rematchOfRoomId === undefined ? {} : { rematchOfRoomId: room.rematchOfRoomId }),
     };
   }
@@ -467,6 +473,7 @@ export class RoomManager {
       acceptedCommands: [...(changes.acceptedCommands ?? room.acceptedCommands)].slice(-MAX_ACCEPTED_COMMANDS),
       createdAt: room.createdAt,
       updatedAt: changes.updatedAt ?? room.updatedAt,
+      ...((changes.musicStartedAt ?? room.musicStartedAt) === undefined ? {} : { musicStartedAt: changes.musicStartedAt ?? room.musicStartedAt }),
       ...((changes.rematchOfRoomId ?? room.rematchOfRoomId) === undefined ? {} : { rematchOfRoomId: changes.rematchOfRoomId ?? room.rematchOfRoomId }),
     };
   }
@@ -485,6 +492,7 @@ export class RoomManager {
       revision: snapshot.revision,
       createdAt: snapshot.createdAt,
       updatedAt: snapshot.updatedAt,
+      ...(snapshot.musicStartedAt === undefined ? {} : { musicStartedAt: snapshot.musicStartedAt }),
       ...(snapshot.rematchOfRoomId === undefined ? {} : { rematchOfRoomId: snapshot.rematchOfRoomId }),
       commandQueue: Promise.resolve(),
     };

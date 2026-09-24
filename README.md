@@ -104,6 +104,10 @@ Der Browser speichert Room-ID, Spieler-ID, Session-Token, Namen und eine kleine,
 
 Der Host kann Gäste nur vor Spielstart aus der Lobby entfernen. Ein entfernter Browser erhält einen terminalen Hinweis und versucht keine erneute Verbindung. Nach einer beendeten Partie kann ihr Host ein Rematch erzeugen: Es entsteht ein neuer WAITING-Room mit gleicher Kartengröße, neuen Zugangsdaten und normalem Setup; die alte Ergebnispartie bleibt erhalten.
 
+## Hintergrundmusik
+
+Lege CC-BY-Musikdateien im MP3-Format nach `apps/web/public/music/`. Der normale Dev- und Build-Start erzeugt daraus automatisch `music/manifest.json` mit stabilen IDs und Tracklängen. Im Mehrspielerraum richtet der Browser die Playlist nach dem serverseitigen Startzeitpunkt aus; Musik an/aus und Lautstärke bleiben pro Browser lokal. Die vollständigen Angaben stehen in [MUSIC_CREDITS.md](MUSIC_CREDITS.md).
+
 Der Server legt jeden Room als atomaren JSON-Snapshot unter `data/rooms/` ab; `data/` wird nicht committed. Beim Neustart lädt er WAITING-, RUNNING- und FINISHED-Rooms wieder ein. Zum Testen eines Neustarts `npm run dev:multiplayer` beenden, erneut starten und die gespeicherte Partie im Browser fortsetzen. `VEDRAS_DATA_DIR=/pfad/zum/volume` setzt das Datenverzeichnis; ohne Angabe gilt `./data`. Für andere Entwicklungs-Origins kann der Server mit `WEB_ORIGIN=http://host:port` gestartet werden; `PORT` setzt den Server-Port.
 
 ## Production und Staging

@@ -69,6 +69,10 @@ export interface PublicRoomState {
   readonly map: MapDimensionsDto;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Authoritative wall-clock reference sent with this snapshot. Clients use it only to align presentation timelines. */
+  readonly serverTime: string;
+  /** Set once when the game starts and retained for the lifetime of this room. */
+  readonly musicStartedAt?: string;
   readonly rematchOfRoomId?: string;
 }
 

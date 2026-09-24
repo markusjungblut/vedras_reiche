@@ -36,6 +36,17 @@ test("two browsers create, join and start an authoritative room", async ({ brows
     await expect(guest.getByRole("img", { name: "Vedras Rasterkarte" })).toBeVisible();
     await expect(host.getByText("1 Regionen", { exact: true })).toBeVisible();
     await expect(guest.getByText("1 Regionen", { exact: true })).toBeVisible();
+    await host.locator(".music-menu > summary").click();
+    await guest.locator(".music-menu > summary").click();
+    const hostTrack = host.getByText(/^Synchron im Raum:/);
+    const guestTrack = guest.getByText(/^Synchron im Raum:/);
+    await expect(hostTrack).toBeVisible();
+    await expect(guestTrack).toBeVisible();
+    expect(await hostTrack.textContent()).toEqual(await guestTrack.textContent());
+    await guest.getByLabel("Hintergrundmusik").uncheck();
+    await expect(guest.getByLabel("Hintergrundmusik")).not.toBeChecked();
+    await guest.getByLabel("Hintergrundmusik").check();
+    await expect(guestTrack).toHaveText(await hostTrack.textContent());
   } finally {
     await hostContext.close();
     await guestContext.close();

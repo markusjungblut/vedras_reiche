@@ -67,6 +67,16 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .lobby-resume-card p { margin: 0; color: #b9cae8; }
 .room-menu { min-width: 190px; color: #c6d3e8; }
 .room-menu summary { cursor: pointer; color: #ffd18a; font-weight: 700; }
+.music-menu { min-width: 190px; color: #c6d3e8; }
+.music-menu summary, .music-credits summary { cursor: pointer; color: #ffd18a; font-weight: 700; }
+.music-menu-content { display: grid; gap: 10px; padding-top: 10px; }
+.music-switch, .music-volume { display: flex; align-items: center; gap: 8px; color: #c6d3e8; font-size: 13px; }
+.music-volume input { width: 112px; accent-color: var(--accent); }
+.music-volume output { min-width: 34px; color: var(--text-subtle); font-size: 12px; }
+.music-credits { display: grid; gap: 7px; padding-top: 3px; }
+.music-credits p, .music-credits ul { margin: 0; color: var(--text-muted); font-size: 12px; }
+.music-credits ul { max-height: 130px; padding-left: 19px; overflow-y: auto; }
+.music-credits a { color: #9fc3f4; font-size: 12px; }
 .config-stack { display: grid; gap: 14px; }
 .config-stack > div > small { display: block; margin-top: 4px; }
 .seat-entry { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; }
@@ -260,6 +270,7 @@ button:disabled { opacity: .48; }
 .dashboard { width: min(2240px, calc(100vw - 48px)); padding-bottom: var(--space-xl); }
 .toolbar { position: sticky; z-index: 5; top: 0; align-items: center; margin-bottom: var(--space-lg); padding: 12px var(--space-lg); backdrop-filter: blur(12px); }
 .toolbar .sound-toggle { margin-left: auto; }
+.toolbar .music-menu { margin-left: 0; }
 .main-grid { grid-template-columns: minmax(0, 1fr) clamp(345px, 24vw, 430px); gap: var(--space-lg); align-items: start; }
 .sidebar-column { gap: var(--space-md); }
 .game-table { display: grid; grid-template-columns: minmax(230px, 260px) minmax(900px, 1fr) minmax(270px, 320px) minmax(270px, 320px); grid-template-areas: "personal board action players" "personal board events events"; gap: var(--space-lg); align-items: start; }
@@ -312,5 +323,5 @@ button:disabled { opacity: .48; }
 .help-drawer { z-index: var(--layer-drawer); border-color: #6889bd; border-radius: var(--radius-lg); background: #13233f; }.intro-backdrop { z-index: var(--layer-modal); }.intro-card { border-color: #6b8fc5; background: linear-gradient(145deg, #1a3153, #12213b); }.error-details { overflow: auto; max-height: 32vh; padding: var(--space-md); border-radius: var(--radius-sm); background: #15182a; }
 @media (max-width: 2199px) and (min-width: 1101px) { .dashboard { width: min(1780px, calc(100vw - 48px)); }.game-table { grid-template-columns: minmax(0, 1fr) clamp(345px, 24vw, 430px); grid-template-areas: "personal personal" "board action" "board players" "board events"; }.event-column .event-list { max-height: 280px; } }
 @media (max-width: 1100px) { .dashboard { width: min(calc(100% - 32px), 1100px); }.main-grid { grid-template-columns: minmax(0, 1fr); }.sidebar-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }.sidebar-column > .action-panel, .sidebar-column > .first-game-hint { grid-column: 1 / -1; }.game-table { grid-template-columns: minmax(0, 1fr); grid-template-areas: "personal" "board" "action" "players" "events"; }.personal-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }.personal-column > .details-panel { grid-column: 1 / -1; }.raster-map { max-height: 62vh; } }
-@media (max-width: 720px) { .welcome-screen { width: min(100% - 28px, 620px); padding-top: 46px; }.welcome-screen h1 { font-size: clamp(40px, 14vw, 66px); }.join-room-row, .number-fields { grid-template-columns: minmax(0, 1fr); }.dashboard { width: calc(100% - 20px); }.game-header { padding: 16px 18px; }.game-status { gap: 12px 18px; }.toolbar { position: static; align-items: flex-start; }.toolbar .sound-toggle { margin-left: 0; }.sidebar-column { grid-template-columns: minmax(0, 1fr); }.sidebar-column > .action-panel, .sidebar-column > .first-game-hint { grid-column: auto; }.personal-column { grid-template-columns: minmax(0, 1fr); }.personal-column > .details-panel { grid-column: auto; }.territory-overview { padding: var(--space-md); }.territory-overview-controls { align-items: flex-start; flex-direction: column; }.raster-map { max-height: 52vh; }.map-legend { width: 100%; margin-left: 0; }.help-drawer { inset: 0; width: 100%; border-width: 0; border-radius: 0; }.toast-notice { right: 10px; bottom: 10px; width: calc(100% - 20px); }.seat-entry { grid-template-columns: 22px minmax(0, 1fr) auto auto auto; gap: 5px; }.event-list { max-height: 250px; } }
+@media (max-width: 720px) { .welcome-screen { width: min(100% - 28px, 620px); padding-top: 46px; }.welcome-screen h1 { font-size: clamp(40px, 14vw, 66px); }.join-room-row, .number-fields { grid-template-columns: minmax(0, 1fr); }.dashboard { width: calc(100% - 20px); }.game-header { padding: 16px 18px; }.game-status { gap: 12px 18px; }.toolbar { position: static; align-items: flex-start; }.toolbar .sound-toggle, .toolbar .music-menu { margin-left: 0; }.sidebar-column { grid-template-columns: minmax(0, 1fr); }.sidebar-column > .action-panel, .sidebar-column > .first-game-hint { grid-column: auto; }.personal-column { grid-template-columns: minmax(0, 1fr); }.personal-column > .details-panel { grid-column: auto; }.territory-overview { padding: var(--space-md); }.territory-overview-controls { align-items: flex-start; flex-direction: column; }.raster-map { max-height: 52vh; }.map-legend { width: 100%; margin-left: 0; }.help-drawer { inset: 0; width: 100%; border-width: 0; border-radius: 0; }.toast-notice { right: 10px; bottom: 10px; width: calc(100% - 20px); }.seat-entry { grid-template-columns: 22px minmax(0, 1fr) auto auto auto; gap: 5px; }.event-list { max-height: 250px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

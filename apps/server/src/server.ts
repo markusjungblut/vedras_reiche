@@ -47,6 +47,7 @@ interface SocketSession {
 const DEFAULT_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"];
 const RESERVED_STATIC_PREFIXES = ["/api", "/ws", "/health", "/data"];
 const MIME_TYPES: Readonly<Record<string, string>> = {
+  ".mp3": "audio/mpeg",
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
@@ -513,12 +514,13 @@ function sendError(connection: RoomConnection, code: NetworkErrorCode, message: 
 }
 
 export function broadcastRoom(roomManager: RoomManager, room: GameRoom): void {
+  const publicRoom = roomManager.getPublicRoomState(room);
   for (const participant of room.participants.values()) {
     if (participant.connection === undefined) continue;
     const snapshot: RoomSnapshotMessage = {
       type: "ROOM_SNAPSHOT",
       protocolVersion: PROTOCOL_VERSION,
-      room: roomManager.getPublicRoomState(room),
+      room: publicRoom,
       revision: room.revision,
       ...(room.gameState === undefined ? {} : { gameView: roomManager.getPlayerView(room, participant.playerId) }),
     };

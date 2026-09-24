@@ -70,6 +70,8 @@ test("room lifecycle preserves host authority and lobby configuration", async ()
   await rooms.startRoom(host.room.roomId, host.sessionToken,
     [host.participant.playerId, guest.participant.playerId], host.participant.playerId);
   assert.equal(host.room.status, "RUNNING");
+  assert.equal(host.room.musicStartedAt, "2026-09-22T12:00:00.000Z");
+  assert.equal(rooms.getPublicRoomState(host.room).serverTime, "2026-09-22T12:00:00.000Z");
   assert.equal(host.room.gameState.map.width, 100);
 });
 
@@ -133,6 +135,7 @@ test("file snapshots restore waiting and running rooms without raw session token
     assert.equal(roomsB.getRoom(waiting.room.roomId).status, "WAITING");
     const running = roomsB.getRoom(room.roomId);
     assert.equal(running.revision, room.revision);
+    assert.equal(running.musicStartedAt, "2026-09-22T12:00:00.000Z");
     assert.equal(running.gameState.mapCreation.regionCount, 2);
     assert.equal(roomsB.getPublicRoomState(running).players.every((player) => !player.connected), true);
     assert.equal(roomsB.authenticate(room.roomId, annaToken).participant.playerId, anna.playerId);
@@ -407,9 +410,12 @@ test("transport rejects malformed and oversized WebSocket input", async () => {
 test("production server serves the built client on one origin without exposing internal paths", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vedras-web-"));
   const assets = join(directory, "assets");
+  const music = join(directory, "music");
   await mkdir(assets);
+  await mkdir(music);
   await writeFile(join(directory, "index.html"), "<main>Vedras Production</main>", "utf8");
   await writeFile(join(assets, "app.js"), "console.log('asset')", "utf8");
+  await writeFile(join(music, "Track With Spaces.mp3"), Buffer.from([0xff, 0xfb, 0x90, 0x00]));
   const server = createVedrasServer({
     roomManager: manager(),
     port: 0,
@@ -437,6 +443,9 @@ test("production server serves the built client on one origin without exposing i
     const asset = await fetch(base + "/assets/app.js");
     assert.equal(asset.status, 200);
     assert.match(asset.headers.get("cache-control") ?? "", /immutable/);
+    const audio = await fetch(base + "/music/Track%20With%20Spaces.mp3");
+    assert.equal(audio.status, 200);
+    assert.equal(audio.headers.get("content-type"), "audio/mpeg");
 
     for (const protectedPath of ["/api/rooms", "/ws", "/data/rooms/ROOM1.json", "/%2e%2e/data/rooms/ROOM1.json"]) {
       const response = await fetch(base + protectedPath);
