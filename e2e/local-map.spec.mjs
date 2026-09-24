@@ -5,6 +5,44 @@ async function openWithoutIntroduction(page, path = "/") {
   await page.goto(path);
 }
 
+test("setup errors remain visible until they are dismissed on the welcome screen", async ({ page }) => {
+  await openWithoutIntroduction(page);
+  await page.getByRole("button", { name: "Lokales Testspiel" }).click();
+  await page.getByLabel("Lokaler Seed (für reproduzierbare Ziehungen)").fill("-1");
+  await page.getByRole("button", { name: "Kartenbau starten" }).click();
+
+  const alert = page.getByRole("alert");
+  await expect(alert).toHaveCount(1);
+  await page.clock.install();
+  await page.clock.fastForward(5_100);
+  await expect(alert).toHaveCount(1);
+  await alert.getByRole("button", { name: "Fehlermeldung schließen" }).click();
+  await expect(alert).toHaveCount(0);
+});
+
+test("action errors can be closed and transient domain errors expire after a resettable timeout", async ({ page }) => {
+  await openWithoutIntroduction(page, "/?developer=1");
+  await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Aktivierungsphase" }).click();
+  await page.clock.install();
+
+  const alert = page.getByRole("alert");
+  await page.getByRole("button", { name: "Ungültige Aktion testen" }).click();
+  await expect(alert).toHaveCount(1);
+  await alert.getByRole("button", { name: "Fehlermeldung schließen" }).click();
+  await expect(alert).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Ungültige Aktion testen" }).click();
+  await expect(alert).toHaveCount(1);
+  await page.clock.fastForward(4_500);
+  await page.getByRole("button", { name: "Ungültige Aktion testen" }).click();
+  await expect(alert).toHaveCount(1);
+  await page.clock.fastForward(700);
+  await expect(alert).toHaveCount(1);
+  await page.clock.fastForward(4_300);
+  await expect(alert).toHaveCount(0);
+});
+
 test("local map creation, labels, zoom and pan use the live SVG map", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1200 });
   await openWithoutIntroduction(page);

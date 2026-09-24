@@ -129,15 +129,38 @@ test("a vertical center border from edge to edge creates two 1250-cell regions",
   assertCompletePartition(state.map, { edgeKeys: vertical(25).map((edge) => `${edge.from.x},${edge.from.y}|${edge.to.x},${edge.to.y}`) }, [1250, 1250]);
   const committed = commit(state, vertical(25));
   assert.equal(committed.mapCreation.regionCount, 2);
-  assert.equal(committed.mapCreation.stage, MapCreationStage.PlaceLandmarks);
+  assert.equal(committed.mapCreation.stage, MapCreationStage.DrawTerritories);
   assertCompletePartition(committed.map, committed.mapCreation.borders, [1250, 1250]);
 });
 
 test("a horizontal center border from edge to edge creates two 1250-cell regions", () => {
   const state = commit(started(), horizontal(25));
   assert.equal(state.mapCreation.regionCount, 2);
-  assert.equal(state.mapCreation.stage, MapCreationStage.PlaceLandmarks);
+  assert.equal(state.mapCreation.stage, MapCreationStage.DrawTerritories);
   assertCompletePartition(state.map, state.mapCreation.borders, [1250, 1250]);
+});
+
+test("POI milestones start after completed drawing turns for two, four, and six players", () => {
+  for (const playerCount of [2, 4, 6]) {
+    let state = started(playerCount);
+    for (let turn = 1; turn <= playerCount; turn += 1) state = commit(state, vertical(turn * 5));
+    assert.equal(state.mapCreation.regionCount, playerCount + 1);
+    assert.equal(state.mapCreation.stage, MapCreationStage.PlaceLandmarks);
+    assert.equal(state.mapCreation.activePlayerId, "P1");
+  }
+});
+
+test("the second POI milestone follows the fourth completed drawing turn for two players", () => {
+  let state = started(2);
+  state = commit(state, vertical(10));
+  state = commit(state, vertical(20));
+  assert.equal(state.mapCreation.stage, MapCreationStage.PlaceLandmarks);
+  state = placeRequiredPois(state);
+  state = commit(state, vertical(30));
+  assert.equal(state.mapCreation.stage, MapCreationStage.DrawTerritories);
+  state = commit(state, vertical(40));
+  assert.equal(state.mapCreation.regionCount, 5);
+  assert.equal(state.mapCreation.stage, MapCreationStage.PlaceJunctions);
 });
 
 test("a closed 10 by 10 border loop creates 100 and 2400-cell regions", () => {
@@ -254,6 +277,7 @@ test("a correction preserves the region count while a normal draft does not acce
 
 test("POIs can be placed on any setup cell, stay cell-bound after a split, and cannot overlap", () => {
   let state = commit(started(), vertical(25));
+  state = commit(state, horizontal(25, 0, 25));
   const position = { x: 49, y: 49 };
   state = applyAction(state, {
     type: GameActionType.PlaceSetupPointOfInterest,
@@ -270,7 +294,7 @@ test("POIs can be placed on any setup cell, stay cell-bound after a split, and c
   }, context()), (error) => error instanceof DomainError && error.code === DomainErrorCode.InvalidPoiPlacement);
   state = commit(state, horizontal(25, 25, 50));
   assert.deepEqual(state.pointsOfInterest[0].position, position);
-  assert.equal(state.map.cells["49,49"], "R03");
+  assert.equal(state.map.cells["49,49"], "R04");
 });
 
 test("partition analysis identifies exactly one split source", () => {

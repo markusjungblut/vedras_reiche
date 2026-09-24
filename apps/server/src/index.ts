@@ -1,5 +1,6 @@
 import { access, constants } from "node:fs/promises";
 import { join } from "node:path";
+import { AccountManager, FileAccountStore } from "./account-store.js";
 import { CryptoCardSource, CryptoRandomSource } from "./random.js";
 import { RoomManager } from "./room-manager.js";
 import { FileRoomStore } from "./room-store.js";
@@ -10,6 +11,8 @@ const log = (event: string, details: Readonly<Record<string, string | number | b
   process.stdout.write(JSON.stringify({ timestamp: new Date().toISOString(), event, ...details }) + "\n");
 const configuration = loadRuntimeConfig();
 const roomStore = new FileRoomStore(join(configuration.dataDirectory, "rooms"), (event, details) => log(event, details));
+const accountStore = new FileAccountStore(join(configuration.dataDirectory, "accounts"));
+const accountManager = new AccountManager({ store: accountStore });
 const manager = new RoomManager({
   randomSource: new CryptoRandomSource(),
   cardSource: new CryptoCardSource(),
@@ -19,12 +22,14 @@ const manager = new RoomManager({
 
 try {
   await roomStore.ensureReady();
+  await accountStore.ensureReady();
+  await accountManager.restore();
   if (configuration.production && configuration.webDistDirectory !== undefined) {
     await access(join(configuration.webDistDirectory, "index.html"), constants.R_OK);
   }
   const restored = await manager.restore();
   if (!manager.isStorageHealthy()) throw new Error("Persistent room storage could not be restored.");
-  log("persistence_initialized", { loadedRooms: restored.loaded, skippedRooms: restored.skipped });
+  log("persistence_initialized", { loadedRooms: restored.loaded, skippedRooms: restored.skipped, accounts: "ready" });
 } catch (error) {
   log("startup_failed", { component: "storage" });
   process.stderr.write(`Vedras server did not start: ${error instanceof Error ? error.message : "persistent storage is unavailable"}\n`);
@@ -34,6 +39,7 @@ try {
 
 const server = createVedrasServer({
   roomManager: manager,
+  accountManager,
   port: configuration.port,
   webOrigins: configuration.webOrigins,
   allowCrossOrigin: !configuration.production,

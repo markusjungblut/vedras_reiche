@@ -18,9 +18,12 @@ import {
 } from "@vedras/protocol";
 import type { GameRoom, RoomConnection, RoomManager } from "./room-manager.js";
 import { RoomError } from "./room-manager.js";
+import { ACCOUNT_SESSION_MAX_AGE_SECONDS, AccountError, type AccountManager, type PublicAccount } from "./account-store.js";
 
 export interface VedrasServerOptions {
   readonly roomManager: RoomManager;
+  /** Omit only for legacy room-manager tests. The production server always supplies this dependency. */
+  readonly accountManager?: AccountManager;
   readonly port?: number;
   readonly webOrigins?: readonly string[];
   /** Enables CORS for separately running development clients. Production uses one origin and leaves it off. */
@@ -46,6 +49,9 @@ interface SocketSession {
 
 const DEFAULT_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"];
 const RESERVED_STATIC_PREFIXES = ["/api", "/ws", "/health", "/data"];
+const ACCOUNT_COOKIE_NAME = "vedras_account_session";
+const AUTH_ATTEMPT_WINDOW_MS = 60_000;
+const AUTH_ATTEMPT_LIMIT = 12;
 const MIME_TYPES: Readonly<Record<string, string>> = {
   ".mp3": "audio/mpeg",
   ".css": "text/css; charset=utf-8",
@@ -114,6 +120,7 @@ function writeJson(response: ServerResponse, status: number, payload: unknown, o
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   if (origin !== undefined) {
     response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Access-Control-Allow-Credentials", "true");
     response.setHeader("Vary", "Origin");
   }
   response.end(JSON.stringify(payload));
@@ -149,7 +156,28 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 }
 
 function bodyHasPlayerName(body: unknown): body is CreateRoomRequest | JoinRoomRequest {
-  return body !== null && typeof body === "object" && "playerName" in body && typeof body.playerName === "string";
+  return body !== null && typeof body === "object" && (!("playerName" in body) || typeof body.playerName === "string");
+}
+
+function bodyIsAccountCredentials(body: unknown): body is { readonly username: string; readonly password: string; readonly displayName?: string } {
+  return body !== null && typeof body === "object" && "username" in body && typeof body.username === "string" &&
+    "password" in body && typeof body.password === "string" && (!("displayName" in body) || typeof body.displayName === "string");
+}
+
+function parseCookie(header: string | undefined, name: string): string | undefined {
+  if (header === undefined) return undefined;
+  const prefix = `${name}=`;
+  const found = header.split(";").map((part) => part.trim()).find((part) => part.startsWith(prefix));
+  if (found === undefined) return undefined;
+  try { return decodeURIComponent(found.slice(prefix.length)); } catch { return undefined; }
+}
+
+function setAccountCookie(response: ServerResponse, token: string, production: boolean): void {
+  response.setHeader("Set-Cookie", `${ACCOUNT_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ACCOUNT_SESSION_MAX_AGE_SECONDS}${production ? "; Secure" : ""}`);
+}
+
+function clearAccountCookie(response: ServerResponse, production: boolean): void {
+  response.setHeader("Set-Cookie", `${ACCOUNT_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${production ? "; Secure" : ""}`);
 }
 
 function bodyIsStartRequest(body: unknown): body is StartRoomRequest {
@@ -170,6 +198,17 @@ function bodyHasSessionToken(body: unknown): body is SessionTokenRequest {
 
 function errorPayload(error: unknown): { code: NetworkErrorCode; message: string } {
   if (error instanceof RoomError) return { code: error.code, message: error.message };
+  if (error instanceof AccountError) {
+    const codes: Readonly<Record<AccountError["code"], NetworkErrorCode>> = {
+      USERNAME_TAKEN: NetworkErrorCode.UsernameTaken,
+      INVALID_USERNAME: NetworkErrorCode.InvalidUsername,
+      INVALID_DISPLAY_NAME: NetworkErrorCode.InvalidMessage,
+      PASSWORD_TOO_SHORT: NetworkErrorCode.PasswordTooShort,
+      INVALID_CREDENTIALS: NetworkErrorCode.InvalidCredentials,
+      UNAUTHENTICATED: NetworkErrorCode.AuthenticationRequired,
+    };
+    return { code: codes[error.code], message: error.message };
+  }
   return { code: NetworkErrorCode.InvalidMessage, message: "The request could not be processed." };
 }
 
@@ -236,6 +275,32 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
   const log = options.logger ?? ((event, details) => process.stdout.write(JSON.stringify({ timestamp: new Date().toISOString(), event, ...details }) + "\n"));
   const isAllowedOrigin = (origin: string | undefined): origin is string => origin === undefined || allowedOrigins.has(origin);
   const corsOrigin = (origin: string | undefined): string | undefined => options.allowCrossOrigin === true && origin !== undefined ? origin : undefined;
+  const authAttempts = new Map<string, { count: number; resetAt: number }>();
+  const resolveAccount = async (request: IncomingMessage): Promise<PublicAccount | undefined> =>
+    options.accountManager?.resolveSession(parseCookie(request.headers.cookie, ACCOUNT_COOKIE_NAME));
+  const requireAccount = async (request: IncomingMessage): Promise<PublicAccount> => {
+    const account = await resolveAccount(request);
+    if (account === undefined) throw new AccountError("UNAUTHENTICATED", "Bitte melde dich an, um Mehrspielerpartien zu nutzen.");
+    return account;
+  };
+  const authorizeRoomSession = async (request: IncomingMessage, roomId: string, sessionToken: string): Promise<void> => {
+    if (options.accountManager === undefined) return;
+    const account = await requireAccount(request);
+    const participant = options.roomManager.authenticate(roomId, sessionToken).participant;
+    // Pre-account snapshots remain usable through their existing technical room token. They are never matched by name.
+    if (participant.accountId !== undefined && participant.accountId !== account.id) {
+      throw new AccountError("UNAUTHENTICATED", "Bitte melde dich mit dem Konto dieser Partie an.");
+    }
+  };
+  const limitAuthAttempt = (request: IncomingMessage, route: string): void => {
+    const key = `${route}:${request.socket.remoteAddress ?? "unknown"}`;
+    const now = Date.now();
+    const current = authAttempts.get(key);
+    const attempt = current === undefined || current.resetAt <= now ? { count: 1, resetAt: now + AUTH_ATTEMPT_WINDOW_MS }
+      : { count: current.count + 1, resetAt: current.resetAt };
+    authAttempts.set(key, attempt);
+    if (attempt.count > AUTH_ATTEMPT_LIMIT) throw new RoomError(NetworkErrorCode.TooManyRequests, "Bitte warte kurz, bevor du es erneut versuchst.");
+  };
   let shuttingDown = false;
   const httpServer = createServer(async (request, response) => {
     const origin = request.headers.origin;
@@ -255,6 +320,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         response.setHeader("Access-Control-Allow-Origin", cors);
         response.setHeader("Access-Control-Allow-Headers", "Content-Type");
         response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        response.setHeader("Access-Control-Allow-Credentials", "true");
         response.setHeader("Vary", "Origin");
       }
       response.end();
@@ -270,10 +336,49 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
       return;
     }
     try {
+      if (request.method === "POST" && url.pathname === "/api/auth/register") {
+        if (options.accountManager === undefined) throw new RoomError(NetworkErrorCode.RoomNotFound, "Route not found.");
+        limitAuthAttempt(request, "register");
+        const body = await readJson(request);
+        if (!bodyIsAccountCredentials(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "Die Registrierungsdaten sind unvollständig.");
+        const registered = await options.accountManager.register(body.username, body.displayName ?? "", body.password);
+        setAccountCookie(response, registered.sessionToken, options.production === true);
+        writeJson(response, 201, registered.account, corsOrigin(origin));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/auth/login") {
+        if (options.accountManager === undefined) throw new RoomError(NetworkErrorCode.RoomNotFound, "Route not found.");
+        limitAuthAttempt(request, "login");
+        const body = await readJson(request);
+        if (!bodyIsAccountCredentials(body)) throw new RoomError(NetworkErrorCode.InvalidCredentials, "Benutzername oder Passwort ist falsch.");
+        const loggedIn = await options.accountManager.login(body.username, body.password);
+        setAccountCookie(response, loggedIn.sessionToken, options.production === true);
+        writeJson(response, 200, loggedIn.account, corsOrigin(origin));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+        if (options.accountManager !== undefined) await options.accountManager.logout(parseCookie(request.headers.cookie, ACCOUNT_COOKIE_NAME));
+        clearAccountCookie(response, options.production === true);
+        writeJson(response, 200, {}, corsOrigin(origin));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/auth/me") {
+        const account = await resolveAccount(request);
+        if (account === undefined) throw new AccountError("UNAUTHENTICATED", "Nicht angemeldet.");
+        writeJson(response, 200, account, corsOrigin(origin));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/me/rooms") {
+        const account = await requireAccount(request);
+        writeJson(response, 200, { rooms: options.roomManager.listRoomsForAccount(account.id) }, corsOrigin(origin));
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/rooms") {
         const body = await readJson(request);
         if (!bodyHasPlayerName(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
-        const { room, participant, sessionToken } = await options.roomManager.createRoom(body.playerName);
+        const account = options.accountManager === undefined ? undefined : await requireAccount(request);
+        if (account === undefined && body.playerName === undefined) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
+        const { room, participant, sessionToken } = await options.roomManager.createRoom(account?.displayName ?? body.playerName!, account?.id);
         log("room_created", { roomId: room.roomId, playerId: participant.playerId });
         writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, corsOrigin(origin));
         return;
@@ -282,16 +387,21 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
       if (request.method === "POST" && joinMatch?.[1] !== undefined) {
         const body = await readJson(request);
         if (!bodyHasPlayerName(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
-        const { room, participant, sessionToken } = await options.roomManager.joinRoom(decodeURIComponent(joinMatch[1]), body.playerName);
-        log("player_joined", { roomId: room.roomId, playerId: participant.playerId });
+        const account = options.accountManager === undefined ? undefined : await requireAccount(request);
+        if (account === undefined && body.playerName === undefined) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
+        const { room, participant, sessionToken, resumed } = await options.roomManager.joinRoom(
+          decodeURIComponent(joinMatch[1]), account?.displayName ?? body.playerName!, account?.id,
+        );
+        log(resumed ? "player_resumed" : "player_joined", { roomId: room.roomId, playerId: participant.playerId });
         broadcastRoom(options.roomManager, room);
-        writeJson(response, 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, corsOrigin(origin));
+        writeJson(response, resumed ? 200 : 201, { roomId: room.roomId, playerId: participant.playerId, sessionToken }, corsOrigin(origin));
         return;
       }
       const startMatch = /^\/api\/rooms\/([^/]+)\/start$/.exec(url.pathname);
       if (request.method === "POST" && startMatch?.[1] !== undefined) {
         const body = await readJson(request);
         if (!bodyIsStartRequest(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "Start configuration is invalid.");
+        await authorizeRoomSession(request, decodeURIComponent(startMatch[1]), body.sessionToken);
         const room = await options.roomManager.startRoom(
           decodeURIComponent(startMatch[1]), body.sessionToken, body.playerOrder, body.firstMapDrawerPlayerId, body.map,
         );
@@ -304,6 +414,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
       if (request.method === "POST" && mapMatch?.[1] !== undefined) {
         const body = await readJson(request);
         if (!bodyIsUpdateMapRequest(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "Map configuration is invalid.");
+        await authorizeRoomSession(request, decodeURIComponent(mapMatch[1]), body.sessionToken);
         const room = await options.roomManager.updateMap(decodeURIComponent(mapMatch[1]), body.sessionToken, body.map);
         broadcastRoom(options.roomManager, room);
         writeJson(response, 200, { room: options.roomManager.getPublicRoomState(room), revision: room.revision }, corsOrigin(origin));
@@ -313,6 +424,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
       if (request.method === "POST" && removeMatch?.[1] !== undefined && removeMatch[2] !== undefined) {
         const body = await readJson(request);
         if (!bodyHasSessionToken(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A session token is required.");
+        await authorizeRoomSession(request, decodeURIComponent(removeMatch[1]), body.sessionToken);
         const result = await options.roomManager.removeWaitingParticipant(decodeURIComponent(removeMatch[1]), body.sessionToken, decodeURIComponent(removeMatch[2]));
         if (result.removed.connection !== undefined) {
           sendError(result.removed.connection, NetworkErrorCode.PlayerRemoved, "Du wurdest aus diesem Raum entfernt.");
@@ -327,6 +439,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
       if (request.method === "POST" && rematchMatch?.[1] !== undefined) {
         const body = await readJson(request);
         if (!bodyHasSessionToken(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A session token is required.");
+        await authorizeRoomSession(request, decodeURIComponent(rematchMatch[1]), body.sessionToken);
         const sourceRoom = options.roomManager.getRoom(decodeURIComponent(rematchMatch[1]));
         const rematch = await options.roomManager.createRematch(sourceRoom.roomId, body.sessionToken);
         log("rematch_created", { roomId: rematch.room.roomId, playerId: rematch.participant.playerId });
@@ -346,8 +459,10 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
     } catch (error) {
       const payload = errorPayload(error);
       const status = payload.code === NetworkErrorCode.PersistenceFailed ? 500 : payload.code === NetworkErrorCode.RoomNotFound ? 404 :
-        payload.code === NetworkErrorCode.NotHost || payload.code === NetworkErrorCode.OriginNotAllowed ? 403 :
-          payload.code === NetworkErrorCode.RoomAlreadyStarted || payload.code === NetworkErrorCode.RoomFull ? 409 : 400;
+        payload.code === NetworkErrorCode.AuthenticationRequired || payload.code === NetworkErrorCode.InvalidCredentials ? 401 :
+          payload.code === NetworkErrorCode.NotHost || payload.code === NetworkErrorCode.OriginNotAllowed ? 403 :
+            payload.code === NetworkErrorCode.RoomAlreadyStarted || payload.code === NetworkErrorCode.RoomFull || payload.code === NetworkErrorCode.UsernameTaken ? 409 :
+              payload.code === NetworkErrorCode.TooManyRequests ? 429 : 400;
       if (!(error instanceof RoomError)) log("request_failed", { route: url.pathname, code: payload.code });
       writeJson(response, status, payload, corsOrigin(origin));
     }
@@ -368,7 +483,7 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
     websocketServer.handleUpgrade(request, socket, head, (websocket) => websocketServer.emit("connection", websocket, request));
   });
 
-  websocketServer.on("connection", (websocket) => {
+  websocketServer.on("connection", (websocket, request) => {
     alive.set(websocket, true);
     const connection: RoomConnection = {
       send: (message) => {
@@ -401,7 +516,13 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
           return;
         }
         try {
-          const attached = options.roomManager.attachConnection(message.roomId, message.sessionToken, connection);
+          const current = options.roomManager.authenticate(message.roomId, message.sessionToken);
+          const account = await resolveAccount(request);
+          if (current.participant.accountId !== undefined && account?.id !== current.participant.accountId) {
+            throw new AccountError("UNAUTHENTICATED", "Bitte melde dich mit dem Konto dieser Partie an.");
+          }
+          const attached = options.roomManager.attachConnection(message.roomId, message.sessionToken, connection,
+            current.participant.accountId === undefined ? undefined : account?.id);
           if (attached.previousConnection !== undefined && attached.previousConnection !== connection) {
             sendError(attached.previousConnection, NetworkErrorCode.SessionReplaced, "This session connected in another browser.");
             attached.previousConnection.close(4002, NetworkErrorCode.SessionReplaced);

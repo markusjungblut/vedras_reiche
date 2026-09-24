@@ -52,7 +52,7 @@ import { SeededRandomSource } from "./debug/seeded-random-source";
 import { LocalGameController, type GameController } from "./controllers/game-controller";
 import { RemoteGameController, type MultiplayerCredentials, type RemoteConnectionStatus } from "./controllers/remote-game-controller";
 import { mergeDraftEdges } from "./map/setup-draft";
-import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, type PublicRoomState } from "@vedras/protocol";
+import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, type AccountDto, type AccountRoomSummaryDto, type PublicRoomState } from "@vedras/protocol";
 import { FirstGameHint } from "./components/FirstGameHint";
 import { HelpDrawer } from "./components/HelpDrawer";
 import { IntroductionTour } from "./components/IntroductionTour";
@@ -69,6 +69,7 @@ const DEVELOPER_TOOLS_ENABLED = import.meta.env.DEV || new URLSearchParams(windo
 const BUILD_ID = __VEDRAS_BUILD_ID__;
 const MULTIPLAYER_SESSIONS_KEY = "vedras-reiche-multiplayer-sessions";
 const MULTIPLAYER_LAST_ROOM_KEY = "vedras-reiche-last-multiplayer-room";
+const TRANSIENT_ERROR_TIMEOUT_MS = 5_000;
 const SCENARIOS: readonly { kind: ScenarioKind; label: string; detail: string }[] = [
   { kind: "START_AUCTIONS", label: "Startauktionen", detail: "Zwei Auslagen und verdeckte Startgebote" },
   { kind: "ACTIVATION_PHASE", label: "Aktivierungsphase", detail: "Symbole und Gebietsreihenfolge ausprobieren" },
@@ -123,6 +124,22 @@ interface MultiplayerSession extends MultiplayerCredentials {
   readonly availability?: "UNAVAILABLE";
 }
 
+/** Local storage is only a room picker. Technical room credentials remain in memory. */
+interface SavedMultiplayerSession {
+  readonly roomId: string;
+  readonly playerId?: string;
+  readonly playerName: string;
+  readonly lastOpenedAt: string;
+  readonly room?: {
+    readonly status: "WAITING" | "RUNNING" | "FINISHED";
+    readonly playerNames: readonly string[];
+    readonly round?: number;
+    readonly maxRounds?: number;
+    readonly updatedAt: string;
+  };
+  readonly availability?: "UNAVAILABLE";
+}
+
 type MultiplayerPendingAction = "CREATE" | "JOIN" | "START" | "MAP" | "REMOVE" | "REMATCH" | undefined;
 
 function soundCueForEvent(type: GameEventType): SoundCue | undefined {
@@ -142,44 +159,54 @@ function multiplayerSocketUrl(baseUrl: string): string {
   return url.toString();
 }
 
-function isMultiplayerSession(value: unknown): value is MultiplayerSession {
+function isSavedMultiplayerSession(value: unknown): value is SavedMultiplayerSession {
   if (value === null || typeof value !== "object") return false;
-  const candidate = value as Partial<MultiplayerSession>;
-  return typeof candidate.roomId === "string" && typeof candidate.playerId === "string" && typeof candidate.sessionToken === "string" &&
+  const candidate = value as Partial<SavedMultiplayerSession>;
+  return typeof candidate.roomId === "string" &&
+    (candidate.playerId === undefined || typeof candidate.playerId === "string") &&
     (candidate.playerName === undefined || typeof candidate.playerName === "string") &&
     (candidate.lastOpenedAt === undefined || typeof candidate.lastOpenedAt === "string");
 }
 
-function normalizeMultiplayerSession(value: MultiplayerSession): MultiplayerSession {
+function normalizeSavedMultiplayerSession(value: SavedMultiplayerSession): SavedMultiplayerSession {
   return {
-    ...value,
-    playerName: value.playerName ?? "",
-    lastOpenedAt: value.lastOpenedAt ?? new Date(0).toISOString(),
+    roomId: value.roomId.trim().toUpperCase(), ...(value.playerId === undefined ? {} : { playerId: value.playerId }),
+    playerName: value.playerName ?? "", lastOpenedAt: value.lastOpenedAt ?? new Date(0).toISOString(),
+    ...(value.room === undefined ? {} : { room: value.room }), ...(value.availability === undefined ? {} : { availability: value.availability }),
   };
 }
 
-function writeMultiplayerSessions(sessions: Readonly<Record<string, MultiplayerSession>>): void {
+function savedSessionFrom(session: MultiplayerSession): SavedMultiplayerSession {
+  return normalizeSavedMultiplayerSession({ roomId: session.roomId, playerId: session.playerId, playerName: session.playerName ?? "",
+    lastOpenedAt: session.lastOpenedAt ?? new Date(0).toISOString(), ...(session.room === undefined ? {} : { room: session.room }),
+    ...(session.availability === undefined ? {} : { availability: session.availability }) });
+}
+
+function writeMultiplayerSessions(sessions: Readonly<Record<string, SavedMultiplayerSession>>): void {
   try {
     localStorage.setItem(MULTIPLAYER_SESSIONS_KEY, JSON.stringify(sessions));
   } catch { /* Browser storage is optional for local development. */ }
 }
 
-function storedMultiplayerSessions(): Readonly<Record<string, MultiplayerSession>> {
+function storedMultiplayerSessions(): Readonly<Record<string, SavedMultiplayerSession>> {
   try {
     const stored = localStorage.getItem(MULTIPLAYER_SESSIONS_KEY);
     if (stored === null) return {};
     const parsed: unknown = JSON.parse(stored);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).flatMap(([roomId, session]) => isMultiplayerSession(session)
-      ? [[roomId, normalizeMultiplayerSession(session)]] : [])) as Readonly<Record<string, MultiplayerSession>>;
+    const sessions = Object.fromEntries(Object.entries(parsed).flatMap(([roomId, session]) => isSavedMultiplayerSession(session)
+      ? [[roomId, normalizeSavedMultiplayerSession(session)]] : [])) as Readonly<Record<string, SavedMultiplayerSession>>;
+    // Migration from AP21 and earlier: discard persisted technical room tokens on the first read.
+    if (JSON.stringify(parsed) !== JSON.stringify(sessions)) writeMultiplayerSessions(sessions);
+    return sessions;
   } catch {
     return {};
   }
 }
 
-function rememberMultiplayerSession(session: MultiplayerSession): Readonly<Record<string, MultiplayerSession>> {
+function rememberMultiplayerSession(session: MultiplayerSession): Readonly<Record<string, SavedMultiplayerSession>> {
   const { availability: _availability, ...availableSession } = session;
-  const remembered = normalizeMultiplayerSession({ ...availableSession, lastOpenedAt: new Date().toISOString() });
+  const remembered = savedSessionFrom({ ...availableSession, lastOpenedAt: new Date().toISOString() });
   const sessions = { ...storedMultiplayerSessions(), [session.roomId]: remembered };
   try {
     writeMultiplayerSessions(sessions);
@@ -188,11 +215,10 @@ function rememberMultiplayerSession(session: MultiplayerSession): Readonly<Recor
   return sessions;
 }
 
-function cacheMultiplayerRoom(session: MultiplayerSession, room: PublicRoomState, state?: GameReadModel): Readonly<Record<string, MultiplayerSession>> {
-  const existing = storedMultiplayerSessions()[session.roomId] ?? normalizeMultiplayerSession(session);
-  const { availability: _availability, ...availableExisting } = existing;
-  const cached: MultiplayerSession = {
-    ...availableExisting,
+function cacheMultiplayerRoom(session: MultiplayerSession, room: PublicRoomState, state?: GameReadModel): Readonly<Record<string, SavedMultiplayerSession>> {
+  const existing = storedMultiplayerSessions()[session.roomId] ?? savedSessionFrom(session);
+  const cached: SavedMultiplayerSession = {
+    ...existing,
     playerName: session.playerName ?? existing.playerName ?? "",
     room: {
       status: room.status,
@@ -206,7 +232,7 @@ function cacheMultiplayerRoom(session: MultiplayerSession, room: PublicRoomState
   return sessions;
 }
 
-function markSavedSessionUnavailable(roomId: string): Readonly<Record<string, MultiplayerSession>> {
+function markSavedSessionUnavailable(roomId: string): Readonly<Record<string, SavedMultiplayerSession>> {
   const existing = storedMultiplayerSessions();
   const session = existing[roomId];
   if (session === undefined) return existing;
@@ -215,7 +241,7 @@ function markSavedSessionUnavailable(roomId: string): Readonly<Record<string, Mu
   return sessions;
 }
 
-function forgetMultiplayerSession(roomId: string): Readonly<Record<string, MultiplayerSession>> {
+function forgetMultiplayerSession(roomId: string): Readonly<Record<string, SavedMultiplayerSession>> {
   const sessions = { ...storedMultiplayerSessions() };
   delete sessions[roomId];
   try {
@@ -239,7 +265,15 @@ async function postMultiplayer<T>(path: string, body: unknown): Promise<T> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: "include",
   });
+  const payload = await response.json() as T & { message?: string };
+  if (!response.ok) throw new Error(payload.message ?? "Die Serveranfrage wurde abgelehnt.");
+  return payload;
+}
+
+async function getMultiplayer<T>(path: string): Promise<T> {
+  const response = await fetch(new URL(path, SERVER_BASE_URL), { credentials: "include" });
   const payload = await response.json() as T & { message?: string };
   if (!response.ok) throw new Error(payload.message ?? "Die Serveranfrage wurde abgelehnt.");
   return payload;
@@ -282,6 +316,15 @@ function neighboringTerritories(state: GameReadModel, source: Territory): Territ
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="field"><span>{label}</span>{children}</label>;
+}
+
+function ErrorBanner({ message, onDismiss }: { readonly message: string; readonly onDismiss: () => void }) {
+  return <div role="alert" aria-atomic="true" className="error-banner">
+    <span>Aktion nicht möglich: <strong>{message}</strong></span>
+    <button type="button" className="error-dismiss" aria-label="Fehlermeldung schließen" onClick={onDismiss}>
+      <span aria-hidden="true">×</span>
+    </button>
+  </div>;
 }
 
 function SecretFactionPanel({ state, playerId, factionSuit, visible, onVisibleChange, localPassAndPlay, onPlayerChange }: {
@@ -691,6 +734,11 @@ function SetupControls(props: ControlProps) {
     strokes: draft.strokes.slice(0, -1),
   });
   const correction = draft.mode === "CORRECTION";
+  const completedDrawingTurns = mapCreation.regionCount - 1;
+  const nextMilestone = completedDrawingTurns < state.players.length ? "Wahrzeichen"
+    : completedDrawingTurns < state.players.length * 2 ? "Knotenpunkte"
+      : completedDrawingTurns < state.players.length * 3 ? "Festungen"
+        : completedDrawingTurns < state.players.length * 4 ? "Relikte" : "Karte abschließen";
   const commit = () => {
     if (correction) {
       const existing = new Set(mapCreation.borders.edgeKeys);
@@ -719,7 +767,7 @@ function SetupControls(props: ControlProps) {
     <div className="section-kicker">Kartenbau</div>
     <h3>Gebiete: {mapCreation.regionCount} / {mapCreation.targetTerritoryCount}</h3>
     <p>Aktiver Spieler: {name(mapCreation.activePlayerId)} · Mindestgröße: {getMinimumTerritoryArea(map)} Kästchen</p>
-    <p>Nächster Meilenstein: {mapCreation.regionCount < state.players.length ? "Wahrzeichen" : mapCreation.regionCount < state.players.length * 2 ? "Knotenpunkte" : mapCreation.regionCount < state.players.length * 3 ? "Festungen" : mapCreation.regionCount < state.players.length * 4 ? "Relikte" : "Karte abschließen"}</p>
+    <p>Nächster Meilenstein: {nextMilestone}</p>
     <div className="button-row">
       <button type="button" disabled={!setupCanEdit} className={draft.mode === "PEN" ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "PEN", strokes: [] })}>Grenzstift</button>
       {!correction && <button type="button" disabled={!setupCanEdit} className={draft.mode === "ERASER" ? "selected-button" : "secondary-button"} onClick={() => onSetSetupDraft({ mode: "ERASER", strokes: draft.strokes })}>Radiergummi</button>}
@@ -819,7 +867,17 @@ export default function App() {
   const [actionTerritoryId, setActionTerritoryId] = useState<string | undefined>();
   const [partChoiceDraft, setPartChoiceDraft] = useState<{ readonly key: string; readonly part: "A" | "B" } | undefined>();
   const [showScoreLabels, setShowScoreLabels] = useState(false);
+  const [account, setAccount] = useState<AccountDto | null | undefined>(undefined);
+  const [accountMode, setAccountMode] = useState<"LOGIN" | "REGISTER">("LOGIN");
+  const [accountUsername, setAccountUsername] = useState("");
+  const [accountDisplayName, setAccountDisplayName] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountPasswordConfirmation, setAccountPasswordConfirmation] = useState("");
+  const [accountPending, setAccountPending] = useState(false);
+  const [accountRooms, setAccountRooms] = useState<readonly AccountRoomSummaryDto[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [errorIsTransient, setErrorIsTransient] = useState(false);
+  const [errorDismissVersion, setErrorDismissVersion] = useState(0);
   const [splitDraft, setSplitDraft] = useState<SplitDraft | null>(null);
   const [mapDraft, setMapDraft] = useState<{ key: string; keys: readonly string[] } | null>(null);
   const [setupDraft, setSetupDraft] = useState<SetupDraft>({ mode: "PEN", strokes: [] });
@@ -830,7 +888,7 @@ export default function App() {
   const [multiplayerName, setMultiplayerName] = useState("Anna");
   const [joinRoomCode, setJoinRoomCode] = useState(() => inviteRoomCode() ?? "");
   const [showMultiplayer, setShowMultiplayer] = useState(() => inviteRoomCode() !== undefined || Object.keys(storedMultiplayerSessions()).length > 0);
-  const [savedMultiplayerSessions, setSavedMultiplayerSessions] = useState<Readonly<Record<string, MultiplayerSession>>>(() => storedMultiplayerSessions());
+  const [savedMultiplayerSessions, setSavedMultiplayerSessions] = useState<Readonly<Record<string, SavedMultiplayerSession>>>(() => storedMultiplayerSessions());
   const [remoteConnectionStatus, setRemoteConnectionStatus] = useState<RemoteConnectionStatus>("DISCONNECTED");
   const [rematchOfferRoomId, setRematchOfferRoomId] = useState<string | undefined>();
   const [rematchCreating, setRematchCreating] = useState(false);
@@ -854,7 +912,34 @@ export default function App() {
   const previousMapCells = useRef<Readonly<Record<string, string | null>> | undefined>(undefined);
   const previousTerritoryOwners = useRef<Readonly<Record<string, string | null>> | undefined>(undefined);
 
+  const showError = (message: string, transient = false) => {
+    setError(message);
+    setErrorIsTransient(transient);
+    setErrorDismissVersion((version) => version + 1);
+  };
+
   const state: GameReadModel | null = view;
+
+  useEffect(() => {
+    let active = true;
+    void fetch(new URL("/api/auth/me", SERVER_BASE_URL), { credentials: "include" }).then(async (response) => {
+      if (!active) return;
+      if (response.status === 401) { setAccount(null); return; }
+      if (!response.ok) throw new Error("Konto konnte nicht geladen werden.");
+      setAccount(await response.json() as AccountDto);
+    }).catch(() => { if (active) setAccount(null); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (account === undefined) return;
+    if (account === null) { setAccountRooms([]); return; }
+    let active = true;
+    void getMultiplayer<{ readonly rooms: readonly AccountRoomSummaryDto[] }>("/api/me/rooms")
+      .then((payload) => { if (active) setAccountRooms(payload.rooms); })
+      .catch(() => { if (active) setAccountRooms([]); });
+    return () => { active = false; };
+  }, [account]);
 
   useEffect(() => {
     const cells = state?.map?.cells;
@@ -904,6 +989,12 @@ export default function App() {
     const timeout = window.setTimeout(() => setNotice(null), 4_200);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+
+  useEffect(() => {
+    if (error === null || !errorIsTransient) return undefined;
+    const timeout = window.setTimeout(() => setError(null), TRANSIENT_ERROR_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [error, errorDismissVersion, errorIsTransient]);
 
   useEffect(() => {
     document.title = multiplayer?.roomId === undefined ? "Vedras Reiche" : `Vedras Reiche – Raum ${multiplayer.roomId}`;
@@ -959,8 +1050,14 @@ export default function App() {
     });
   };
 
+  const refreshAccountRooms = async () => {
+    if (account === null || account === undefined) return;
+    const payload = await getMultiplayer<{ readonly rooms: readonly AccountRoomSummaryDto[] }>("/api/me/rooms");
+    setAccountRooms(payload.rooms);
+  };
+
   const connectMultiplayer = async (session: MultiplayerSession) => {
-    const storedSession: MultiplayerSession = { ...session, playerName: session.playerName?.trim() || multiplayerName.trim() };
+    const storedSession: MultiplayerSession = { ...session, playerName: account?.displayName ?? (session.playerName?.trim() || multiplayerName.trim()) };
     const remote = new RemoteGameController(storedSession, multiplayerSocketUrl(SERVER_BASE_URL));
     setMultiplayer(storedSession);
     setMultiplayerName(storedSession.playerName ?? multiplayerName);
@@ -978,6 +1075,7 @@ export default function App() {
     setSavedMultiplayerSessions(rememberMultiplayerSession(storedSession));
     activateController(remote, true);
     await remote.connect();
+    void refreshAccountRooms().catch(() => undefined);
     setError(null);
   };
 
@@ -1029,6 +1127,40 @@ export default function App() {
 
   const startMusic = () => { void musicManager.unlock(); };
 
+  const submitAccount = async () => {
+    if (accountPending) return;
+    if (accountMode === "REGISTER" && accountPassword !== accountPasswordConfirmation) {
+      showError("Die Passwortbestätigung stimmt nicht überein.");
+      return;
+    }
+    setAccountPending(true);
+    try {
+      const nextAccount = await postMultiplayer<AccountDto>(accountMode === "REGISTER" ? "/api/auth/register" : "/api/auth/login", {
+        username: accountUsername, password: accountPassword,
+        ...(accountMode === "REGISTER" ? { displayName: accountDisplayName } : {}),
+      });
+      setAccount(nextAccount);
+      setMultiplayerName(nextAccount.displayName);
+      setAccountPassword("");
+      setAccountPasswordConfirmation("");
+      setError(null);
+    } catch (caught) {
+      showError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setAccountPending(false);
+    }
+  };
+
+  const logoutAccount = async () => {
+    try {
+      await postMultiplayer("/api/auth/logout", {});
+    } catch { /* The local browser state must still be cleared after a failed logout request. */ }
+    returnToMultiplayerStart();
+    setAccount(null);
+    setAccountRooms([]);
+    setError(null);
+  };
+
   const loadScenario = (kind: ScenarioKind, chosenSeed: number) => {
     try {
       const demo = createScenario(kind, chosenSeed);
@@ -1049,13 +1181,13 @@ export default function App() {
       setSeed(chosenSeed);
       setError(null);
     } catch (caught) {
-      setError(formatDomainError(caught));
+      showError(formatDomainError(caught));
     }
   };
   const selectedSeed = () => {
     const value = Number(seedInput);
     if (!Number.isSafeInteger(value) || value < 0) {
-      setError("Bitte einen nicht negativen ganzzahligen Seed eingeben.");
+      showError("Bitte einen nicht negativen ganzzahligen Seed eingeben.");
       return undefined;
     }
     return value;
@@ -1065,31 +1197,48 @@ export default function App() {
     if (value !== undefined) loadScenario(kind, value);
   };
   const createMultiplayerRoom = async () => {
+    if (account === null || account === undefined) { showError("Bitte melde dich an, um eine Mehrspielerpartie zu erstellen."); return; }
     if (multiplayerPendingAction !== undefined) return;
     setMultiplayerPendingAction("CREATE");
     try {
-      const session = await postMultiplayer<MultiplayerSession>("/api/rooms", { playerName: multiplayerName });
+      const session = await postMultiplayer<MultiplayerSession>("/api/rooms", {});
       await connectMultiplayer(session);
       setError(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      showError(caught instanceof Error ? caught.message : String(caught));
       soundManager.play("ERROR");
     } finally {
       setMultiplayerPendingAction(undefined);
     }
   };
   const joinMultiplayerRoom = async () => {
+    if (account === null || account === undefined) { showError("Bitte melde dich an, um einem Raum beizutreten."); return; }
     if (multiplayerPendingAction !== undefined) return;
     setMultiplayerPendingAction("JOIN");
     try {
       const roomId = joinRoomCode.trim().toUpperCase();
       if (roomId.length === 0) throw new Error("Bitte einen Raumcode eingeben.");
-      const session = await postMultiplayer<MultiplayerSession>(`/api/rooms/${encodeURIComponent(roomId)}/join`, { playerName: multiplayerName });
+      const session = await postMultiplayer<MultiplayerSession>(`/api/rooms/${encodeURIComponent(roomId)}/join`, {});
       await connectMultiplayer(session);
       setError(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      showError(caught instanceof Error ? caught.message : String(caught));
       soundManager.play("ERROR");
+    } finally {
+      setMultiplayerPendingAction(undefined);
+    }
+  };
+  const resumeAccountRoom = async (roomId: string) => {
+    setJoinRoomCode(roomId);
+    if (account === null || account === undefined) return;
+    if (multiplayerPendingAction !== undefined) return;
+    setMultiplayerPendingAction("JOIN");
+    try {
+      const session = await postMultiplayer<MultiplayerSession>(`/api/rooms/${encodeURIComponent(roomId)}/join`, {});
+      await connectMultiplayer(session);
+      setError(null);
+    } catch (caught) {
+      showError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setMultiplayerPendingAction(undefined);
     }
@@ -1108,7 +1257,7 @@ export default function App() {
       });
       setError(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      showError(caught instanceof Error ? caught.message : String(caught));
       soundManager.play("ERROR");
     } finally {
       setMultiplayerPendingAction(undefined);
@@ -1118,11 +1267,11 @@ export default function App() {
     if (multiplayer === null || multiplayerRoom === undefined ||
         !Number.isSafeInteger(map.width) || map.width <= 0 ||
         !Number.isSafeInteger(map.height) || map.height <= 0) {
-      setError("Breite und Höhe müssen positive ganze Zahlen sein.");
+      showError("Breite und Höhe müssen positive ganze Zahlen sein.");
       return;
     }
     if (!isTechnicallyValidMapSize(map)) {
-      setError(mapSizeError());
+      showError(mapSizeError());
       return;
     }
     if (!multiplayerConnected) return;
@@ -1134,7 +1283,7 @@ export default function App() {
       });
       setError(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      showError(caught instanceof Error ? caught.message : String(caught));
       soundManager.play("ERROR");
     } finally {
       setMultiplayerPendingAction(undefined);
@@ -1167,7 +1316,7 @@ export default function App() {
       setError(null);
       soundManager.play("CONFIRM");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      showError(caught instanceof Error ? caught.message : String(caught));
       soundManager.play("ERROR");
     } finally {
       setMultiplayerPendingAction(undefined);
@@ -1186,7 +1335,7 @@ export default function App() {
       setNotice("Rematch erstellt. Die neue Lobby hat einen eigenen Raumcode.");
       setError(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      showError(caught instanceof Error ? caught.message : String(caught));
       soundManager.play("ERROR");
     } finally {
       setRematchCreating(false);
@@ -1197,7 +1346,7 @@ export default function App() {
     const selected = selectedSeed();
     if (selected === undefined) return;
     if (newGamePlayers.length < 2 || newGamePlayers.length > 6 || newGamePlayers.some((player) => player.name.trim().length === 0)) {
-      setError("Bitte 2 bis 6 Spieler mit Namen eingeben.");
+      showError("Bitte 2 bis 6 Spieler mit Namen eingeben.");
       return;
     }
     try {
@@ -1223,13 +1372,13 @@ export default function App() {
       setShowDebugScenarios(false);
       setError(null);
     } catch (caught) {
-      setError(formatDomainError(caught));
+      showError(formatDomainError(caught));
     }
   };
   const dispatch = (action: GameAction) => {
     if (!state || controller.current === null) return;
     if (multiplayer !== null && remoteConnectionStatus !== "CONNECTED") {
-      setError("Die Verbindung wird wiederhergestellt. Aktionen sind vorübergehend gesperrt.");
+      showError("Die Verbindung wird wiederhergestellt. Aktionen sind vorübergehend gesperrt.");
       soundManager.play("ERROR");
       return;
     }
@@ -1245,7 +1394,7 @@ export default function App() {
       }
       setError(null);
     }).catch((caught) => {
-      setError(formatDomainError(caught));
+      showError(formatDomainError(caught), true);
       soundManager.play("ERROR");
     });
   };
@@ -1440,7 +1589,7 @@ export default function App() {
   const scoreHundredthsByTerritoryId = state?.result ? Object.fromEntries(state.result.playerResults.flatMap((player) =>
     player.territoryScores.map((score) => [score.territoryId, score.scoreHundredths]))) : undefined;
   const savedSessions = Object.values(savedMultiplayerSessions).sort((left, right) => right.lastOpenedAt!.localeCompare(left.lastOpenedAt!));
-  const savedSessionGroups: readonly { readonly title: string; readonly sessions: readonly MultiplayerSession[] }[] = [
+  const savedSessionGroups: readonly { readonly title: string; readonly sessions: readonly SavedMultiplayerSession[] }[] = [
     { title: "Laufende Partien", sessions: savedSessions.filter((session) => session.availability !== "UNAVAILABLE" && session.room?.status === "RUNNING") },
     { title: "Wartende Partien", sessions: savedSessions.filter((session) => session.availability !== "UNAVAILABLE" && session.room?.status === "WAITING") },
     { title: "Beendete Partien", sessions: savedSessions.filter((session) => session.availability !== "UNAVAILABLE" && session.room?.status === "FINISHED") },
@@ -1454,7 +1603,7 @@ export default function App() {
       setNotice(message);
       soundManager.play("CONFIRM");
     } catch {
-      setError("Kopieren ist in diesem Browser nicht verfügbar.");
+      showError("Kopieren ist in diesem Browser nicht verfügbar.");
     }
   };
   const inviteLink = multiplayerRoom === undefined ? undefined : (() => {
@@ -1502,25 +1651,41 @@ export default function App() {
           <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="destructive-button" onClick={() => requestForgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>
         </div>}
         {multiplayerRoom === undefined ? <div className="config-stack">
-          <Field label="Name"><input value={multiplayerName} maxLength={80} onChange={(event) => setMultiplayerName(event.target.value)} /></Field>
+          {account === undefined ? <p role="status" className="muted">Konto wird geladen …</p> : account === null ? <div className="config-stack" aria-label="Konto">
+            <div><strong>{accountMode === "LOGIN" ? "Anmelden" : "Konto erstellen"}</strong><small>Ein Konto merkt sich deine Partien auch nach einem Browserwechsel.</small></div>
+            <Field label="Benutzername"><input autoComplete="username" value={accountUsername} maxLength={32} onChange={(event) => setAccountUsername(event.target.value)} /></Field>
+            {accountMode === "REGISTER" && <Field label="Anzeigename"><input autoComplete="nickname" value={accountDisplayName} maxLength={80} onChange={(event) => setAccountDisplayName(event.target.value)} /></Field>}
+            <Field label="Passwort"><input type="password" autoComplete={accountMode === "LOGIN" ? "current-password" : "new-password"} value={accountPassword} onChange={(event) => setAccountPassword(event.target.value)} /></Field>
+            {accountMode === "REGISTER" && <Field label="Passwort bestätigen"><input type="password" autoComplete="new-password" value={accountPasswordConfirmation} onChange={(event) => setAccountPasswordConfirmation(event.target.value)} /></Field>}
+            <div className="button-row"><button type="button" className="primary-button" disabled={accountPending} onClick={() => void submitAccount()}>{accountPending ? "Bitte warten …" : accountMode === "LOGIN" ? "Anmelden" : "Registrieren"}</button>
+              <button type="button" className="secondary-button" disabled={accountPending} onClick={() => setAccountMode((mode) => mode === "LOGIN" ? "REGISTER" : "LOGIN")}>{accountMode === "LOGIN" ? "Konto erstellen" : "Zum Login"}</button></div>
+          </div> : <>
+          <div className="account-summary"><strong>Angemeldet als {account.displayName}</strong><button type="button" className="text-button" onClick={() => void logoutAccount()}>Abmelden</button></div>
           <div className="button-row"><button type="button" className="primary-button" disabled={multiplayerPendingAction !== undefined} onClick={() => void createMultiplayerRoom()}>{multiplayerPendingAction === "CREATE" ? "Raum wird erstellt …" : "Neues Spiel erstellen"}</button></div>
           <div className="join-room-row"><Field label="Raumcode"><input value={joinRoomCode} maxLength={8} placeholder="ABC123" onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())} /></Field>
             <button type="button" className="secondary-button" disabled={multiplayerPendingAction !== undefined} onClick={() => void joinMultiplayerRoom()}>{multiplayerPendingAction === "JOIN" ? "Beitritt läuft …" : "Raum beitreten"}</button></div>
+          <section className="saved-room-list" aria-label="Meine Partien"><div><strong>Meine Partien</strong><small>Deine Räume werden über dein Konto gefunden.</small></div>
+            {accountRooms.length === 0 ? <p className="empty-state saved-room-empty">Noch keine eigenen Partien.</p> : accountRooms.map((room) => <article key={room.roomId} className="lobby-resume-card">
+              <div><strong>Raum {room.roomId}</strong>{room.round !== undefined && <span> · Runde {room.round}{room.maxRounds === undefined ? "" : ` / ${room.maxRounds}`}</span>}</div>
+              <p>{room.playerNames.join(" · ")}</p><small>{room.status === "RUNNING" ? "Läuft" : room.status === "WAITING" ? "Wartet auf Spieler" : "Beendet"}</small>
+              <div className="button-row"><button type="button" className="secondary-button" disabled={multiplayerPendingAction !== undefined} onClick={() => void resumeAccountRoom(room.roomId)}>{room.status === "FINISHED" ? "Ergebnis ansehen" : "Fortsetzen"}</button></div>
+            </article>)}</section>
           {savedSessions.length === 0 && <p className="empty-state saved-room-empty">Noch keine gespeicherten Partien. Erstelle eine Partie oder tritt einem Raum bei.</p>}
           {savedSessions.length > 0 && <section className="saved-room-list" aria-label="Gespeicherte Partien">
-            <div><strong>Gespeicherte Partien</strong><small>Diese Liste gilt nur für diesen Browser.</small></div>
+            <div><strong>Lokaler Zwischenspeicher</strong><small>Der Server bestimmt beim Fortsetzen deine Spieleridentität.</small></div>
             {savedSessionGroups.map((group) => group.sessions.length === 0 ? null : <div key={group.title} className="saved-room-group">
               <h3>{group.title}</h3>
               {group.sessions.map((session) => <article key={session.roomId} className="lobby-resume-card">
                 <div><strong>Raum {session.roomId}</strong>{session.room?.round !== undefined && <span> · Runde {session.room.round}{session.room.maxRounds === undefined ? "" : ` / ${session.room.maxRounds}`}</span>}</div>
                 <p>{session.room?.playerNames.join(" · ") || "Status wird beim Fortsetzen geprüft."}</p>
                 <small>{session.availability === "UNAVAILABLE" ? "Diese Sitzung wurde vom Server abgelehnt." : session.room ? `Zuletzt bekannt: ${new Date(session.room.updatedAt).toLocaleString("de-DE")}` : "Status derzeit nicht abrufbar."}</small>
-                <div className="button-row"><button type="button" className="secondary-button" disabled={session.availability === "UNAVAILABLE"} onClick={() => void connectMultiplayer(session)}>{session.room?.status === "FINISHED" ? "Ergebnis ansehen" : "Fortsetzen"}</button>
+                <div className="button-row"><button type="button" className="secondary-button" disabled={session.availability === "UNAVAILABLE"} onClick={() => void resumeAccountRoom(session.roomId)}>{session.room?.status === "FINISHED" ? "Ergebnis ansehen" : "Fortsetzen"}</button>
                   <button type="button" className="destructive-button" onClick={() => requestForgetSavedMultiplayerSession(session.roomId)}>{session.room?.status === "FINISHED" ? "Lokal entfernen" : "Lokal vergessen"}</button></div>
               </article>)}
             </div>)}
           </section>}
           {multiplayer && remoteConnectionStatus !== "CONNECTED" && <p className="muted">{remoteConnectionStatus === "RECONNECTING" ? "Verbindung wird wiederhergestellt …" : "Verbindung wird hergestellt …"}</p>}
+          </>}
         </div> : <div className="config-stack">
           <div className="invite-panel"><strong>Freunde einladen</strong><p className="room-code">Raum: <strong>{multiplayerRoom.roomId}</strong></p>
             <div className="button-row"><button type="button" className="secondary-button" onClick={() => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.")}>Raumcode kopieren</button>
@@ -1586,7 +1751,7 @@ export default function App() {
         <div className="scenario-grid">{SCENARIOS.map((item) => <button type="button" key={item.kind} className="scenario-tile" onClick={() => startSelectedScenario(item.kind)}><strong>{item.label}</strong><span>{item.detail}</span></button>)}</div>
       </section>}
       {notice && <p role="status" aria-live="polite" className="toast-notice">{notice}</p>}
-      {error && <p role="alert" className="error-banner">Aktion nicht möglich: {error}</p>}
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
     </main> : <>
       <GameHeader state={state} playerName={name} mode={multiplayer ? "MULTIPLAYER" : "LOCAL"}
         viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} onOpenHelp={() => openHelp()} />
@@ -1629,7 +1794,7 @@ export default function App() {
           </div>}
         </section>
         {notice && <div role="status" aria-live="polite" className="toast-notice">{notice}</div>}
-        {error && <div role="alert" className="error-banner">Aktion nicht möglich: <strong>{error}</strong></div>}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
         {multiplayer && remoteConnectionStatus !== "CONNECTED" && <div role="status" className="connection-banner">
           <strong>{remoteConnectionStatus === "RECONNECTING" ? "Verbindung verloren" : remoteConnectionStatus === "INVALID_SESSION" ? "Diese lokale Spielersitzung ist nicht mehr gültig." :
             remoteConnectionStatus === "ROOM_NOT_FOUND" ? "Dieser Raum ist auf dem Server nicht mehr vorhanden." : remoteConnectionStatus === "SESSION_REPLACED" ? "Diese Spielersitzung wurde in einem anderen Fenster geöffnet." : remoteConnectionStatus === "PLAYER_REMOVED" ? "Du wurdest aus diesem Raum entfernt." : "Verbindung wird hergestellt …"}</strong>

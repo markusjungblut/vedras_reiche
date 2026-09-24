@@ -3,13 +3,15 @@ import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import { GamePhase, type GameState, type GridMapConfig } from "@vedras/game-core";
 
-export const PERSISTENCE_VERSION = 1 as const;
+export const PERSISTENCE_VERSION = 2 as const;
 export const MAX_ACCEPTED_COMMANDS = 256;
 
 export type PersistedRoomStatus = "WAITING" | "RUNNING" | "FINISHED";
 
 export interface PersistedParticipant {
   readonly playerId: string;
+  /** Optional only for snapshots created before account-backed rooms existed. */
+  readonly accountId?: string;
   readonly name: string;
   readonly sessionTokenHash: string;
   readonly joinedAt: string;
@@ -96,7 +98,7 @@ export function deserializeGameState(value: unknown): GameState | undefined {
 
 export function deserializePersistedRoom(value: unknown): { readonly room?: PersistedRoom; readonly reason?: string } {
   if (!isRecord(value)) return { reason: "root is not an object" };
-  if (value.persistenceVersion !== PERSISTENCE_VERSION) return { reason: "unsupported persistence version" };
+  if (value.persistenceVersion !== 1 && value.persistenceVersion !== PERSISTENCE_VERSION) return { reason: "unsupported persistence version" };
   if (!isNonEmptyString(value.roomId, 32) || !/^[A-Z0-9]+$/.test(value.roomId)) return { reason: "invalid room id" };
   if (value.status !== "WAITING" && value.status !== "RUNNING" && value.status !== "FINISHED") return { reason: "invalid room status" };
   if (!isNonEmptyString(value.hostPlayerId, 160)) return { reason: "invalid host player id" };
@@ -112,12 +114,16 @@ export function deserializePersistedRoom(value: unknown): { readonly room?: Pers
 
   const participants: PersistedParticipant[] = [];
   const playerIds = new Set<string>();
+  const accountIds = new Set<string>();
   for (const candidate of value.participants) {
     if (!isRecord(candidate) || !isNonEmptyString(candidate.playerId, 160) || !isNonEmptyString(candidate.name, 80) ||
         typeof candidate.sessionTokenHash !== "string" || !/^[a-f0-9]{64}$/i.test(candidate.sessionTokenHash) ||
-        !isIsoTimestamp(candidate.joinedAt) || playerIds.has(candidate.playerId)) return { reason: "invalid participant" };
+        !isIsoTimestamp(candidate.joinedAt) || playerIds.has(candidate.playerId) ||
+        (candidate.accountId !== undefined && (!isNonEmptyString(candidate.accountId, 160) || accountIds.has(candidate.accountId)))) return { reason: "invalid participant" };
     playerIds.add(candidate.playerId);
-    participants.push({ playerId: candidate.playerId, name: candidate.name, sessionTokenHash: candidate.sessionTokenHash, joinedAt: candidate.joinedAt });
+    if (candidate.accountId !== undefined) accountIds.add(candidate.accountId);
+    participants.push({ playerId: candidate.playerId, ...(candidate.accountId === undefined ? {} : { accountId: candidate.accountId }),
+      name: candidate.name, sessionTokenHash: candidate.sessionTokenHash, joinedAt: candidate.joinedAt });
   }
   if (!playerIds.has(value.hostPlayerId)) return { reason: "host is not a participant" };
 

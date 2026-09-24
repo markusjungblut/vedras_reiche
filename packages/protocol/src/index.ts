@@ -21,7 +21,12 @@ export enum NetworkErrorCode {
   PersistenceFailed = "PERSISTENCE_FAILED",
   SessionReplaced = "SESSION_REPLACED",
   PlayerRemoved = "PLAYER_REMOVED",
-  OriginNotAllowed = "ORIGIN_NOT_ALLOWED"
+  OriginNotAllowed = "ORIGIN_NOT_ALLOWED",
+  UsernameTaken = "USERNAME_TAKEN",
+  InvalidUsername = "INVALID_USERNAME",
+  PasswordTooShort = "PASSWORD_TOO_SHORT",
+  InvalidCredentials = "INVALID_CREDENTIALS",
+  TooManyRequests = "TOO_MANY_REQUESTS"
 }
 
 /** A serialisable action payload. The server narrows it against the explicit GameAction enum. */
@@ -125,7 +130,8 @@ export type ServerMessage =
   | RematchOfferMessage;
 
 export interface CreateRoomRequest {
-  readonly playerName: string;
+  /** Legacy clients may provide a display name; account-authenticated clients derive it server-side. */
+  readonly playerName?: string;
 }
 
 export interface CreateRoomResponse {
@@ -135,7 +141,35 @@ export interface CreateRoomResponse {
 }
 
 export interface JoinRoomRequest {
-  readonly playerName: string;
+  /** Legacy clients may provide a display name; account-authenticated clients derive it server-side. */
+  readonly playerName?: string;
+}
+
+export interface RegisterAccountRequest {
+  readonly username: string;
+  readonly displayName?: string;
+  readonly password: string;
+}
+
+export interface LoginRequest {
+  readonly username: string;
+  readonly password: string;
+}
+
+export interface AccountDto {
+  readonly id: string;
+  readonly username: string;
+  readonly displayName: string;
+}
+
+export interface AccountRoomSummaryDto {
+  readonly roomId: string;
+  readonly status: "WAITING" | "RUNNING" | "FINISHED";
+  readonly playerId: string;
+  readonly playerNames: readonly string[];
+  readonly updatedAt: string;
+  readonly round?: number;
+  readonly maxRounds?: number;
 }
 
 export interface StartRoomRequest {

@@ -61,6 +61,7 @@ During local development, `apps/web` may call the Game Core directly. Do not mis
 - Territory area, adjacency, borders, and cell ownership must be derived from map geometry rather than maintained as competing truths.
 - POIs and settlement/city features are cell-bound; their territorial ownership follows their cell after geometry changes.
 - Territory-card properties remain card-bound.
+- `accountId` identifies an account permanently; `playerId` is room-specific and must never be used as an account identity.
 - Hidden information must be removed from player-facing projections such as `createGameViewForPlayer`; never rely on CSS or client-side hiding of secret values.
 - Reuse existing domain workflows and geometry/split utilities instead of creating parallel implementations.
 

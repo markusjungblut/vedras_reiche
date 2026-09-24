@@ -14,7 +14,7 @@ import {
   type PlayerGameView,
   type RandomSource,
 } from "@vedras/game-core";
-import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, NetworkErrorCode, type GameActionDto, type PublicRoomState } from "@vedras/protocol";
+import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, NetworkErrorCode, type AccountRoomSummaryDto, type GameActionDto, type PublicRoomState } from "@vedras/protocol";
 import {
   MAX_ACCEPTED_COMMANDS,
   PERSISTENCE_VERSION,
@@ -35,6 +35,8 @@ export interface RoomConnection {
 
 export interface RoomParticipant {
   readonly playerId: string;
+  /** Stable account identity for new rooms. Legacy participants intentionally have no inferred account. */
+  readonly accountId?: string;
   readonly name: string;
   readonly sessionTokenHash: string;
   readonly joinedAt: string;
@@ -75,6 +77,7 @@ export interface CreatedRoom {
   readonly participant: RoomParticipant;
   /** Returned only once to the browser. It never becomes part of a Room snapshot. */
   readonly sessionToken: string;
+  readonly resumed?: boolean;
 }
 
 export interface CommandSuccess {
@@ -210,10 +213,10 @@ export class RoomManager {
 
   isStorageHealthy(): boolean { return this.storageHealthy; }
 
-  async createRoom(playerName: string): Promise<CreatedRoom> {
+  async createRoom(playerName: string, accountId?: string): Promise<CreatedRoom> {
     if (!playerNameIsValid(playerName)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
     const roomId = this.reserveRoomId();
-    const created = this.createParticipant(playerName);
+    const created = this.createParticipant(playerName, accountId);
     const now = this.now();
     const room: GameRoom = {
       roomId,
@@ -236,13 +239,23 @@ export class RoomManager {
     }
   }
 
-  async joinRoom(roomId: string, playerName: string): Promise<CreatedRoom> {
+  async joinRoom(roomId: string, playerName: string, accountId?: string): Promise<CreatedRoom> {
     if (!playerNameIsValid(playerName)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");
     const room = this.getRoom(roomId);
     return this.inRoomQueue(room, async () => {
+      const existing = accountId === undefined ? undefined : [...room.participants.values()].find((participant) => participant.accountId === accountId);
+      if (existing !== undefined) {
+        const resumed = this.reissueParticipantToken(existing);
+        const participants = [...room.participants.values()].map((participant) => participant.playerId === existing.playerId ? resumed.participant : participant);
+        const updatedAt = this.now();
+        await this.persist(room, { participants, updatedAt });
+        room.participants.set(resumed.participant.playerId, resumed.participant);
+        room.updatedAt = updatedAt;
+        return { room, participant: resumed.participant, sessionToken: resumed.sessionToken, resumed: true };
+      }
       if (room.status !== "WAITING") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "The room has already started.");
       if (room.participants.size >= MAX_PLAYERS) throw new RoomError(NetworkErrorCode.RoomFull, "The room already has six players.");
-      const created = this.createParticipant(playerName);
+      const created = this.createParticipant(playerName, accountId);
       const updatedAt = this.now();
       await this.persist(room, { participants: [...room.participants.values(), created.participant], updatedAt });
       room.participants.set(created.participant.playerId, created.participant);
@@ -329,7 +342,7 @@ export class RoomManager {
       if (session.participant.playerId !== source.hostPlayerId) throw new RoomError(NetworkErrorCode.NotHost, "Only the host of the finished room can create a rematch.");
       if (source.status !== "FINISHED") throw new RoomError(NetworkErrorCode.RoomAlreadyStarted, "A rematch can only be created after the game has finished.");
       const newRoomId = this.reserveRoomId();
-      const created = this.createParticipant(session.participant.name);
+      const created = this.createParticipant(session.participant.name, session.participant.accountId);
       const now = this.now();
       const rematch: GameRoom = {
         roomId: newRoomId,
@@ -361,8 +374,11 @@ export class RoomManager {
     return { room, participant };
   }
 
-  attachConnection(roomId: string, sessionToken: string, connection: RoomConnection): { session: Session; previousConnection?: RoomConnection } {
+  attachConnection(roomId: string, sessionToken: string, connection: RoomConnection, accountId?: string): { session: Session; previousConnection?: RoomConnection } {
     const session = this.authenticate(roomId, sessionToken);
+    if (accountId !== undefined && session.participant.accountId !== accountId) {
+      throw new RoomError(NetworkErrorCode.AuthenticationRequired, "Die Kontoanmeldung passt nicht zu dieser Partie.");
+    }
     const previousConnection = session.participant.connection;
     session.participant.connection = connection;
     session.participant.connected = true;
@@ -385,6 +401,16 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (room === undefined) throw new RoomError(NetworkErrorCode.RoomNotFound, "The room was not found.");
     return room;
+  }
+
+  listRoomsForAccount(accountId: string): readonly AccountRoomSummaryDto[] {
+    return [...this.rooms.values()].flatMap((room) => {
+      const participant = [...room.participants.values()].find((candidate) => candidate.accountId === accountId);
+      if (participant === undefined) return [];
+      return [{ roomId: room.roomId, status: room.status, playerId: participant.playerId,
+        playerNames: [...room.participants.values()].map((candidate) => candidate.name), updatedAt: room.updatedAt,
+        ...(room.gameState === undefined ? {} : { round: room.gameState.round, maxRounds: room.gameState.maxRounds }) }];
+    }).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   getPublicRoomState(room: GameRoom): PublicRoomState {
@@ -485,7 +511,8 @@ export class RoomManager {
       hostPlayerId: snapshot.hostPlayerId,
       map: copyMap(snapshot.map),
       participants: new Map(snapshot.participants.map((participant) => [participant.playerId, {
-        playerId: participant.playerId, name: participant.name, sessionTokenHash: participant.sessionTokenHash, joinedAt: participant.joinedAt, connected: false,
+        playerId: participant.playerId, ...(participant.accountId === undefined ? {} : { accountId: participant.accountId }), name: participant.name,
+        sessionTokenHash: participant.sessionTokenHash, joinedAt: participant.joinedAt, connected: false,
       }])),
       ...(snapshot.gameState === undefined ? {} : { gameState: snapshot.gameState }),
       acceptedCommands: [...snapshot.acceptedCommands],
@@ -498,12 +525,18 @@ export class RoomManager {
     };
   }
 
-  private createParticipant(playerName: string): { readonly participant: RoomParticipant; readonly sessionToken: string } {
+  private createParticipant(playerName: string, accountId?: string): { readonly participant: RoomParticipant; readonly sessionToken: string } {
     const sessionToken = this.sessionTokenFactory();
     return {
-      participant: { playerId: this.playerIdFactory(), name: playerName.trim(), sessionTokenHash: hashSessionToken(sessionToken), joinedAt: this.now(), connected: false },
+      participant: { playerId: this.playerIdFactory(), ...(accountId === undefined ? {} : { accountId }), name: playerName.trim(),
+        sessionTokenHash: hashSessionToken(sessionToken), joinedAt: this.now(), connected: false },
       sessionToken,
     };
+  }
+
+  private reissueParticipantToken(participant: RoomParticipant): { readonly participant: RoomParticipant; readonly sessionToken: string } {
+    const sessionToken = this.sessionTokenFactory();
+    return { participant: { ...participant, sessionTokenHash: hashSessionToken(sessionToken) }, sessionToken };
   }
 
   private reserveRoomId(): string {
@@ -523,7 +556,8 @@ export class RoomManager {
 }
 
 function toPersistedParticipant(participant: RoomParticipant): PersistedParticipant {
-  return { playerId: participant.playerId, name: participant.name, sessionTokenHash: participant.sessionTokenHash, joinedAt: participant.joinedAt };
+  return { playerId: participant.playerId, ...(participant.accountId === undefined ? {} : { accountId: participant.accountId }), name: participant.name,
+    sessionTokenHash: participant.sessionTokenHash, joinedAt: participant.joinedAt };
 }
 
 function copyMap(map: GridMapConfig): GridMapConfig {

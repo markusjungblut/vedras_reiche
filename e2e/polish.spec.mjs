@@ -1,8 +1,23 @@
 import { expect, test } from "@playwright/test";
 
+let accountNumber = 0;
+
 async function openWithoutIntroduction(page, path = "/") {
   await page.addInitScript(() => localStorage.setItem("vedras-reiche-tutorial-progress", JSON.stringify({ introductionSeen: true, seen: {} })));
   await page.goto(path);
+}
+
+async function registerAccount(page, displayName) {
+  const multiplayerButton = page.getByRole("button", { name: "Mehrspieler" });
+  if (await multiplayerButton.isVisible().catch(() => false)) await multiplayerButton.click();
+  await expect(page.getByLabel("Benutzername")).toBeVisible();
+  await page.getByRole("button", { name: "Konto erstellen", exact: true }).click();
+  await page.getByLabel("Benutzername").fill(`${displayName.toLowerCase()}-polish-${Date.now().toString(36)}-${++accountNumber}`);
+  await page.getByLabel("Anzeigename").fill(displayName);
+  await page.getByLabel("Passwort", { exact: true }).fill("ein-sicheres-passwort");
+  await page.getByLabel("Passwort bestätigen").fill("ein-sicheres-passwort");
+  await page.getByRole("button", { name: "Registrieren" }).click();
+  await expect(page.getByText(`Angemeldet als ${displayName}`)).toBeVisible();
 }
 
 test("the entry screen remains usable from desktop to phone", async ({ browser }) => {
@@ -21,7 +36,7 @@ test("the entry screen remains usable from desktop to phone", async ({ browser }
       await expect(page.getByRole("button", { name: "Debug-Szenarien" })).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
       await page.getByRole("button", { name: "Mehrspieler" }).click();
-      await expect(page.getByLabel("Name")).toBeVisible();
+      await expect(page.getByLabel("Benutzername")).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
     } finally {
       await context.close();
@@ -74,13 +89,12 @@ test("a 100 by 100 board remains interactive after the authoritative start", asy
   const guest = await guestContext.newPage();
   try {
     await openWithoutIntroduction(host);
-    await host.getByRole("button", { name: "Mehrspieler" }).click();
-    await host.getByLabel("Name").fill("Anna");
+    await registerAccount(host, "Anna");
     await host.getByRole("button", { name: "Neues Spiel erstellen" }).click();
     const roomCode = (await host.locator(".room-code strong").last().textContent())?.trim();
     if (!roomCode) throw new Error("Kein Raumcode sichtbar.");
     await openWithoutIntroduction(guest, `/?room=${roomCode}`);
-    await guest.getByLabel("Name").fill("Ben");
+    await registerAccount(guest, "Ben");
     await guest.getByRole("button", { name: "Raum beitreten" }).click();
     await expect(host.getByText(/2\. Ben/)).toBeVisible();
 

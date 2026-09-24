@@ -95,13 +95,14 @@ function nextPlayer(state: GameState, playerId: PlayerId): PlayerId {
   return getNextPlayer(state.players.map((player) => player.id), playerId);
 }
 
-function stageAfterRegionCount(playerCount: number, count: number, target: number): MapCreationStage {
-  if (count >= target) return MapCreationStage.ReadyToFinalize;
-  // AP7 milestones are retained; they now use the current derived region count.
-  if (count === playerCount) return MapCreationStage.PlaceLandmarks;
-  if (count === playerCount * 2) return MapCreationStage.PlaceJunctions;
-  if (count === playerCount * 3) return MapCreationStage.PlaceFortresses;
-  if (count === playerCount * 4) return MapCreationStage.PlaceRelics;
+function stageAfterDrawingTurn(playerCount: number, regionCount: number, target: number): MapCreationStage {
+  if (regionCount >= target) return MapCreationStage.ReadyToFinalize;
+  // The first region exists before anyone draws. A successful drawing turn adds exactly one region.
+  const completedDrawingTurns = regionCount - 1;
+  if (completedDrawingTurns === playerCount) return MapCreationStage.PlaceLandmarks;
+  if (completedDrawingTurns === playerCount * 2) return MapCreationStage.PlaceJunctions;
+  if (completedDrawingTurns === playerCount * 3) return MapCreationStage.PlaceFortresses;
+  if (completedDrawingTurns === playerCount * 4) return MapCreationStage.PlaceRelics;
   return MapCreationStage.DrawTerritories;
 }
 
@@ -188,7 +189,7 @@ export function commitSetupBoundaryDraft(state: GameState, action: CommitSetupBo
   }
   assertMinimumSetupAreas(state.map!, after);
   const regionCount = after.length;
-  const stage = stageAfterRegionCount(state.players.length, regionCount, mapCreation.targetTerritoryCount);
+  const stage = stageAfterDrawingTurn(state.players.length, regionCount, mapCreation.targetTerritoryCount);
   const nextMapCreation: MapCreationState = { ...mapCreation, borders, regionCount, stage,
     activePlayerId: nextPlayer(state, action.playerId), lastSetupPlayerId: action.playerId };
   const descriptions: EventDescription[] = [{ type: GameEventType.SetupBoundaryCommitted, actorId: action.playerId,
