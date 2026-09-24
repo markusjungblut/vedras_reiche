@@ -52,6 +52,7 @@ test("local map creation, labels, zoom and pan use the live SVG map", async ({ p
 
   const map = page.getByRole("img", { name: "Vedras Rasterkarte" });
   await expect(map).toBeVisible();
+  await expect(map).toHaveAttribute("data-map-color-regime", "SETUP_TERRITORIES");
   const box = await map.boundingBox();
   if (box === null) throw new Error("Rasterkarte hat keine Bildschirmgeometrie.");
   const x = box.x + box.width / 2;
@@ -92,17 +93,45 @@ test("a territory remains selectable after viewport interaction", async ({ page 
   await expect(page.locator(".map-summary")).not.toHaveText("Gebiet auswählen");
 });
 
+test("authoritative combat values reveal briefly before an exact border-gain wave", async ({ page }) => {
+  await openWithoutIntroduction(page, "/?developer=1");
+  await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Krieg · Grenzgewinn" }).click();
+  const noSpade = page.getByRole("button", { name: "Keine", exact: true });
+  await expect(noSpade).toHaveCount(2);
+  await noSpade.first().click();
+  await noSpade.first().click();
+
+  const reveal = page.getByTestId("war-dice-reveal");
+  await expect(reveal).toBeVisible();
+  await expect(reveal).toContainText("W6");
+  await page.getByRole("button", { name: "Grenzgewinn bestätigen" }).click();
+  await expect(page.locator("rect.map-gain-overlay")).toHaveCount(5);
+  await expect(page.getByLabel("Letztes Kampfergebnis")).toContainText("Normaler Grenzgewinn");
+});
+
 test("map modes and strategic-point effects are available in the player view", async ({ page }) => {
   await openWithoutIntroduction(page, "/?developer=1");
   await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Startauktionen" }).click();
+  await expect(page.getByRole("img", { name: "Vedras Rasterkarte" })).toHaveAttribute("data-map-color-regime", "SETUP_TERRITORIES");
   await page.getByRole("button", { name: "Aktivierungsphase" }).click();
+
+  const map = page.getByRole("img", { name: "Vedras Rasterkarte" });
+  await expect(map).toHaveAttribute("data-map-color-regime", "OWNERSHIP");
+  const ownedCell = map.locator('rect.map-cell[class*="owner-map-"]').first();
+  await expect(ownedCell).toBeVisible();
+  expect(await map.locator("rect.map-cell.map-cell-neutral").count()).toBeGreaterThan(0);
+  const ownershipFill = await ownedCell.evaluate((element) => getComputedStyle(element).fill);
 
   for (const name of ["Gebiete", "Mein Reich", "Reiche", "Boni"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
+    await page.getByRole("button", { name, exact: true }).click();
+    await expect(map).toHaveAttribute("data-map-color-regime", "OWNERSHIP");
+    expect(await ownedCell.evaluate((element) => getComputedStyle(element).fill)).toBe(ownershipFill);
   }
-  await expect(page.getByRole("img", { name: "Vedras Rasterkarte" })).toContainText(/G08\s*♠\s*12/);
+  await expect(map).toContainText(/G08\s*♠\s*12/);
   const bonusMode = page.getByRole("button", { name: "Boni", exact: true });
-  await bonusMode.click();
   await expect(bonusMode).toHaveClass(/selected-button/);
 
   await page.getByRole("button", { name: /Wahrzeichen ★/ }).click();
@@ -110,27 +139,32 @@ test("map modes and strategic-point effects are available in the player view", a
 });
 
 test("the desktop table uses side space and keeps the territory overview below it", async ({ page }) => {
-  await page.setViewportSize({ width: 2400, height: 1200 });
+  await page.setViewportSize({ width: 1366, height: 1000 });
   await openWithoutIntroduction(page, "/?developer=1");
   await page.getByRole("button", { name: "Debug-Szenarien" }).click();
   await page.getByRole("button", { name: "Aktivierungsphase" }).click();
 
-  const [personal, board, action, players, events, overview] = await Promise.all([
-    page.locator(".personal-column").boundingBox(),
-    page.locator(".board-column").boundingBox(),
-    page.locator(".action-column").boundingBox(),
-    page.locator(".players-column").boundingBox(),
-    page.locator(".event-column").boundingBox(),
-    page.locator(".territory-overview").boundingBox(),
-  ]);
-  if (!personal || !board || !action || !players || !events || !overview) throw new Error("Desktop-Spielansicht hat keine vollständige Geometrie.");
-  expect(personal.x).toBeLessThan(board.x);
-  expect(board.width).toBeGreaterThan(1100);
-  expect(action.x).toBeGreaterThan(board.x + board.width - 1);
-  expect(players.x).toBeGreaterThan(action.x + action.width - 1);
-  expect(events.x).toBeGreaterThanOrEqual(action.x - 1);
-  expect(events.x + events.width).toBeGreaterThanOrEqual(players.x + players.width - 1);
-  expect(overview.y).toBeGreaterThan(board.y + board.height - 1);
+  for (const width of [1366, 1600, 1920, 2560]) {
+    await page.setViewportSize({ width, height: 1200 });
+    const [dashboard, personal, board, action, players, events, overview] = await Promise.all([
+      page.locator(".dashboard").boundingBox(),
+      page.locator(".personal-column").boundingBox(),
+      page.locator(".board-column").boundingBox(),
+      page.locator(".action-column").boundingBox(),
+      page.locator(".players-column").boundingBox(),
+      page.locator(".event-column").boundingBox(),
+      page.locator(".territory-overview").boundingBox(),
+    ]);
+    if (!dashboard || !personal || !board || !action || !players || !events || !overview) throw new Error("Desktop-Spielansicht hat keine vollständige Geometrie.");
+    expect(dashboard.width).toBeGreaterThan(width - 110);
+    expect(personal.x).toBeLessThan(board.x);
+    expect(board.width).toBeGreaterThan(440);
+    expect(action.x).toBeGreaterThan(board.x + board.width - 1);
+    expect(players.x).toBeGreaterThan(action.x + action.width - 1);
+    expect(events.x).toBeGreaterThanOrEqual(action.x - 1);
+    expect(events.x + events.width).toBeGreaterThanOrEqual(players.x + players.width - 1);
+    expect(overview.y).toBeGreaterThan(board.y + board.height - 1);
+  }
 });
 
 test("territory overview combines owner filters and stable sorting", async ({ page }) => {

@@ -67,6 +67,11 @@ test("two accounts create, join and start an authoritative room", async ({ brows
     await expect(guest.getByRole("img", { name: "Vedras Rasterkarte" })).toBeVisible();
     await expect(host.getByText("1 Regionen", { exact: true })).toBeVisible();
     await expect(guest.getByText("1 Regionen", { exact: true })).toBeVisible();
+    await expect(host.locator(".game-header .room-status")).toContainText(roomCode);
+    await expect(host.getByRole("button", { name: "Regelhilfe öffnen" })).toBeVisible();
+    await host.locator(".party-menu > summary").click();
+    await expect(host.getByLabel("Spieler im Raum")).toContainText("Ben · ● verbunden");
+    await host.locator(".party-menu > summary").click();
     await host.locator(".music-menu > summary").click();
     await guest.locator(".music-menu > summary").click();
     const hostTrack = host.getByText(/^Synchron im Raum:/);
@@ -104,7 +109,13 @@ test("four players complete four drawing turns before the first POI phase begins
     await host.getByRole("button", { name: "Spiel starten" }).click();
     await Promise.all([host, ben, clara, dora].map((page) => expect(page.getByRole("img", { name: "Vedras Rasterkarte" })).toBeVisible()));
 
-    for (const [page, cut, regionCount] of [[host, 10, 2], [ben, 20, 3], [clara, 30, 4]]) {
+    await drawVerticalSetupBoundary(host, 10);
+    await Promise.all([host, ben, clara, dora].map((page) => expect(page.getByRole("region", { name: "Kartenbau" })).toContainText("Aktiver Spieler: Ben")));
+    await expect(host.getByRole("button", { name: "Grenzstift" })).toBeDisabled();
+    await expect(clara.getByRole("button", { name: "Grenzstift" })).toBeDisabled();
+    await expect(ben.getByRole("button", { name: "Grenzstift" })).not.toBeDisabled();
+
+    for (const [page, cut, regionCount] of [[ben, 20, 3], [clara, 30, 4]]) {
       await drawVerticalSetupBoundary(page, cut);
       await expect(page.getByText(`Gebiete: ${regionCount} / 20`)).toBeVisible();
     }

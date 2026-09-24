@@ -102,6 +102,8 @@ npm run dev:multiplayer
 
 Der Browser speichert Room-ID, Spieler-ID, Session-Token, Namen und eine kleine, nicht autoritative Room-Zusammenfassung lokal. Die Mehrspieler-Startseite gruppiert damit wartende, laufende und beendete eigene Partien; `Fortsetzen` prüft anschließend wieder den Server. `Lokal vergessen` entfernt nur diese Browser-Sitzung und nie den Serverroom. Invite-Links enthalten ausschließlich den Roomcode, können kopiert oder über die Share-Funktion geteilt werden und füllen den Join-Bereich automatisch vor.
 
+Für angemeldete Konten archiviert der Server nach einer kanonisch abgeschlossenen Mehrspielerpartie genau eine unveränderliche Zusammenfassung. Sie enthält Endplatzierungen, Endpunkte und die aus dem autoritativen Ereignisprotokoll abgeleiteten persönlichen Matchwerte. Die Kontoansicht `Statistiken` zeigt daraus Rekorde, die letzten Partien und ein privates Detail pro eigener Partie. Die Endansicht ergänzt die Wertung um persönliche Matchfakten. Historien liegen unter `VEDRAS_DATA_DIR/matches/`; alte beendete Konto-Räume werden beim Serverstart idempotent nachgetragen. Legacy-Räume ohne Konto-ID erhalten keine nachträgliche Namenszuordnung.
+
 Der Host kann Gäste nur vor Spielstart aus der Lobby entfernen. Ein entfernter Browser erhält einen terminalen Hinweis und versucht keine erneute Verbindung. Nach einer beendeten Partie kann ihr Host ein Rematch erzeugen: Es entsteht ein neuer WAITING-Room mit gleicher Kartengröße, neuen Zugangsdaten und normalem Setup; die alte Ergebnispartie bleibt erhalten.
 
 ## Hintergrundmusik

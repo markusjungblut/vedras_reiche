@@ -16,6 +16,9 @@ import type { MapEditor } from "./WarControls";
 import { createPenStroke, setupBorderEdgeToSegment, type GridVertex } from "../map/setup-draft";
 import { getCellLabelAnchor, getCellLabelAnchorAwayFromPoints } from "../map/territory-label-anchor";
 import type { GameReadModel } from "../game-read-model";
+import { getMapColorRegime } from "../ui/map-color-regime";
+import { describePointOfInterest, getPointOfInterestPresentation } from "../ui/point-of-interest-presentation";
+import type { PresentationState, TerritoryGainWave } from "../presentation/game-presentation";
 
 export type MapViewMode = "TERRITORIES" | "MY_REALM" | "REALMS" | "BONUSES";
 
@@ -27,21 +30,17 @@ function stableColor(id: string): string {
   return TERRITORY_COLORS[(hash >>> 0) % TERRITORY_COLORS.length]!;
 }
 
-function poiDescription(state: GameReadModel, poi: GameReadModel["pointsOfInterest"][number], territoryId: string | undefined): string {
-  if (poi.type === "LANDMARK") return "Wahrzeichen ★ · +25 % Wertung für dieses Gebiet.";
-  if (poi.type === "FORTRESS") return "Festung ▲ · +1 Verteidigung im Kampf für dieses Gebiet.";
-  if (poi.type === "JUNCTION") {
-    const adjacent = territoryId === undefined || state.map === undefined ? 0
-      : state.territories.filter((territory) => territory.id !== territoryId
-        && getSharedBorder(state.map!, territoryId, territory.id).segments.length > 0).length;
-    return `Knotenpunkt ◎ · aktuell +${Math.min(50, adjacent * 10)} % Wertung für dieses Gebiet (${adjacent} Nachbargebiete, höchstens +50 %).`;
-  }
-  const ownerId = territoryId === undefined ? undefined : state.territories.find((territory) => territory.id === territoryId)?.ownerId;
-  const controlledRelics = ownerId === undefined || ownerId === null ? 0 : state.pointsOfInterest.filter((item) => {
-    const itemTerritoryId = getPointOfInterestTerritory(state, item);
-    return item.type === "RELIC" && state.territories.find((territory) => territory.id === itemTerritoryId)?.ownerId === ownerId;
-  }).length;
-  return `Relikt ◆ · ${controlledRelics >= 2 ? "+25 % Wertung für dieses Gebiet aktiv." : `noch nicht aktiv (${controlledRelics}/2 Relikte im eigenen Reich).`}`;
+function ownerFillClass(ownerId: string | null, playerIndexById: ReadonlyMap<string, number>): string {
+  return ownerId === null ? "map-cell-neutral" : `owner-map-${Math.max(0, playerIndexById.get(ownerId) ?? -1)}`;
+}
+
+function waveCellDelay(wave: TerritoryGainWave, key: string): number {
+  const cells = wave.cellKeys.map(fromCellKey);
+  if (cells.length === 0) return wave.delayMs;
+  const origin = cells.reduce((total, cell) => ({ x: total.x + cell.x, y: total.y + cell.y }), { x: 0, y: 0 });
+  const current = fromCellKey(key);
+  const distance = Math.abs(current.x - origin.x / cells.length) + Math.abs(current.y - origin.y / cells.length);
+  return wave.delayMs + Math.min(460, Math.round(distance * 22));
 }
 
 interface TerritoryBoardProps {
@@ -50,7 +49,7 @@ interface TerritoryBoardProps {
   onSelect: (territoryId: string) => void;
   onClearSelection: () => void;
   highlightedIds: readonly string[];
-  changedCellKeys?: readonly string[] | undefined;
+  presentation?: Pick<PresentationState, "territoryPulses" | "suitConfirmations" | "gainWaves"> | undefined;
   viewerPlayerId?: string | undefined;
   focusTerritoryId?: string | undefined;
   partChoice?: {
@@ -159,7 +158,7 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
   );
 }
 
-export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, highlightedIds, changedCellKeys, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
+export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, highlightedIds, presentation, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
   realmHighlights, scoreHundredthsByTerritoryId, showScoreLabels, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: TerritoryBoardProps) {
   const [viewMode, setViewMode] = useState<MapViewMode>("TERRITORIES");
 
@@ -178,7 +177,7 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
         </button>)}
       </div>}
       {map ? <RasterMap state={state} selectedId={selectedId} onSelect={onSelect} onClearSelection={onClearSelection} neighborIds={neighborIds} highlightedIds={highlightedIds}
-        changedCellKeys={changedCellKeys}
+        presentation={presentation}
         viewerPlayerId={viewerPlayerId} focusTerritoryId={focusTerritoryId} partChoice={partChoice} playerName={playerName}
         splitDraft={splitDraft} onToggleSplitCell={onToggleSplitCell} editor={editor} onToggleMapCell={onToggleMapCell}
         realmHighlights={realmHighlights} scoreHundredthsByTerritoryId={scoreHundredthsByTerritoryId} showScoreLabels={showScoreLabels}
@@ -186,7 +185,7 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
         setupEditor={setupEditor} onSetupSelectCell={onSetupSelectCell} onSetupStrokePreview={onSetupStrokePreview}
         onSetupStrokeCommit={onSetupStrokeCommit} onSetupStrokeErase={onSetupStrokeErase} /> : <p className="panel-hint">Keine Karte im Setup.</p>}
       <p className="panel-hint">{setupEditor ? setupEditor.mode === "POI"
-        ? "Strategischen Punkt platzieren: Klicke ein beliebiges Kästchen an."
+        ? "Strategischen Punkt platzieren: Wähle die in der Aktionsleiste beschriebene freie Rasterzelle."
         : setupEditor.mode === "ERASER" ? "Radiergummi: Ziehe über lokale Entwurfskanten, um sie zu entfernen."
           : "Kartenbau: Ziehe von Rastervertex zu Rastervertex. Es entstehen ausschließlich Grenzkanten zwischen Zellen."
         : editor ? editor.mode === "CUT"
@@ -281,7 +280,7 @@ interface RasterMapProps {
   readonly onClearSelection: () => void;
   readonly neighborIds: readonly string[];
   readonly highlightedIds: readonly string[];
-  readonly changedCellKeys?: readonly string[] | undefined;
+  readonly presentation?: TerritoryBoardProps["presentation"];
   readonly viewerPlayerId?: string | undefined;
   readonly focusTerritoryId?: string | undefined;
   readonly partChoice?: TerritoryBoardProps["partChoice"];
@@ -301,7 +300,7 @@ interface RasterMapProps {
   readonly onSetupStrokeErase?: TerritoryBoardProps["onSetupStrokeErase"];
 }
 
-function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds, highlightedIds, changedCellKeys, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
+function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds, highlightedIds, presentation, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
   realmHighlights, scoreHundredthsByTerritoryId, showScoreLabels, viewMode, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: RasterMapProps) {
   const map = state.map!;
   const [zoom, setZoom] = useState(1);
@@ -359,7 +358,18 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
     ].filter((edge) => edge.neighbor !== territoryId);
   }), [cellEntries, map.cells]);
   const split = state.pendingSplit;
-  const changedCells = useMemo(() => new Set(changedCellKeys ?? []), [changedCellKeys]);
+  const pulsesByTerritoryId = useMemo(() => {
+    const pulses = new Map<string, NonNullable<typeof presentation>["territoryPulses"][number]>();
+    presentation?.territoryPulses.forEach((pulse) => pulses.set(pulse.territoryId, pulse));
+    return pulses;
+  }, [presentation?.territoryPulses]);
+  const wavesByCellKey = useMemo(() => {
+    const waves = new Map<string, TerritoryGainWave>();
+    presentation?.gainWaves.forEach((wave) => wave.cellKeys.forEach((key) => waves.set(key, wave)));
+    return waves;
+  }, [presentation?.gainWaves]);
+  const waveTerritoryIds = useMemo(() => new Set(presentation?.gainWaves.flatMap((wave) =>
+    wave.territoryId === undefined ? [] : [wave.territoryId]) ?? []), [presentation?.gainWaves]);
   const overlayTerritoryId = partChoice?.territoryId ?? split?.originalTerritoryId;
   const splitAKeys = useMemo(() => partChoice?.partAKeys ?? split?.proposal?.partACells.map((cell) => `${cell.x},${cell.y}`) ?? splitDraft?.partAKeys ?? [], [partChoice, split, splitDraft]);
   const splitA = useMemo(() => new Set(splitAKeys), [splitAKeys]);
@@ -388,6 +398,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
     return regions;
   }, [setupEditor]);
   const setupDraftSegments = setupEditor?.draftEdges.map(setupBorderEdgeToSegment) ?? [];
+  const colorRegime = getMapColorRegime(state);
   const setupCanDraw = setupEditor !== undefined && setupEditor.mode !== "POI" && setupEditor.editable && setupAllowed.size > 0;
   const canPan = !setupCanDraw;
   const interactionOwnsMap = setupEditor !== undefined || editor !== undefined || (split !== undefined && split.stage !== "AWAITING_CHOICE") || partChoice?.canChoose === true;
@@ -467,7 +478,8 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       <button type="button" className="secondary-button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Auf Karte einpassen</button>
       <span className="map-legend">{Math.round(zoom * 100)} % · {canPan ? "ziehen zum Verschieben" : "Zeichenwerkzeug aktiv"}{activeId ? ` · ${activeId}${hovered ? " Hover" : " ausgewählt"}` : ""}</span>
     </div>
-    <svg ref={svgRef} className={`raster-map map-view-${viewMode.toLowerCase()} ${split || editor || setupEditor ? "is-splitting" : ""} ${zoom <= 1.1 ? "is-zoomed-out" : ""} ${canPan ? "can-pan" : ""} ${isPanning ? "is-panning" : ""}`}
+    <svg ref={svgRef} className={`raster-map map-colors-${colorRegime.toLowerCase()} map-view-${viewMode.toLowerCase()} ${split || editor || setupEditor ? "is-splitting" : ""} ${zoom <= 1.1 ? "is-zoomed-out" : ""} ${canPan ? "can-pan" : ""} ${isPanning ? "is-panning" : ""}`}
+      data-map-color-regime={colorRegime}
       viewBox={`${viewX} ${viewY} ${viewportWidth} ${viewportHeight}`}
       preserveAspectRatio="xMidYMid meet"
       role="img" aria-label="Vedras Rasterkarte"
@@ -608,11 +620,10 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         const ownedByViewer = territory?.ownerId !== null && territory?.ownerId === viewerPlayerId;
         const setupRegionIndex = state.mapCreation ? previewRegionIndexByCell.get(key) : undefined;
         const ownerClass = setupRegionIndex !== undefined ? `map-cell-setup-region-${setupRegionIndex}`
-          : viewMode === "TERRITORIES"
-            ? territory?.ownerId === null || territory === undefined ? "map-cell-neutral" : "map-cell-territory"
+          : colorRegime === "SETUP_TERRITORIES" ? "map-cell-territory"
             : territory?.ownerId === null || territory === undefined
               ? "map-cell-neutral" : `owner-map-${Math.max(0, playerIndexById.get(territory.ownerId) ?? -1)}`;
-        const territoryFill = setupRegionIndex === undefined && viewMode === "TERRITORIES" && territoryId !== null
+        const territoryFill = setupRegionIndex === undefined && colorRegime === "SETUP_TERRITORIES" && territoryId !== null
           ? stableColor(territoryId) : undefined;
         const splitPart = hasSplitOverlay && territoryId === splitId
           ? splitA.has(key) ? "map-cell-part-a" : "map-cell-part-b" : "";
@@ -623,9 +634,13 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
           ? setupEditor.editable ? "map-cell-setup-available" : "map-cell-setup-locked" : "";
         const realm = territoryId === null ? undefined : realmByTerritoryId.get(territoryId);
         const realmClass = realm === undefined ? "" : realm.selected ? "map-cell-largest-realm" : `map-cell-realm-candidate-${realm.index % 4}`;
-        return <rect key={key} x={cell.x} y={cell.y} width="1" height="1"
+        const pulse = territoryId === null ? undefined : pulsesByTerritoryId.get(territoryId);
+        const wave = wavesByCellKey.get(key);
+        const presentationKey = (wave?.id ?? "") + ":" + (pulse?.id ?? "");
+        return <rect key={key + ":" + presentationKey} x={cell.x} y={cell.y} width="1" height="1"
           style={territoryFill === undefined ? undefined : { fill: territoryFill }}
-          className={`map-cell ${ownerClass} ${viewMode === "MY_REALM" && !ownedByViewer ? "map-cell-not-own" : ""} ${ownedByViewer ? "map-cell-own" : ""} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${isHighlighted ? "map-cell-activated" : ""} ${changedCells.has(key) ? "map-cell-war-changed" : ""} ${splitPart} ${editPart} ${annexedPart} ${setupPart} ${realmClass} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""} ${partChoice?.selectedPart === (splitA.has(key) ? "A" : "B") && territoryId === partChoice.territoryId ? "map-cell-part-selected" : ""}`}
+          data-territory-id={territoryId ?? ""} data-owner-id={territory?.ownerId ?? ""}
+          className={`map-cell ${ownerClass} ${viewMode === "MY_REALM" && !ownedByViewer ? "map-cell-not-own" : ""} ${ownedByViewer ? "map-cell-own" : ""} ${selected ? "map-cell-selected" : ""} ${neighbor ? "map-cell-neighbor" : ""} ${isHighlighted ? "map-cell-activated" : ""} ${pulse ? `map-cell-activation-pulse ${pulse.subtle ? "is-subtle" : ""}` : ""} ${splitPart} ${editPart} ${annexedPart} ${setupPart} ${realmClass} ${territoryId === state.pendingWar?.attackerTerritoryId ? "map-cell-war-attacker" : ""} ${territoryId === state.pendingWar?.defenderTerritoryId ? "map-cell-war-defender" : ""} ${partChoice?.selectedPart === (splitA.has(key) ? "A" : "B") && territoryId === partChoice.territoryId ? "map-cell-part-selected" : ""}`}
           onClick={() => {
             if (setupEditor !== undefined) {
               if (setupEditor.mode === "POI" && setupEditor.editable && setupAllowed.has(key)) onSetupSelectCell?.(cell);
@@ -639,6 +654,14 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
           onMouseEnter={() => setHovered(territoryId ?? undefined)}
           onMouseLeave={() => setHovered(undefined)}
           aria-label={territory ? `${territory.id}, ${territory.ownerId ? playerName(territory.ownerId) : "neutral"}${splitPart ? `, Teil ${splitPart.endsWith("-a") ? "A" : "B"}` : ""}` : "unbelegte Fläche"} />;
+      })}
+      {cellEntries.flatMap(({ key, cell }) => {
+        const wave = wavesByCellKey.get(key);
+        if (wave === undefined) return [];
+        const overlayOwnerId = wave.kind === "START_AUCTION" ? wave.ownerId : wave.previousOwnerIdByCell[key] ?? null;
+        return <rect key={"gain:" + wave.id + ":" + key} x={cell.x} y={cell.y} width="1" height="1"
+          className={`map-gain-overlay ${ownerFillClass(overlayOwnerId, playerIndexById)} map-gain-${wave.kind.toLowerCase()}`}
+          style={{ animationDelay: String(waveCellDelay(wave, key)) + "ms" }} aria-hidden="true" />;
       })}
       {Array.from({ length: width + 1 }, (_, x) => <line key={`vx-${x}`} x1={x} y1="0" x2={x} y2={height} className="map-grid-line" />)}
       {Array.from({ length: height + 1 }, (_, y) => <line key={`hy-${y}`} x1="0" y1={y} x2={width} y2={y} className="map-grid-line" />)}
@@ -654,11 +677,14 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         const edgeY = edge.cell.y + (!vertical && edge.neighbor.y > edge.cell.y ? 1 : 0);
         return <line key={`border-${index}`} x1={edgeX} y1={edgeY} x2={edgeX + (vertical ? 0 : 1)} y2={edgeY + (vertical ? 1 : 0)} className="map-shared-border" />;
       })}
-      {poiEntries.map(({ poi, territoryId }) => <text key={poi.id} x={poi.position.x + .5} y={poi.position.y + .72}
-        tabIndex={0} role="button" onMouseEnter={() => setActivePoiId(poi.id)} onFocus={() => setActivePoiId(poi.id)}
-        onClick={(event) => { event.stopPropagation(); setActivePoiId(poi.id); }}
-        aria-label={poiDescription(state, poi, territoryId)} className={`map-poi map-poi-${poi.type.toLowerCase()} ${territoryId === selectedId ? "map-poi-selected" : ""}`}>
-        <title>{poiDescription(state, poi, territoryId)}</title>{poi.type === "LANDMARK" ? "★" : poi.type === "JUNCTION" ? "◎" : poi.type === "FORTRESS" ? "▲" : "◆"}</text>)}
+      {poiEntries.map(({ poi, territoryId }) => {
+        const presentation = getPointOfInterestPresentation(poi.type);
+        return <text key={poi.id} x={poi.position.x + .5} y={poi.position.y + .72}
+          tabIndex={0} role="button" onMouseEnter={() => setActivePoiId(poi.id)} onFocus={() => setActivePoiId(poi.id)}
+          onClick={(event) => { event.stopPropagation(); setActivePoiId(poi.id); }}
+          aria-label={`${presentation.name} ${presentation.symbol} · ${presentation.shortEffect}`} className={`map-poi map-poi-${poi.type.toLowerCase()} ${territoryId === selectedId ? "map-poi-selected" : ""}`}>
+          <title>{describePointOfInterest(state, poi, territoryId)}</title>{presentation.symbol}</text>;
+      })}
       {state.territories.flatMap((territory) => territory.settlementFeatures ?? (territory.settlementFeature ? [territory.settlementFeature] : [])).map((feature) => <text key={`settlement-${feature.id}`}
         x={feature.position.x + .5} y={feature.position.y + .75}
         className="map-settlement">{feature.kind === "CITY" ? "♜" : "⌂"}</text>)}
@@ -691,7 +717,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         if (hasSplitOverlay && territory.id === splitId) return null;
         if (anchor === undefined) return null;
         const compact = cells.length < 3 || anchor.boundaryDistance === 0;
-        return <g key={`label-${territory.id}`} className={`map-territory-label ${compact ? "is-compact" : ""}`}>
+        return <g key={`label-${territory.id}`} className={`map-territory-label ${compact ? "is-compact" : ""} ${waveTerritoryIds.has(territory.id) ? "map-territory-label-gain" : ""}`}>
           <text x={anchor.x} y={anchor.y - (compact ? 0 : .17)}>{territory.id}</text>
           {territory.card && <text x={anchor.x} y={anchor.y + (compact ? .18 : .28)}>
             {suitSymbol(territory.card.suit)} {territory.card.activationNumber}
@@ -701,11 +727,21 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
           </text>}
         </g>;
       })}
+      {presentation?.suitConfirmations.map((confirmation) => {
+        const anchor = territoryLabels.find(({ territory }) => territory.id === confirmation.territoryId)?.anchor;
+        if (anchor === undefined) return null;
+        return <text key={"suit-confirmation:" + confirmation.id} x={anchor.x} y={anchor.y - .62}
+          className="map-suit-confirmation" aria-label={"Aktiviert: " + suitName(confirmation.suit)}>
+          {suitSymbol(confirmation.suit)}
+        </text>;
+      })}
     </svg>
     <div className="map-summary">{selectedId ? `${state.mapCreation ? "Region" : "Gebiet"} ${selectedId}: ${cellsByTerritoryId.get(selectedId)?.length ?? getStateTerritoryArea(state, selectedId)} Kästchen` : state.mapCreation ? "Region auswählen" : "Gebiet auswählen"}</div>
     {activePoiId !== undefined && (() => {
       const entry = poiEntries.find(({ poi }) => poi.id === activePoiId);
-      return entry === undefined ? null : <div className="map-poi-tooltip" role="status"><strong>{entry.poi.type === "LANDMARK" ? "Wahrzeichen ★" : entry.poi.type === "JUNCTION" ? "Knotenpunkt ◎" : entry.poi.type === "FORTRESS" ? "Festung ▲" : "Relikt ◆"}</strong><span>{poiDescription(state, entry.poi, entry.territoryId)}</span></div>;
+      if (entry === undefined) return null;
+      const presentation = getPointOfInterestPresentation(entry.poi.type);
+      return <div className="map-poi-tooltip" role="status"><strong>{presentation.symbol} {presentation.name}</strong><span>{describePointOfInterest(state, entry.poi, entry.territoryId)}</span></div>;
     })()}
   </div>;
 }

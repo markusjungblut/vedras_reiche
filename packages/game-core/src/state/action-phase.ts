@@ -238,7 +238,8 @@ export function startPendingWar(state: GameState, action: StartWarAction, timest
   const events = createEvents(state, timestamp, [{
     type: GameEventType.WarStarted,
     actorId: action.playerId,
-    payload: { playerId: action.playerId, attackerTerritoryId: attacker.id, defenderTerritoryId: defender.id, warId },
+    payload: { playerId: action.playerId, attackerTerritoryId: attacker.id, defenderPlayerId: defender.ownerId,
+      defenderTerritoryId: defender.id, warId },
   }]);
   return {
     state: {

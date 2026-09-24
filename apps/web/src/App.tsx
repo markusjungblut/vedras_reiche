@@ -3,7 +3,6 @@ import {
   applyAction,
   createGameState,
   GameActionType,
-  GameEventType,
   GamePhase,
   DIGITAL_BOARD_HEIGHT,
   DIGITAL_BOARD_WIDTH,
@@ -44,6 +43,7 @@ import { TerritoryDetails } from "./components/TerritoryDetails";
 import { ResultPanel, ScoringPanel } from "./components/ScoringPanel";
 import { MusicControls } from "./components/MusicControls";
 import { getMapEditor, NeutralDiamondControls, RecentWarResult, WarControls, type MapEditor } from "./components/WarControls";
+import { ActivationNumberReveal, AuctionResultReveal, WarDiceReveal } from "./components/PresentationFeedback";
 import { createScenario, type ScenarioKind } from "./debug/scenarios";
 import type { CardSource, RandomSource } from "@vedras/game-core";
 import { suitName, suitSymbol } from "./formatters/suit-label";
@@ -52,15 +52,19 @@ import { SeededRandomSource } from "./debug/seeded-random-source";
 import { LocalGameController, type GameController } from "./controllers/game-controller";
 import { RemoteGameController, type MultiplayerCredentials, type RemoteConnectionStatus } from "./controllers/remote-game-controller";
 import { mergeDraftEdges } from "./map/setup-draft";
-import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, type AccountDto, type AccountRoomSummaryDto, type PublicRoomState } from "@vedras/protocol";
+import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, type AccountDto, type AccountRoomSummaryDto, type AccountStatisticsDto, type MatchDetailDto, type MatchHistoryListItemDto, type PublicRoomState } from "@vedras/protocol";
 import { FirstGameHint } from "./components/FirstGameHint";
+import { AccountStatisticsPanel, FinishedMatchFacts } from "./components/MatchHistoryPanel";
 import { HelpDrawer } from "./components/HelpDrawer";
 import { IntroductionTour } from "./components/IntroductionTour";
 import { formatDomainError, type RuleHelpId } from "./help/rule-help";
 import { loadTutorialProgress, markIntroductionSeen, markTutorialSeen, resetTutorialProgress, type TutorialStep } from "./help/tutorial-state";
 import type { GameReadModel } from "./game-read-model";
-import { loadSoundPreference, saveSoundPreference, soundManager, type SoundCue } from "./ui/sound-manager";
+import { loadSoundPreference, saveSoundPreference, soundManager } from "./ui/sound-manager";
 import { musicManager, type MusicPlaybackState } from "./ui/music-manager";
+import { getPointOfInterestPresentation } from "./ui/point-of-interest-presentation";
+import { derivePresentationEvents, type PresentationState } from "./presentation/game-presentation";
+import { usePresentationPlayback } from "./presentation/use-presentation-playback";
 
 const DEFAULT_SEED = 12345;
 const SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL ?? window.location.origin;
@@ -141,15 +145,6 @@ interface SavedMultiplayerSession {
 }
 
 type MultiplayerPendingAction = "CREATE" | "JOIN" | "START" | "MAP" | "REMOVE" | "REMATCH" | undefined;
-
-function soundCueForEvent(type: GameEventType): SoundCue | undefined {
-  if (type === GameEventType.GameFinished) return "FINISH";
-  if (type === GameEventType.CombatRolled || type === GameEventType.WarResolved) return "WAR";
-  if (type === GameEventType.AuctionBidsRevealed) return "REVEAL";
-  if (type === GameEventType.AuctionWon || type === GameEventType.TerritoryOwnerChanged || type === GameEventType.TerritoryConquered) return "GAIN";
-  if (type === GameEventType.RoundStarted || type === GameEventType.ActivationPhaseStarted) return "TURN";
-  return undefined;
-}
 
 function multiplayerSocketUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
@@ -374,6 +369,7 @@ interface ControlProps {
   readonly selectedPart?: "A" | "B" | undefined;
   readonly onSelectPart?: (part: "A" | "B") => void;
   readonly factionSuits?: Readonly<Partial<Record<string, Suit>>> | undefined;
+  readonly activationReveal?: PresentationState["activationReveal"];
 }
 
 function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlProps, "state" | "onAction" | "viewerPlayerId">) {
@@ -520,7 +516,7 @@ function SplitEditor({ state, onAction, splitDraft, onSetOriginalCardPart, onRes
   </section>;
 }
 
-function ActivationControls({ state, actionTerritoryId, onSelectActionTerritory, onAction }: ControlProps) {
+function ActivationControls({ state, actionTerritoryId, onSelectActionTerritory, onAction, activationReveal }: ControlProps) {
   const availableIds = getAvailableActivationTerritoryIds(state);
   const chosenId = actionTerritoryId && availableIds.includes(actionTerritoryId)
     ? actionTerritoryId : availableIds[0];
@@ -550,7 +546,7 @@ function ActivationControls({ state, actionTerritoryId, onSelectActionTerritory,
   return <section className="control-section" aria-label="Aktivierung">
     <div className="section-kicker">Aktivierungsphase</div>
     <h3>{playerName(state, state.activePlayerId)} aktiviert</h3>
-    <p>Aktivierungszahlen: {state.activationNumbers.join(" · ")}</p>
+    <p>Aktivierungszahlen: <ActivationNumberReveal numbers={state.activationNumbers} reveal={activationReveal}/></p>
     <div className="button-row">
       {availableIds.map((id) => <button key={id} type="button"
         className={id === chosenId ? "selected-button" : "secondary-button"}
@@ -683,12 +679,12 @@ function SetupControls(props: ControlProps) {
   const poiType = stagePoiType[mapCreation.stage];
   if (poiType !== undefined) {
     const required = getSetupPoiRequirements(state.players.length)[poiType];
-    const label = poiType === PointOfInterestType.Landmark ? "Wahrzeichen" : poiType === PointOfInterestType.Junction
-      ? "Knotenpunkte" : poiType === PointOfInterestType.Fortress ? "Festungen" : "Relikte";
+    const presentation = getPointOfInterestPresentation(poiType);
     return <section className="control-section" aria-label="Strategische Punkte platzieren">
-      <div className="section-kicker">{label} platzieren</div>
+      <div className="section-kicker">Strategischen Punkt platzieren</div>
+      <div className="poi-placement-help"><span aria-hidden="true">{presentation.symbol}</span><div><h3>{presentation.name} platzieren</h3><p>{presentation.shortEffect}</p></div></div>
       <h3>{name(state.activePlayerId ?? mapCreation.activePlayerId)} ist an der Reihe</h3>
-      <p>Noch {required - mapCreation.placedPoiCounts[poiType]} / {required}. Wähle ein beliebiges Kästchen auf der Karte.</p>
+      <p>Noch {required - mapCreation.placedPoiCounts[poiType]} / {required}. {presentation.placementHint}</p>
       <small>Strategische Punkte bleiben an ihrer Rasterzelle, auch wenn diese Region später geteilt wird.</small>
     </section>;
   }
@@ -875,6 +871,13 @@ export default function App() {
   const [accountPasswordConfirmation, setAccountPasswordConfirmation] = useState("");
   const [accountPending, setAccountPending] = useState(false);
   const [accountRooms, setAccountRooms] = useState<readonly AccountRoomSummaryDto[]>([]);
+  const [showAccountStatistics, setShowAccountStatistics] = useState(false);
+  const [accountStatistics, setAccountStatistics] = useState<AccountStatisticsDto | undefined>();
+  const [accountMatches, setAccountMatches] = useState<readonly MatchHistoryListItemDto[]>([]);
+  const [selectedMatchDetail, setSelectedMatchDetail] = useState<MatchDetailDto | undefined>();
+  const [accountStatisticsLoading, setAccountStatisticsLoading] = useState(false);
+  const [accountStatisticsError, setAccountStatisticsError] = useState<string | undefined>();
+  const [finishedMatchDetail, setFinishedMatchDetail] = useState<MatchDetailDto | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [errorIsTransient, setErrorIsTransient] = useState(false);
   const [errorDismissVersion, setErrorDismissVersion] = useState(0);
@@ -903,14 +906,14 @@ export default function App() {
   const [showIntroduction, setShowIntroduction] = useState(() => !loadTutorialProgress().introductionSeen);
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpTopic, setHelpTopic] = useState<RuleHelpId | undefined>();
-  const [warChangedCellKeys, setWarChangedCellKeys] = useState<readonly string[]>([]);
+  const { presentation, present: presentEvents, reset: resetPresentation } = usePresentationPlayback();
   const runtime = useRef<Runtime | null>(null);
   const controller = useRef<GameController | null>(null);
   const unsubscribeController = useRef<(() => void) | null>(null);
   const newSeatIndex = useRef(4);
-  const lastSoundEventId = useRef<string | undefined>(undefined);
-  const previousMapCells = useRef<Readonly<Record<string, string | null>> | undefined>(undefined);
-  const previousTerritoryOwners = useRef<Readonly<Record<string, string | null>> | undefined>(undefined);
+  const presentationPreviousView = useRef<GameReadModel | undefined>(undefined);
+  const presentationNeedsBaseline = useRef(true);
+  const presentationConnectionStatus = useRef<RemoteConnectionStatus | undefined>(undefined);
 
   const showError = (message: string, transient = false) => {
     setError(message);
@@ -942,20 +945,34 @@ export default function App() {
   }, [account]);
 
   useEffect(() => {
-    const cells = state?.map?.cells;
-    const previous = previousMapCells.current;
-    previousMapCells.current = cells;
-    const owners = state === null ? undefined : Object.fromEntries(state.territories.map((territory) => [territory.id, territory.ownerId]));
-    const previousOwners = previousTerritoryOwners.current;
-    previousTerritoryOwners.current = owners;
-    if (cells === undefined || previous === undefined || owners === undefined || previousOwners === undefined || state?.lastWarResult === undefined) return undefined;
-    const ownerChangedIds = new Set(Object.keys(owners).filter((id) => owners[id] !== previousOwners[id]));
-    const changed = Object.keys(cells).filter((key) => cells[key] !== previous[key] || ownerChangedIds.has(cells[key] ?? ""));
-    if (changed.length === 0) return undefined;
-    setWarChangedCellKeys(changed);
-    const timeout = window.setTimeout(() => setWarChangedCellKeys([]), 1800);
-    return () => window.clearTimeout(timeout);
-  }, [state?.map?.cells, state?.lastWarResult]);
+    if (!showAccountStatistics || account === null || account === undefined) return undefined;
+    let active = true;
+    setAccountStatisticsLoading(true);
+    setAccountStatisticsError(undefined);
+    void Promise.all([
+      getMultiplayer<AccountStatisticsDto>("/api/me/stats"),
+      getMultiplayer<{ readonly matches: readonly MatchHistoryListItemDto[] }>("/api/me/matches?limit=25"),
+    ]).then(([statistics, history]) => {
+      if (!active) return;
+      setAccountStatistics(statistics);
+      setAccountMatches(history.matches);
+    }).catch(() => {
+      if (active) setAccountStatisticsError("Statistiken konnten gerade nicht geladen werden.");
+    }).finally(() => { if (active) setAccountStatisticsLoading(false); });
+    return () => { active = false; };
+  }, [account, showAccountStatistics]);
+
+  useEffect(() => {
+    if (account === null || account === undefined || multiplayer === null || state?.phase !== GamePhase.Finished) {
+      setFinishedMatchDetail(undefined);
+      return undefined;
+    }
+    let active = true;
+    void getMultiplayer<MatchDetailDto>(`/api/me/matches/${encodeURIComponent(multiplayer.roomId)}`)
+      .then((detail) => { if (active) setFinishedMatchDetail(detail); })
+      .catch(() => { if (active) setFinishedMatchDetail(undefined); });
+    return () => { active = false; };
+  }, [account, multiplayer?.roomId, state?.phase]);
 
   useEffect(() => {
     const clearInformationalSelection = (event: KeyboardEvent) => {
@@ -1004,7 +1021,10 @@ export default function App() {
     unsubscribeController.current?.();
     controller.current?.dispose();
     controller.current = nextController;
-    lastSoundEventId.current = undefined;
+    resetPresentation();
+    presentationPreviousView.current = undefined;
+    presentationNeedsBaseline.current = true;
+    presentationConnectionStatus.current = undefined;
     const remoteSession = remote && nextController instanceof RemoteGameController ? nextController.credentials : undefined;
     if (remote) setView(null);
     else {
@@ -1016,16 +1036,21 @@ export default function App() {
     unsubscribeController.current = nextController.subscribe((snapshot) => {
       if (snapshot.view !== undefined) {
         setView(snapshot.view);
-        const event = snapshot.view.events.at(-1);
-        if (event !== undefined) {
-          if (lastSoundEventId.current !== undefined && lastSoundEventId.current !== event.id) {
-            const cue = soundCueForEvent(event.type);
-            if (cue) soundManager.play(cue);
-          }
-          lastSoundEventId.current = event.id;
+        const reconnectSnapshot = remote && snapshot.connectionStatus === "CONNECTED" &&
+          presentationConnectionStatus.current !== undefined && presentationConnectionStatus.current !== "CONNECTED";
+        const previous = presentationPreviousView.current;
+        if (presentationNeedsBaseline.current || reconnectSnapshot || previous === undefined) {
+          presentationNeedsBaseline.current = false;
+          presentationPreviousView.current = snapshot.view;
+        } else {
+          const knownIds = new Set(previous.events.map((event) => event.id));
+          const newEvents = snapshot.view.events.filter((event) => !knownIds.has(event.id));
+          if (newEvents.length > 0) presentEvents(derivePresentationEvents(previous, snapshot.view, newEvents));
+          presentationPreviousView.current = snapshot.view;
         }
       }
       if (remote && snapshot.connectionStatus !== undefined) {
+        presentationConnectionStatus.current = snapshot.connectionStatus;
         setRemoteConnectionStatus(snapshot.connectionStatus);
         if (snapshot.connectionStatus !== "CONNECTED") setSetupDraft({ mode: "PEN", strokes: [] });
         if (remoteSession !== undefined && (snapshot.connectionStatus === "INVALID_SESSION" || snapshot.connectionStatus === "ROOM_NOT_FOUND" || snapshot.connectionStatus === "PLAYER_REMOVED")) {
@@ -1054,6 +1079,15 @@ export default function App() {
     if (account === null || account === undefined) return;
     const payload = await getMultiplayer<{ readonly rooms: readonly AccountRoomSummaryDto[] }>("/api/me/rooms");
     setAccountRooms(payload.rooms);
+  };
+
+  const openMatchHistoryDetail = async (matchId: string) => {
+    try {
+      setAccountStatisticsError(undefined);
+      setSelectedMatchDetail(await getMultiplayer<MatchDetailDto>(`/api/me/matches/${encodeURIComponent(matchId)}`));
+    } catch {
+      setAccountStatisticsError("Partiedetails konnten gerade nicht geladen werden.");
+    }
   };
 
   const connectMultiplayer = async (session: MultiplayerSession) => {
@@ -1091,6 +1125,9 @@ export default function App() {
     unsubscribeController.current?.();
     controller.current?.dispose();
     controller.current = null;
+    resetPresentation();
+    presentationPreviousView.current = undefined;
+    presentationNeedsBaseline.current = true;
     setView(null);
     setMultiplayer(null);
     setMultiplayerRoom(undefined);
@@ -1158,6 +1195,10 @@ export default function App() {
     returnToMultiplayerStart();
     setAccount(null);
     setAccountRooms([]);
+    setAccountStatistics(undefined);
+    setAccountMatches([]);
+    setSelectedMatchDetail(undefined);
+    setShowAccountStatistics(false);
     setError(null);
   };
 
@@ -1660,7 +1701,9 @@ export default function App() {
             <div className="button-row"><button type="button" className="primary-button" disabled={accountPending} onClick={() => void submitAccount()}>{accountPending ? "Bitte warten …" : accountMode === "LOGIN" ? "Anmelden" : "Registrieren"}</button>
               <button type="button" className="secondary-button" disabled={accountPending} onClick={() => setAccountMode((mode) => mode === "LOGIN" ? "REGISTER" : "LOGIN")}>{accountMode === "LOGIN" ? "Konto erstellen" : "Zum Login"}</button></div>
           </div> : <>
-          <div className="account-summary"><strong>Angemeldet als {account.displayName}</strong><button type="button" className="text-button" onClick={() => void logoutAccount()}>Abmelden</button></div>
+          <div className="account-summary"><strong>Angemeldet als {account.displayName}</strong><span className="button-row"><button type="button" className="text-button" onClick={() => setShowAccountStatistics((current) => !current)}>{showAccountStatistics ? "Partien" : "Statistiken"}</button><button type="button" className="text-button" onClick={() => void logoutAccount()}>Abmelden</button></span></div>
+          {showAccountStatistics && <AccountStatisticsPanel statistics={accountStatistics} matches={accountMatches} detail={selectedMatchDetail}
+            loading={accountStatisticsLoading} error={accountStatisticsError} onOpenMatch={(matchId) => void openMatchHistoryDetail(matchId)} onCloseDetail={() => setSelectedMatchDetail(undefined)} />}
           <div className="button-row"><button type="button" className="primary-button" disabled={multiplayerPendingAction !== undefined} onClick={() => void createMultiplayerRoom()}>{multiplayerPendingAction === "CREATE" ? "Raum wird erstellt …" : "Neues Spiel erstellen"}</button></div>
           <div className="join-room-row"><Field label="Raumcode"><input value={joinRoomCode} maxLength={8} placeholder="ABC123" onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())} /></Field>
             <button type="button" className="secondary-button" disabled={multiplayerPendingAction !== undefined} onClick={() => void joinMultiplayerRoom()}>{multiplayerPendingAction === "JOIN" ? "Beitritt läuft …" : "Raum beitreten"}</button></div>
@@ -1754,10 +1797,12 @@ export default function App() {
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
     </main> : <>
       <GameHeader state={state} playerName={name} mode={multiplayer ? "MULTIPLAYER" : "LOCAL"}
-        viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} onOpenHelp={() => openHelp()} />
+        viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} room={multiplayerRoom} connectionStatus={multiplayer ? remoteConnectionStatus : undefined}
+        onOpenHelp={() => openHelp()} onCopyRoomCode={multiplayerRoom ? () => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.") : undefined}
+        onCopyInviteLink={inviteLink ? () => void copyToClipboard(inviteLink, "Einladungslink kopiert.") : undefined}
+        activationReveal={presentation.activationReveal} />
       <main className="dashboard">
         <section className="toolbar panel">
-          <div><span className="section-kicker">{multiplayer ? "Mehrspieler" : scenario ? "Debug-Szenario" : "Lokale Partie"}</span><strong>{multiplayer ? `Raum ${multiplayer.roomId}` : `Seed ${seed}`}</strong></div>
           {scenario ? <>
             <div className="button-row">
               {SCENARIOS.map((item) => <button key={item.kind} type="button"
@@ -1769,20 +1814,9 @@ export default function App() {
                 onChange={(event) => setSeedInput(event.target.value)} />
             </Field>
             <button type="button" className="secondary-button" onClick={reset}>Demo zurücksetzen</button>
-          </> : <p className="muted">{multiplayer ? "Der Server hält den gemeinsamen Spielstand aktuell." : "Kartenbau und Spielablauf verwenden den echten Game Core."}</p>}
-          {multiplayer && <p className={`connection-status ${remoteConnectionStatus.toLowerCase()}`}>
-            {remoteConnectionStatus === "CONNECTED" ? "● Verbunden" : remoteConnectionStatus === "RECONNECTING" ? "◌ Verbindung wird wiederhergestellt …" :
-              remoteConnectionStatus === "INVALID_SESSION" ? "● Lokale Sitzung ungültig" : remoteConnectionStatus === "ROOM_NOT_FOUND" ? "● Raum nicht gefunden" :
-                remoteConnectionStatus === "SESSION_REPLACED" ? "● Sitzung in anderem Fenster geöffnet" : remoteConnectionStatus === "PLAYER_REMOVED" ? "● Aus Raum entfernt" : "◌ Verbindung wird hergestellt …"}
-          </p>}
+          </> : !multiplayer && <p className="muted">Kartenbau und Spielablauf verwenden den echten Game Core.</p>}
           <button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={toggleSound}>{soundEnabled ? "🔊 Sound an" : "🔇 Sound aus"}</button>
           <MusicControls state={musicState} onEnabledChange={setMusicEnabled} onVolumeChange={(volume) => musicManager.setVolume(volume)} onStart={startMusic} />
-          {multiplayer && multiplayerRoom && <details className="room-menu"><summary>Partie</summary><div className="config-stack">
-            <strong>Raumcode: {multiplayerRoom.roomId}</strong>
-            <button type="button" className="secondary-button" onClick={() => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.")}>Raumcode kopieren</button>
-            <div>{multiplayerRoom.players.map((player) => <span key={player.playerId}>{player.playerId === multiplayer.playerId ? "Du" : player.name} · {player.connected ? "● verbunden" : "○ getrennt"}<br /></span>)}</div>
-            {multiplayerRoom.status === "RUNNING" && <small>Der Raumcode dient während der Partie nur zur Identifikation. Neue Spieler können jetzt nicht beitreten.</small>}
-          </div></details>}
           {state.phase === GamePhase.Finished && <label className="debug-toggle"><input type="checkbox" checked={showScoreLabels}
             onChange={(event) => setShowScoreLabels(event.target.checked)} /> Wertungsansicht auf der Karte</label>}
           {state.phase === GamePhase.Finished && multiplayer && <div className="button-row" aria-label="Beendete Partie">
@@ -1814,7 +1848,7 @@ export default function App() {
           <div className="board-column">
             <TerritoryBoard state={state} selectedId={selectedTerritoryId}
               onSelect={toggleTerritorySelection} onClearSelection={() => setSelectedTerritoryId(undefined)} highlightedIds={highlightedIds}
-              changedCellKeys={warChangedCellKeys}
+              presentation={presentation}
               viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} focusTerritoryId={state.pendingSplit?.originalTerritoryId ?? state.pendingWar?.attackerTerritoryId}
               partChoice={currentPartChoice === undefined ? undefined : { ...currentPartChoice, onChoose: (part) => setPartChoiceDraft({ key: currentPartChoice.key, part }) }} playerName={name}
               splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
@@ -1824,7 +1858,9 @@ export default function App() {
               onSetupStrokePreview={previewSetupStroke} onSetupStrokeCommit={commitSetupStroke} onSetupStrokeErase={eraseSetupStroke} />
           </div>
           <div className="action-column">
-            <ActionPanel><fieldset className="action-lock" disabled={!multiplayerConnected}><PhaseControls state={state} actionTerritoryId={actionTerritoryId}
+            <ActionPanel><AuctionResultReveal result={presentation.auctionResult} playerName={name}/>
+              <WarDiceReveal result={presentation.warDice}/>
+              <fieldset className="action-lock" disabled={!multiplayerConnected}><PhaseControls state={state} actionTerritoryId={actionTerritoryId}
                 onSelectActionTerritory={setActionTerritoryId} onAction={dispatch} onStartRound={beginRound}
                 splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
                 onSetOriginalCardPart={setOriginalCardPart} onResetSplitDraft={resetSplitDraft} editor={editor} playerName={name}
@@ -1832,7 +1868,9 @@ export default function App() {
                 privacyPlayerId={privacyPlayerId} viewerPlayerId={multiplayer?.playerId} factionVisible={factionVisible}
                 onSetPrivacyPlayerId={setPrivacyPlayerId} onSetFactionVisible={setFactionVisible}
                 factionSuits={factionSuits}
+                activationReveal={presentation.activationReveal}
                 selectedPart={currentPartChoice?.selectedPart} onSelectPart={(part) => currentPartChoice && setPartChoiceDraft({ key: currentPartChoice.key, part })} /></fieldset>
+              {state.phase === GamePhase.Finished && <FinishedMatchFacts detail={finishedMatchDetail} />}
               <RecentWarResult state={state} /></ActionPanel>
           </div>
           <div className="players-column">

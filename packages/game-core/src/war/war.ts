@@ -142,7 +142,7 @@ export function setWarSpadeChoice(
       ? { ...territory, ownerId: winnerPlayerId, weakened: false } : territory) }, timestamp, [
       ...descriptions,
       { type: GameEventType.TerritoryConquered, actorId: winnerPlayerId,
-        payload: { warId: war.id, territoryId: loserTerritoryId, ownerId: winnerPlayerId } },
+        payload: { warId: war.id, territoryId: loserTerritoryId, ownerId: winnerPlayerId, conqueredAreaCells: loserArea } },
       { type: GameEventType.TerritoryOwnerChanged, actorId: winnerPlayerId,
         payload: { territoryId: loserTerritoryId, previousOwnerId: loser.ownerId, ownerId: winnerPlayerId } },
       { type: GameEventType.WarResolved, payload: { warId: war.id, outcome } },
@@ -263,8 +263,12 @@ export function chooseWarCut(
         payload: { warId: war.id, playerId: war.borderMark.playerId, maximumDepth: scaleGridDepth(1, state.map) } },
     ]);
   }
-  return finish(next, timestamp, [...descriptions, { type: GameEventType.WarResolved,
-    payload: { warId: war.id, outcome: "CUT_AND_CHOOSE" } }]);
+  const gainedCells = action.chosenPart === "A" ? validation.partBCells : validation.partACells;
+  return finish(next, timestamp, [...descriptions,
+    { type: GameEventType.MapGeometryChanged, actorId: winnerPlayerId,
+      payload: { warId: war.id, originalTerritoryId: loser.id, newTerritoryId: newId,
+        directTransferCells: gainedCells, annexedDisconnectedCells: [] } },
+    { type: GameEventType.WarResolved, payload: { warId: war.id, outcome: "CUT_AND_CHOOSE" } }]);
 }
 
 export function resolveDiamondCorrection(state: GameState, action: ResolveDiamondCorrectionAction, timestamp: string): ActionResult {

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DomainError, DomainErrorCode, GamePhase } from "@vedras/game-core";
+import { DomainError, DomainErrorCode, GameEventType, GamePhase, Suit } from "@vedras/game-core";
 import { formatDomainError, getCurrentHelp, getHelpValues, renderRuleHelp, RULE_HELP } from "../.test-dist/help/rule-help.js";
 import { loadTutorialProgress, markIntroductionSeen, markTutorialSeen, resetTutorialProgress } from "../.test-dist/help/tutorial-state.js";
+import { getMapColorRegime } from "../.test-dist/ui/map-color-regime.js";
+import { POINT_OF_INTEREST_PRESENTATIONS, POINT_OF_INTEREST_RULE_SUMMARY } from "../.test-dist/ui/point-of-interest-presentation.js";
+import { derivePresentationEvents } from "../.test-dist/presentation/game-presentation.js";
 
 class MemoryStorage {
   values = new Map();
@@ -50,9 +53,118 @@ test("help values use the current map instead of a fixed digital threshold", () 
   assert.match(renderRuleHelp(RULE_HELP.borderGains, values).long, /bis zu 1 Kästchen tief/);
 });
 
+test("map colors switch only with the authoritative phase and POI copy stays shared", () => {
+  assert.equal(getMapColorRegime({ phase: GamePhase.MapCreation }), "SETUP_TERRITORIES");
+  assert.equal(getMapColorRegime({ phase: GamePhase.Setup }), "SETUP_TERRITORIES");
+  assert.equal(getMapColorRegime({ phase: GamePhase.StartAuctions }), "SETUP_TERRITORIES");
+  assert.equal(getMapColorRegime({ phase: GamePhase.ActivationPhase }), "OWNERSHIP");
+  assert.equal(getMapColorRegime({ phase: GamePhase.ActionPhase }), "OWNERSHIP");
+  assert.match(POINT_OF_INTEREST_PRESENTATIONS.LANDMARK.shortEffect, /\+25 % Wertung/);
+  assert.match(POINT_OF_INTEREST_PRESENTATIONS.JUNCTION.shortEffect, /höchstens \+50 %/);
+  assert.match(POINT_OF_INTEREST_PRESENTATIONS.FORTRESS.shortEffect, /\+1 Verteidigung/);
+  assert.match(POINT_OF_INTEREST_PRESENTATIONS.RELIC.shortEffect, /zwei Relikte/);
+  assert.match(POINT_OF_INTEREST_RULE_SUMMARY, /★ Wahrzeichen/);
+  assert.match(RULE_HELP.pois.long, /◆ Relikt/);
+});
+
 test("domain errors receive understandable neutral messages", () => {
   assert.equal(formatDomainError(new DomainError(DomainErrorCode.MinimumTerritorySizeViolated)),
     "Das Gebiet wäre anschließend kleiner als die erlaubte Mindestgröße.");
   assert.equal(formatDomainError(new DomainError(DomainErrorCode.UnsupportedAction)),
     "Diese Aktion ist im aktuellen Zustand nicht verfügbar.");
+});
+
+function presentationState({ phase = GamePhase.ActionPhase, ownerId = "anna", cells = { "0,0": "G03", "1,0": "G07", "2,0": "G08" } } = {}) {
+  return {
+    phase,
+    players: [{ id: "anna", name: "Anna" }, { id: "ben", name: "Ben" }],
+    territories: [
+      { id: "G03", ownerId, card: { suit: Suit.Diamonds, activationNumber: 9 } },
+      { id: "G07", ownerId: "anna", card: { suit: Suit.Clubs, activationNumber: 4, additionalActivationNumber: 9 } },
+      { id: "G08", ownerId: "ben", card: { suit: Suit.Spades, activationNumber: 11 } },
+    ],
+    map: { width: 3, height: 1, cells },
+    events: [],
+    pendingSplit: undefined,
+  };
+}
+
+function event(id, type, payload) {
+  return { id, type, payload, timestamp: "2026-01-01T00:00:00.000Z" };
+}
+
+test("presentation reveals only authoritative activation values and pulses matching territories together", () => {
+  const previous = presentationState({ phase: GamePhase.RoundReady });
+  const current = presentationState({ phase: GamePhase.ActivationPhase });
+  const events = derivePresentationEvents(previous, current, [event("roll-1", GameEventType.ActivationNumbersRolled, {
+    activationNumbers: [4, 9, 11],
+  })]);
+  assert.deepEqual(events, [{
+    type: "ACTIVATION_ROLL_REVEAL",
+    id: "roll-1",
+    numbers: [4, 9, 11],
+    territoryIdsByNumber: { 4: ["G07"], 9: ["G03", "G07"], 11: ["G08"] },
+  }]);
+});
+
+test("presentation confirms only the suit selected by an authoritative activation", () => {
+  const state = presentationState();
+  const startedOnly = derivePresentationEvents(state, state, [event("start-1", GameEventType.TerritoryActivationStarted, {
+    territoryId: "G07", selectedSuit: Suit.Clubs,
+  })]);
+  const completed = derivePresentationEvents(state, state, [event("activated-1", GameEventType.TerritoryActivated, {
+    territoryId: "G07", selectedSuit: Suit.Diamonds,
+  })]);
+  assert.deepEqual(startedOnly, []);
+  assert.equal(completed[0].type, "TERRITORY_SUIT_CONFIRM");
+  assert.equal(completed[0].suit, Suit.Diamonds);
+  assert.equal(completed[1].type, "ACTIVATION_TERRITORY_PULSE");
+});
+
+test("presentation uses one normal-auction wave and preserves the start-auction color regime", () => {
+  const previous = presentationState({ ownerId: null });
+  const current = presentationState({ ownerId: "anna" });
+  const events = derivePresentationEvents(previous, current, [
+    event("bids-1", GameEventType.AuctionBidsRevealed, { territoryId: "G03", bids: {
+      anna: { kind: "NORMAL", basicBid: 2, globalInfluence: 1, localInfluence: 0 },
+      ben: { kind: "NORMAL", basicBid: 1, globalInfluence: 0, localInfluence: 0 },
+    } }),
+    event("won-1", GameEventType.AuctionWon, { territoryId: "G03", playerId: "anna" }),
+    event("owner-1", GameEventType.TerritoryOwnerChanged, { territoryId: "G03", ownerId: "anna" }),
+  ]);
+  const reveal = events.find((item) => item.type === "AUCTION_RESULT_REVEAL");
+  const wave = events.find((item) => item.type === "TERRITORY_GAIN_WAVE");
+  assert.deepEqual(reveal.bids, [{ playerId: "anna", value: 3 }, { playerId: "ben", value: 1 }]);
+  assert.equal(reveal.winnerId, "anna");
+  assert.deepEqual(wave.cellKeys, ["0,0"]);
+  assert.equal(wave.kind, "AUCTION");
+  assert.equal(wave.previousOwnerIdByCell["0,0"], null);
+
+  const startPrevious = presentationState({ phase: GamePhase.StartAuctions, ownerId: null });
+  const startCurrent = presentationState({ phase: GamePhase.StartAuctions, ownerId: "anna" });
+  const startWave = derivePresentationEvents(startPrevious, startCurrent, [
+    event("start-owner", GameEventType.TerritoryOwnerChanged, { territoryId: "G03", ownerId: "anna" }),
+  ]).find((item) => item.type === "TERRITORY_GAIN_WAVE");
+  assert.equal(startWave.kind, "START_AUCTION");
+});
+
+test("war presentation keeps exact transfer cells and delays the wave until the dice outcome", () => {
+  const previous = presentationState();
+  const current = presentationState({ cells: { "0,0": "G03", "1,0": "G03", "2,0": "G08" } });
+  const events = derivePresentationEvents(previous, current, [
+    event("combat-1", GameEventType.CombatRolled, {
+      attackerRoll: 6, defenderRoll: 3, attackerSpadeBonus: 1, defenderSpadeBonus: 0,
+      defenderFortressBonus: 1, attackerTotal: 7, defenderTotal: 4, outcome: "BORDER_ADVANCE",
+    }),
+    event("advance-1", GameEventType.BorderAdvanceResolved, {
+      directTransferCells: [{ x: 1, y: 0 }],
+      annexedDisconnectedCells: [],
+    }),
+  ]);
+  const dice = events.find((item) => item.type === "WAR_DICE_REVEAL");
+  const wave = events.find((item) => item.type === "TERRITORY_GAIN_WAVE");
+  assert.equal(dice.attackerRoll, 6);
+  assert.equal(dice.outcome, "BORDER_ADVANCE");
+  assert.deepEqual(wave.cellKeys, ["1,0"]);
+  assert.equal(wave.delayMs, 900);
 });

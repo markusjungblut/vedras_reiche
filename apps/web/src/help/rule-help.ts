@@ -1,5 +1,6 @@
-import { DomainError, DomainErrorCode, GamePhase, MapCreationStage, getBreakthroughThreshold, getMinimumTerritoryArea, scaleGridDepth } from "@vedras/game-core";
+import { DomainError, DomainErrorCode, GamePhase, MapCreationStage, PointOfInterestType, getBreakthroughThreshold, getMinimumTerritoryArea, scaleGridDepth } from "@vedras/game-core";
 import type { GameReadModel } from "../game-read-model";
+import { getPointOfInterestPresentation, POINT_OF_INTEREST_RULE_SUMMARY } from "../ui/point-of-interest-presentation.js";
 
 export type RuleHelpId =
   | "overview" | "mapCreation" | "pois" | "territoryCards" | "factions" | "startAuctions"
@@ -26,7 +27,7 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   pois: {
     id: "pois", title: "Strategische Punkte", short: "Wahrzeichen, Knotenpunkte, Festungen und Relikte liegen auf einzelnen Rasterzellen.",
-    long: "★ Wahrzeichen geben ihrem Gebiet +25 % Wertung. ◎ Knotenpunkte geben je angrenzendem Gebiet +10 %, höchstens +50 %. ▲ Festungen geben ihrem Gebiet im Kampf +1 Verteidigung. ◆ Relikte geben ihrem Gebiet +25 %, sobald du mindestens zwei Relikte kontrollierst. Ein Strategischer Punkt bleibt auf seiner Zelle; nach einer Grenzänderung gehört er zu dem Gebiet dieser Zelle.", keywords: ["wahrzeichen", "knotenpunkt", "festung", "relikt", "strategische punkte", "stern", "dreieck"],
+    long: `${POINT_OF_INTEREST_RULE_SUMMARY} Ein Strategischer Punkt bleibt auf seiner Zelle; nach einer Grenzänderung gehört er zu dem Gebiet dieser Zelle.`, keywords: ["wahrzeichen", "knotenpunkt", "festung", "relikt", "strategische punkte", "stern", "dreieck"],
   },
   territoryCards: {
     id: "territoryCards", title: "Gebietskarten", short: "Jede Gebietskarte trägt eine Aktivierungszahl und ein Symbol.",
@@ -167,9 +168,23 @@ export function getCurrentHelp(state: GameReadModel, viewerPlayerId?: string): C
   switch (state.phase) {
     case GamePhase.MapCreation: {
       const stage = state.mapCreation?.stage;
-      if (stage && stage !== MapCreationStage.DrawTerritories && stage !== MapCreationStage.ReadyToFinalize) return {
-        title: "Kartenbau · Strategische Punkte", action: state.mapCreation?.activePlayerId === viewerPlayerId ? "Wähle eine freie Rasterzelle für den geforderten Strategischen Punkt." : `${name(state, state.mapCreation?.activePlayerId)} platziert gerade einen Strategischen Punkt.`, topicIds: ["pois", "mapCreation"],
-      };
+      if (stage && stage !== MapCreationStage.DrawTerritories && stage !== MapCreationStage.ReadyToFinalize) {
+        const poiTypeByStage = {
+          [MapCreationStage.PlaceLandmarks]: PointOfInterestType.Landmark,
+          [MapCreationStage.PlaceJunctions]: PointOfInterestType.Junction,
+          [MapCreationStage.PlaceFortresses]: PointOfInterestType.Fortress,
+          [MapCreationStage.PlaceRelics]: PointOfInterestType.Relic,
+        } as const;
+        const poiType = poiTypeByStage[stage as keyof typeof poiTypeByStage];
+        const presentation = poiType === undefined ? undefined : getPointOfInterestPresentation(poiType);
+        return {
+          title: presentation === undefined ? "Kartenbau · Strategische Punkte" : `Kartenbau · ${presentation.symbol} ${presentation.name}`,
+          action: state.mapCreation?.activePlayerId === viewerPlayerId
+            ? `${presentation?.shortEffect ?? ""} ${presentation?.placementHint ?? "Wähle eine freie Rasterzelle für den geforderten Strategischen Punkt."}`.trim()
+            : `${name(state, state.mapCreation?.activePlayerId)} platziert gerade ${presentation === undefined ? "einen Strategischen Punkt" : `ein ${presentation.name}`}.`,
+          topicIds: ["pois", "mapCreation"],
+        };
+      }
       return { title: "Kartenbau", action: state.mapCreation?.activePlayerId === viewerPlayerId ? "Zeichne eine Trennung, die genau ein Gebiet in zwei gültige Teile teilt." : `${name(state, state.mapCreation?.activePlayerId)} zeichnet gerade die nächste Trennung.`, topicIds: ["mapCreation", "pois"] };
     }
     case GamePhase.Setup: return { title: "Vorbereitung", action: "Die Karte ist fertig. Prüft eure persönlichen Fraktionen und startet danach die Startauktionen.", topicIds: ["factions", "startAuctions"] };

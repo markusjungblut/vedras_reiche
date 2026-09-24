@@ -172,6 +172,101 @@ export interface AccountRoomSummaryDto {
   readonly maxRounds?: number;
 }
 
+/** Immutable, player-facing facts from one finished authoritative multiplayer game. */
+export interface MatchPlayerStatsDto {
+  readonly finalScoreHundredths: number;
+  readonly placement: number;
+  readonly maxTerritoriesControlled: number;
+  readonly maxControlledAreaCells: number;
+  readonly finalTerritoriesControlled: number;
+  readonly finalControlledAreaCells: number;
+  readonly territoriesGained: number;
+  readonly warsStarted: number;
+  readonly warsWon: number;
+  readonly warsLost: number;
+  readonly warsTied: number;
+  readonly territoriesConquered: number;
+  readonly largestBorderGainCells: number;
+  readonly totalWarCellsGained: number;
+  readonly auctionsParticipated: number;
+  readonly auctionsWon: number;
+  readonly auctionTies: number;
+  readonly bidsSubmitted: number;
+  readonly totalBidAmount: number;
+  readonly highestBid: number;
+  readonly territoriesActivated: number;
+  readonly diamondActivations: number;
+  readonly clubActivations: number;
+  readonly heartActivations: number;
+  readonly spadeActivations: number;
+  readonly diamondBorderMarksPlaced: number;
+  readonly diamondNeutralBorderChanges: number;
+  readonly settlementsBuilt: number;
+  readonly citiesBuilt: number;
+  readonly additionalActivationNumbersAdded: number;
+  readonly additionalSuitsAdded: number;
+  readonly globalInfluenceGained: number;
+  readonly localInfluenceGained: number;
+  readonly globalInfluenceSpent: number;
+  readonly localInfluenceSpent: number;
+  readonly spadeActivationsStored: number;
+  readonly spadeActivationsUsed: number;
+  readonly spadeBonusUsedInWars: number;
+}
+
+export interface MatchHistoryListItemDto {
+  readonly matchId: string;
+  readonly finishedAt: string;
+  readonly playerCount: number;
+  readonly rounds: number;
+  readonly placement: number;
+  readonly finalScoreHundredths: number;
+}
+
+export interface MatchFinalPlacementDto {
+  readonly displayName: string;
+  readonly placement: number;
+  readonly finalScoreHundredths: number;
+  readonly finalTerritoriesControlled: number;
+  readonly finalControlledAreaCells: number;
+}
+
+/** A private match projection. It exposes detailed activity only for the signed-in participant. */
+export interface MatchDetailDto {
+  readonly matchId: string;
+  readonly startedAt: string;
+  readonly finishedAt: string;
+  readonly playerCount: number;
+  readonly rounds: number;
+  readonly placements: readonly MatchFinalPlacementDto[];
+  readonly ownStats: MatchPlayerStatsDto;
+  /** Deterministically selected by the server from ownStats. */
+  readonly highlights: readonly string[];
+  readonly ownFactionSuit?: string;
+}
+
+export interface AccountMatchRecordsDto {
+  readonly maxControlledAreaCells: number;
+  readonly maxTerritoriesControlled: number;
+  readonly mostWarsWonInMatch: number;
+  readonly largestBorderGainCells: number;
+  readonly mostAuctionsWonInMatch: number;
+}
+
+export interface AccountStatisticsDto {
+  readonly matchesPlayed: number;
+  readonly wins: number;
+  readonly winRate: number;
+  readonly averagePlacement: number;
+  readonly averageFinalScoreHundredths: number;
+  readonly highestFinalScoreHundredths: number;
+  readonly bestPlacement: number;
+  readonly records: AccountMatchRecordsDto;
+  readonly activationsBySuit: Readonly<Record<string, number>>;
+  readonly matchesByFactionSuit: Readonly<Record<string, number>>;
+  readonly winsByFactionSuit: Readonly<Record<string, number>>;
+}
+
 export interface StartRoomRequest {
   readonly sessionToken: string;
   readonly playerOrder: readonly string[];

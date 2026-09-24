@@ -1,7 +1,8 @@
-import { GamePhase, MapCreationStage } from "@vedras/game-core";
+import { GamePhase, MapCreationStage, PointOfInterestType } from "@vedras/game-core";
 import type { RuleHelpId } from "../help/rule-help";
 import type { TutorialProgress, TutorialStep } from "../help/tutorial-state";
 import type { GameReadModel } from "../game-read-model";
+import { getPointOfInterestPresentation } from "../ui/point-of-interest-presentation";
 
 interface Hint { readonly step: TutorialStep; readonly title: string; readonly text: string; readonly topic: RuleHelpId; }
 
@@ -11,9 +12,20 @@ function relevantHint(state: GameReadModel, viewerPlayerId: string | undefined, 
   if (state.phase === GamePhase.MapCreation && ownTurn && mapStage === MapCreationStage.DrawTerritories && !progress.seen.mapCreation) return {
     step: "mapCreation", title: "Dein erster Kartenbauzug", text: "Ziehe mit dem Grenzstift eine Linie, die genau ein bestehendes Gebiet in zwei gültige Gebiete teilt.", topic: "mapCreation",
   };
-  if (state.phase === GamePhase.MapCreation && ownTurn && mapStage !== MapCreationStage.DrawTerritories && mapStage !== MapCreationStage.ReadyToFinalize && !progress.seen.pois) return {
-    step: "pois", title: "Strategischen Punkt platzieren", text: "Wähle eine freie Rasterzelle. Der Strategische Punkt bleibt auf dieser Zelle, auch wenn sich Grenzen später ändern.", topic: "pois",
+  const poiTypeByStage: Partial<Record<MapCreationStage, PointOfInterestType>> = {
+    [MapCreationStage.PlaceLandmarks]: PointOfInterestType.Landmark,
+    [MapCreationStage.PlaceJunctions]: PointOfInterestType.Junction,
+    [MapCreationStage.PlaceFortresses]: PointOfInterestType.Fortress,
+    [MapCreationStage.PlaceRelics]: PointOfInterestType.Relic,
   };
+  const poiType = mapStage === undefined ? undefined : poiTypeByStage[mapStage];
+  if (state.phase === GamePhase.MapCreation && ownTurn && poiType !== undefined && !progress.seen.pois) {
+    const presentation = getPointOfInterestPresentation(poiType);
+    return {
+      step: "pois", title: `${presentation.symbol} ${presentation.name} platzieren`,
+      text: `${presentation.shortEffect} ${presentation.placementHint} Der Strategische Punkt bleibt auf dieser Rasterzelle, auch wenn sich Grenzen später ändern.`, topic: "pois",
+    };
+  }
   if (state.phase === GamePhase.Setup && !progress.seen.factions) return {
     step: "factions", title: "Deine geheime Fraktion", text: "Sie gibt am Ende +25 % für deine Gebietskarten mit ihrem ursprünglichen Symbol. Zeige sie nur dir selbst an.", topic: "factions",
   };

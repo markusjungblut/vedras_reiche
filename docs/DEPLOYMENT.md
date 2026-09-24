@@ -74,7 +74,7 @@ Bei `SIGTERM` oder `SIGINT` nimmt der Server keine neuen Anfragen oder WebSocket
 
 ## Persistenz, Updates, Rollback und Backup
 
-`VEDRAS_DATA_DIR` muss außerhalb des flüchtigen Container-Dateisystems liegen. Die Dateien unter `rooms/` sind die autoritativen Snapshots für WAITING-, RUNNING- und FINISHED-Rooms und enthalten nur Token-Hashes, nie Raw Session-Tokens. Ein Neustart mit demselben Volume stellt Rooms, Revision und Spieleridentität wieder her; Browser verbinden sich mit ihrer lokalen Session erneut.
+`VEDRAS_DATA_DIR` muss außerhalb des flüchtigen Container-Dateisystems liegen. Die Dateien unter `rooms/` sind die autoritativen Snapshots für WAITING-, RUNNING- und FINISHED-Rooms und enthalten nur Token-Hashes, nie Raw Session-Tokens. `matches/` enthält die unveränderlichen, versionierten Matchzusammenfassungen für Konto-Historien und Statistiken. Ein Neustart mit demselben Volume stellt Rooms, Revision und Spieleridentität wieder her; Browser verbinden sich mit ihrer lokalen Session erneut und der Server ergänzt gegebenenfalls fehlende Matchzusammenfassungen aus sicher auswertbaren FINISHED-Räumen.
 
 Vor einem Update zuerst die GitHub-CI abwarten. Danach ein neues Image bauen, denselben Volume-Mount verwenden und den Container geordnet ersetzen. Für ein Rollback wird das vorherige Image oder Commit mit demselben Volume wieder gestartet. Das ist sicher, solange keine spätere inkompatible `persistenceVersion` eingeführt wurde; bei einer solchen Änderung braucht es vorab einen getesteten Migrations- oder Wiederherstellungsplan.
 

@@ -14,7 +14,7 @@ import {
   type PlayerGameView,
   type RandomSource,
 } from "@vedras/game-core";
-import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, NetworkErrorCode, type AccountRoomSummaryDto, type GameActionDto, type PublicRoomState } from "@vedras/protocol";
+import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, NetworkErrorCode, type AccountRoomSummaryDto, type AccountStatisticsDto, type GameActionDto, type MatchDetailDto, type MatchHistoryListItemDto, type PublicRoomState } from "@vedras/protocol";
 import {
   MAX_ACCEPTED_COMMANDS,
   PERSISTENCE_VERSION,
@@ -25,6 +25,17 @@ import {
   type PersistedRoom,
   type RoomStore,
 } from "./room-store.js";
+import {
+  MemoryMatchHistoryStore,
+  aggregateAccountStats,
+  buildMatchSummary,
+  createMatchTelemetry,
+  detailForAccount,
+  listItemsForAccount,
+  updateMatchTelemetry,
+  type MatchHistoryStore,
+  type MatchTelemetry,
+} from "./match-history.js";
 
 export type RoomStatus = "WAITING" | "RUNNING" | "FINISHED";
 
@@ -63,6 +74,8 @@ export interface GameRoom {
   updatedAt: string;
   /** Shared presentation-only anchor, set when this room starts. */
   musicStartedAt?: string;
+  /** Historical peaks persisted with the room, never read by Game Core. */
+  matchTelemetry?: MatchTelemetry;
   rematchOfRoomId?: string;
   commandQueue: Promise<void>;
 }
@@ -110,6 +123,7 @@ interface PersistenceChanges {
   readonly acceptedCommands?: readonly AcceptedCommand[];
   readonly updatedAt?: string;
   readonly musicStartedAt?: string;
+  readonly matchTelemetry?: MatchTelemetry;
   readonly rematchOfRoomId?: string;
 }
 
@@ -129,6 +143,7 @@ export interface RoomManagerOptions {
   readonly playerIdFactory?: () => string;
   readonly sessionTokenFactory?: () => string;
   readonly logger?: (event: string, details: Readonly<Record<string, string | number | boolean>>) => void;
+  readonly matchHistoryStore?: MatchHistoryStore;
 }
 
 const MAX_PLAYERS = 6;
@@ -176,6 +191,7 @@ export class RoomManager {
   private readonly playerIdFactory: () => string;
   private readonly sessionTokenFactory: () => string;
   private readonly roomStore: RoomStore;
+  private readonly matchHistoryStore: MatchHistoryStore;
   private storageHealthy = true;
 
   constructor(private readonly options: RoomManagerOptions) {
@@ -184,6 +200,7 @@ export class RoomManager {
     this.playerIdFactory = options.playerIdFactory ?? randomUUID;
     this.sessionTokenFactory = options.sessionTokenFactory ?? (() => randomBytes(32).toString("base64url"));
     this.roomStore = options.roomStore ?? new MemoryRoomStore();
+    this.matchHistoryStore = options.matchHistoryStore ?? new MemoryMatchHistoryStore();
   }
 
   async restore(): Promise<RestoreResult> {
@@ -200,6 +217,7 @@ export class RoomManager {
         this.rooms.set(parsed.room.roomId, this.fromPersisted(parsed.room));
         loaded += 1;
       }
+      await this.backfillFinishedMatches();
       const diagnostics = this.roomStore as RoomStore & { getLastLoadSkipped?: () => number };
       skipped += diagnostics.getLastLoadSkipped?.() ?? 0;
       this.storageHealthy = true;
@@ -284,13 +302,15 @@ export class RoomManager {
       state = applyAction(state, { type: GameActionType.BeginMapCreation, firstPlayerId: firstMapDrawerPlayerId, map: selectedMap }, this.context()).state;
       const revision = room.revision + 1;
       const updatedAt = this.now();
-      await this.persist(room, { status: "RUNNING", map: selectedMap, gameState: state, revision, updatedAt, musicStartedAt: updatedAt });
+      const matchTelemetry = createMatchTelemetry(state);
+      await this.persist(room, { status: "RUNNING", map: selectedMap, gameState: state, revision, updatedAt, musicStartedAt: updatedAt, matchTelemetry });
       room.gameState = state;
       room.map = copyMap(selectedMap);
       room.status = "RUNNING";
       room.revision = revision;
       room.updatedAt = updatedAt;
       room.musicStartedAt = updatedAt;
+      room.matchTelemetry = matchTelemetry;
       return room;
     });
   }
@@ -432,6 +452,19 @@ export class RoomManager {
     return room.gameState === undefined ? undefined : createGameViewForPlayer(room.gameState, playerId);
   }
 
+  async getAccountStats(accountId: string): Promise<AccountStatisticsDto> {
+    return aggregateAccountStats(await this.matchHistoryStore.listForAccount(accountId), accountId);
+  }
+
+  async listMatchesForAccount(accountId: string, limit?: number): Promise<readonly MatchHistoryListItemDto[]> {
+    return listItemsForAccount(await this.matchHistoryStore.listForAccount(accountId, limit), accountId);
+  }
+
+  async getMatchForAccount(accountId: string, matchId: string): Promise<MatchDetailDto | undefined> {
+    const summary = await this.matchHistoryStore.get(matchId);
+    return summary === undefined ? undefined : detailForAccount(summary, accountId);
+  }
+
   async processCommand(roomId: string, sessionToken: string, commandId: string, action: GameActionDto): Promise<CommandResult> {
     const initialSession = this.authenticate(roomId, sessionToken);
     return this.inRoomQueue(initialSession.room, async () => {
@@ -444,17 +477,21 @@ export class RoomManager {
       if (prior !== undefined) return { accepted: true, duplicate: true, revision: prior.revision, state: room.gameState };
       if (action.playerId !== undefined && action.playerId !== session.participant.playerId) return this.failure(room, NetworkErrorCode.CommandRejected, "A player may act only for their own session.");
       try {
-        const state = applyAction(room.gameState, action as GameAction, this.context()).state;
+        const priorState = room.gameState;
+        const state = applyAction(priorState, action as GameAction, this.context()).state;
         const revision = room.revision + 1;
         const acceptedCommands = [...room.acceptedCommands, { playerId: session.participant.playerId, commandId, revision }].slice(-MAX_ACCEPTED_COMMANDS);
         const status: RoomStatus = state.phase === GamePhase.Finished ? "FINISHED" : room.status;
         const updatedAt = this.now();
-        await this.persist(room, { gameState: state, revision, acceptedCommands, status, updatedAt });
+        const matchTelemetry = updateMatchTelemetry(room.matchTelemetry, state, state.events.slice(priorState.events.length));
+        await this.persist(room, { gameState: state, revision, acceptedCommands, status, updatedAt, matchTelemetry });
         room.gameState = state;
         room.revision = revision;
         room.acceptedCommands.splice(0, room.acceptedCommands.length, ...acceptedCommands);
         room.status = status;
         room.updatedAt = updatedAt;
+        room.matchTelemetry = matchTelemetry;
+        if (status === "FINISHED") await this.archiveFinishedRoom(room);
         return { accepted: true, duplicate: false, revision, state };
       } catch (error) {
         if (error instanceof RoomError) throw error;
@@ -500,6 +537,7 @@ export class RoomManager {
       createdAt: room.createdAt,
       updatedAt: changes.updatedAt ?? room.updatedAt,
       ...((changes.musicStartedAt ?? room.musicStartedAt) === undefined ? {} : { musicStartedAt: changes.musicStartedAt ?? room.musicStartedAt }),
+      ...((changes.matchTelemetry ?? room.matchTelemetry) === undefined ? {} : { matchTelemetry: changes.matchTelemetry ?? room.matchTelemetry }),
       ...((changes.rematchOfRoomId ?? room.rematchOfRoomId) === undefined ? {} : { rematchOfRoomId: changes.rematchOfRoomId ?? room.rematchOfRoomId }),
     };
   }
@@ -520,6 +558,7 @@ export class RoomManager {
       createdAt: snapshot.createdAt,
       updatedAt: snapshot.updatedAt,
       ...(snapshot.musicStartedAt === undefined ? {} : { musicStartedAt: snapshot.musicStartedAt }),
+      ...(snapshot.matchTelemetry === undefined ? (snapshot.gameState === undefined ? {} : { matchTelemetry: createMatchTelemetry(snapshot.gameState) }) : { matchTelemetry: snapshot.matchTelemetry }),
       ...(snapshot.rematchOfRoomId === undefined ? {} : { rematchOfRoomId: snapshot.rematchOfRoomId }),
       commandQueue: Promise.resolve(),
     };
@@ -552,6 +591,33 @@ export class RoomManager {
 
   private failure(room: GameRoom, code: NetworkErrorCode | string, message: string): CommandFailure {
     return { accepted: false, code, message, revision: room.revision };
+  }
+
+  private async backfillFinishedMatches(): Promise<void> {
+    for (const room of this.rooms.values()) if (room.status === "FINISHED") await this.archiveFinishedRoom(room);
+  }
+
+  private async archiveFinishedRoom(room: GameRoom): Promise<void> {
+    if (room.status !== "FINISHED" || room.gameState?.phase !== GamePhase.Finished) return;
+    const participants = [...room.participants.values()];
+    if (participants.some((participant) => participant.accountId === undefined)) {
+      this.options.logger?.("match_history_skipped", { roomId: room.roomId, reason: "missing_account_mapping" });
+      return;
+    }
+    const summary = buildMatchSummary({ matchId: room.roomId, startedAt: room.musicStartedAt ?? room.createdAt, finishedAt: room.updatedAt,
+      state: room.gameState, ...(room.matchTelemetry === undefined ? {} : { telemetry: room.matchTelemetry }),
+      participants: participants.map((participant) => ({ accountId: participant.accountId!, playerId: participant.playerId, displayNameSnapshot: participant.name })) });
+    if (summary === undefined) {
+      this.options.logger?.("match_history_skipped", { roomId: room.roomId, reason: "incomplete_finished_state" });
+      return;
+    }
+    try {
+      await this.matchHistoryStore.save(summary);
+      this.options.logger?.("match_history_archived", { roomId: room.roomId, matchId: summary.matchId });
+    } catch {
+      /* The completed room is already durable; startup backfill will retry this idempotent archive. */
+      this.options.logger?.("match_history_save_failed", { roomId: room.roomId });
+    }
   }
 }
 

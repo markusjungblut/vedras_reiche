@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { AccountManager, FileAccountStore } from "./account-store.js";
 import { CryptoCardSource, CryptoRandomSource } from "./random.js";
 import { RoomManager } from "./room-manager.js";
+import { FileMatchHistoryStore } from "./match-history.js";
 import { FileRoomStore } from "./room-store.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createVedrasServer } from "./server.js";
@@ -12,17 +13,20 @@ const log = (event: string, details: Readonly<Record<string, string | number | b
 const configuration = loadRuntimeConfig();
 const roomStore = new FileRoomStore(join(configuration.dataDirectory, "rooms"), (event, details) => log(event, details));
 const accountStore = new FileAccountStore(join(configuration.dataDirectory, "accounts"));
+const matchHistoryStore = new FileMatchHistoryStore(join(configuration.dataDirectory, "matches"));
 const accountManager = new AccountManager({ store: accountStore });
 const manager = new RoomManager({
   randomSource: new CryptoRandomSource(),
   cardSource: new CryptoCardSource(),
   roomStore,
+  matchHistoryStore,
   logger: log,
 });
 
 try {
   await roomStore.ensureReady();
   await accountStore.ensureReady();
+  await matchHistoryStore.ensureReady();
   await accountManager.restore();
   if (configuration.production && configuration.webDistDirectory !== undefined) {
     await access(join(configuration.webDistDirectory, "index.html"), constants.R_OK);

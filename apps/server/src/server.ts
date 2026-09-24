@@ -373,6 +373,26 @@ export function createVedrasServer(options: VedrasServerOptions): VedrasServer {
         writeJson(response, 200, { rooms: options.roomManager.listRoomsForAccount(account.id) }, corsOrigin(origin));
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/me/stats") {
+        const account = await requireAccount(request);
+        writeJson(response, 200, await options.roomManager.getAccountStats(account.id), corsOrigin(origin));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/me/matches") {
+        const account = await requireAccount(request);
+        const requestedLimit = Number(url.searchParams.get("limit") ?? "25");
+        const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 25;
+        writeJson(response, 200, { matches: await options.roomManager.listMatchesForAccount(account.id, limit) }, corsOrigin(origin));
+        return;
+      }
+      const matchHistoryDetail = /^\/api\/me\/matches\/([^/]+)$/.exec(url.pathname);
+      if (request.method === "GET" && matchHistoryDetail?.[1] !== undefined) {
+        const account = await requireAccount(request);
+        const detail = await options.roomManager.getMatchForAccount(account.id, decodeURIComponent(matchHistoryDetail[1]));
+        if (detail === undefined) throw new RoomError(NetworkErrorCode.RoomNotFound, "Die Partie wurde nicht gefunden.");
+        writeJson(response, 200, detail, corsOrigin(origin));
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/rooms") {
         const body = await readJson(request);
         if (!bodyHasPlayerName(body)) throw new RoomError(NetworkErrorCode.InvalidMessage, "A player name is required.");

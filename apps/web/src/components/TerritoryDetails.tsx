@@ -1,6 +1,7 @@
 import { getPointOfInterestTerritory, getStateAdjacentTerritoryIds, getStateTerritoryArea } from "@vedras/game-core";
 import type { GameReadModel } from "../game-read-model";
 import { suitClass, suitName, suitSymbol } from "../formatters/suit-label";
+import { getPointOfInterestPresentation } from "../ui/point-of-interest-presentation";
 
 interface TerritoryDetailsProps {
   state: GameReadModel;
@@ -41,7 +42,10 @@ export function TerritoryDetails({ state, territoryId, playerName }: TerritoryDe
           {card?.additionalActivationNumber !== undefined && <div><dt>Zusätzliche Zahl</dt><dd>{card.additionalActivationNumber}</dd></div>}
           {card?.additionalSuit && <div><dt>Zusätzliches Symbol</dt><dd>{suitSymbol(card.additionalSuit)} {suitName(card.additionalSuit)}</dd></div>}
           {localInfluence.length > 0 && <div><dt>Lokaler Einfluss</dt><dd>{localInfluence.map(([id, amount]) => `${playerName(id)} ${amount}`).join(" · ")}</dd></div>}
-          {pois.length > 0 && <div><dt>Besondere Orte</dt><dd>{pois.map((poi) => `${poi.type} (${poi.id})`).join(", ")}</dd></div>}
+          {pois.length > 0 && <div className="poi-detail-row"><dt>Strategische Punkte</dt><dd>{pois.map((poi) => {
+            const presentation = getPointOfInterestPresentation(poi.type);
+            return <span key={poi.id}><strong>{presentation.symbol} {presentation.name}</strong> · {presentation.shortEffect}</span>;
+          })}</dd></div>}
           {marks.length > 0 && <div><dt>♦ Markierte Grenzen</dt><dd>{marks.map((mark) => `${mark.territoryIds.join(" ↔ ")} (${playerName(mark.playerId)})`).join(", ")}</dd></div>}
           {pendingBorders.length > 0 && <div><dt>♦ Ausstehende Grenzänderung</dt><dd>{pendingBorders.map((change) => `${change.sourceTerritoryId} ↔ ${change.neutralTerritoryId}`).join(", ")}</dd></div>}
         </dl>

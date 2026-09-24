@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { GamePhase, type GameState, type GridMapConfig } from "@vedras/game-core";
+import type { MatchTelemetry } from "./match-history.js";
 
-export const PERSISTENCE_VERSION = 2 as const;
+export const PERSISTENCE_VERSION = 3 as const;
 export const MAX_ACCEPTED_COMMANDS = 256;
 
 export type PersistedRoomStatus = "WAITING" | "RUNNING" | "FINISHED";
@@ -38,6 +39,8 @@ export interface PersistedRoom {
   readonly updatedAt: string;
   /** Presentation-only shared music anchor. Older snapshots may not have one. */
   readonly musicStartedAt?: string;
+  /** Historical maxima only; this never influences game rules, actions, or random sources. */
+  readonly matchTelemetry?: MatchTelemetry;
   readonly rematchOfRoomId?: string;
 }
 
@@ -79,6 +82,15 @@ function isMapConfig(value: unknown): value is GridMapConfig {
   return value.format === undefined || value.format === "A4" || value.format === "A5";
 }
 
+function isTelemetryRecord(value: unknown): value is Readonly<Record<string, number>> {
+  return isRecord(value) && Object.entries(value).every(([playerId, amount]) => isNonEmptyString(playerId, 160) && isNonNegativeSafeInteger(amount));
+}
+
+function isMatchTelemetry(value: unknown): value is MatchTelemetry {
+  return isRecord(value) && isTelemetryRecord(value.maxTerritoryCountByPlayerId) &&
+    isTelemetryRecord(value.maxControlledAreaByPlayerId) && isTelemetryRecord(value.largestSingleBorderGainByPlayerId);
+}
+
 /** Central JSON boundary for the full Game Core state. The deep state remains plain JSON by design. */
 export function serializeGameState(state: GameState): unknown {
   return JSON.parse(JSON.stringify(state)) as unknown;
@@ -98,7 +110,7 @@ export function deserializeGameState(value: unknown): GameState | undefined {
 
 export function deserializePersistedRoom(value: unknown): { readonly room?: PersistedRoom; readonly reason?: string } {
   if (!isRecord(value)) return { reason: "root is not an object" };
-  if (value.persistenceVersion !== 1 && value.persistenceVersion !== PERSISTENCE_VERSION) return { reason: "unsupported persistence version" };
+  if (value.persistenceVersion !== 1 && value.persistenceVersion !== 2 && value.persistenceVersion !== PERSISTENCE_VERSION) return { reason: "unsupported persistence version" };
   if (!isNonEmptyString(value.roomId, 32) || !/^[A-Z0-9]+$/.test(value.roomId)) return { reason: "invalid room id" };
   if (value.status !== "WAITING" && value.status !== "RUNNING" && value.status !== "FINISHED") return { reason: "invalid room status" };
   if (!isNonEmptyString(value.hostPlayerId, 160)) return { reason: "invalid host player id" };
@@ -107,6 +119,7 @@ export function deserializePersistedRoom(value: unknown): { readonly room?: Pers
   if (!isNonNegativeSafeInteger(value.revision)) return { reason: "invalid revision" };
   if (!isIsoTimestamp(value.createdAt) || !isIsoTimestamp(value.updatedAt)) return { reason: "invalid timestamps" };
   if (value.musicStartedAt !== undefined && !isIsoTimestamp(value.musicStartedAt)) return { reason: "invalid music timestamp" };
+  if (value.matchTelemetry !== undefined && !isMatchTelemetry(value.matchTelemetry)) return { reason: "invalid match telemetry" };
   if (value.rematchOfRoomId !== undefined && (!isNonEmptyString(value.rematchOfRoomId, 32) || !/^[A-Z0-9]+$/.test(value.rematchOfRoomId))) {
     return { reason: "invalid rematch origin" };
   }
@@ -155,6 +168,7 @@ export function deserializePersistedRoom(value: unknown): { readonly room?: Pers
       createdAt: value.createdAt,
       updatedAt: value.updatedAt,
       ...(value.musicStartedAt === undefined ? {} : { musicStartedAt: value.musicStartedAt }),
+      ...(value.matchTelemetry === undefined ? {} : { matchTelemetry: value.matchTelemetry }),
       ...(value.rematchOfRoomId === undefined ? {} : { rematchOfRoomId: value.rematchOfRoomId }),
     },
   };
