@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getMapLinearScale, scaleGridDepth } from "../dist/index.js";
+import { getMapLinearScale, getNeutralDiamondDepth, scaleGridDepth } from "../dist/index.js";
 
 const bases = [1, 2, 3, 4, 5];
 
@@ -18,4 +18,9 @@ test("grid-depth scaling follows the linear square-root factor at the documented
   }
   assert.equal(getMapLinearScale({ width: 50, height: 50 }), 1);
   assert.equal(scaleGridDepth(0, { width: 100, height: 100 }), 0);
+});
+
+test("neutral diamond depth uses the three-cell A4 basis and existing linear scaling", () => {
+  assert.equal(getNeutralDiamondDepth({ width: 50, height: 50 }), 3);
+  assert.equal(getNeutralDiamondDepth({ width: 100, height: 50 }), 4);
 });

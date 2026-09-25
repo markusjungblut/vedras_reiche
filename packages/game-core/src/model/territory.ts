@@ -28,6 +28,13 @@ export interface Territory {
   /** All cell-bound developments, including several moved into one territory by a border change. */
   readonly settlementFeatures?: readonly SettlementFeature[];
   readonly weakened?: boolean;
+  /** Persisted counter; older snapshots with only the legacy flag count as one participation. */
+  readonly warParticipationCountThisRound?: number;
+  /** A territory may start at most one war per round, even while it is large. */
+  readonly warsInitiatedThisRound?: number;
+  /** Cut-and-choose parts retain the pre-existing round lock after their creation. */
+  readonly warParticipationLockedThisRound?: boolean;
+  /** @deprecated Use warParticipationCountThisRound for rules. Kept for persisted legacy rooms and simple UI hints. */
   readonly participatedInWarThisRound?: boolean;
   readonly localInfluenceByPlayerId?: Readonly<Record<PlayerId, number>>;
 }

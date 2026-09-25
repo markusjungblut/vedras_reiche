@@ -1,4 +1,13 @@
-import { getPointOfInterestTerritory, getStateAdjacentTerritoryIds, getStateTerritoryArea } from "@vedras/game-core";
+import {
+  getLargeTerritoryThreshold,
+  getPointOfInterestTerritory,
+  getStateAdjacentTerritoryIds,
+  getStateTerritoryArea,
+  getWarParticipationCount,
+  getWarParticipationLimit,
+  getWarsInitiatedCount,
+  isLargeTerritory,
+} from "@vedras/game-core";
 import type { GameReadModel } from "../game-read-model";
 import { suitClass, suitName, suitSymbol } from "../formatters/suit-label";
 import { getPointOfInterestPresentation } from "../ui/point-of-interest-presentation";
@@ -21,6 +30,11 @@ export function TerritoryDetails({ state, territoryId, playerName }: TerritoryDe
     : territory.pointOfInterestIds?.includes(poi.id));
   const localInfluence = Object.entries(territory.localInfluenceByPlayerId ?? {}).filter(([, amount]) => amount > 0);
   const card = territory.card;
+  const area = getStateTerritoryArea(state, territory.id);
+  const isLarge = isLargeTerritory(state, territory.id);
+  const warParticipationCount = getWarParticipationCount(territory);
+  const warParticipationLimit = getWarParticipationLimit(state, territory.id);
+  const warsInitiated = getWarsInitiatedCount(territory);
   return (
     <section className="panel details-panel" aria-labelledby="details-title">
       <div className="panel-heading"><div><p className="eyebrow">Ausgewähltes Gebiet</p><h2 id="details-title">{territory.id}</h2></div><span className="panel-count">{territory.ownerId === null ? "Neutral" : playerName(territory.ownerId)}</span></div>
@@ -33,12 +47,13 @@ export function TerritoryDetails({ state, territoryId, playerName }: TerritoryDe
         </div>}
         <dl className="details-list">
           <div><dt>Besitzer</dt><dd>{territory.ownerId === null ? "Neutral" : playerName(territory.ownerId)}</dd></div>
-          <div><dt>Fläche</dt><dd>{getStateTerritoryArea(state, territory.id)}</dd></div>
+          <div><dt>Fläche</dt><dd>{area}</dd></div>
+          {isLarge && <div><dt>Großgebiet</dt><dd>Darf in dieser Runde an bis zu 2 Kriegen beteiligt sein, davon höchstens 1 selbst beginnen. Schwelle: {getLargeTerritoryThreshold(state.map!)} Kästchen.</dd></div>}
           <div><dt>Nachbarn</dt><dd>{getStateAdjacentTerritoryIds(state, territory.id).join(", ") || "Keine"}</dd></div>
           {territory.settlement && <div><dt>Entwicklung</dt><dd>{territory.settlement === "CITY" ? "Stadt" : "Siedlung"}</dd></div>}
           {(territory.settlementFeatures?.length ?? 0) > 1 && <div><dt>Entwicklungen auf Zellen</dt><dd>{territory.settlementFeatures!.map((feature) => `${feature.kind === "CITY" ? "Stadt" : "Siedlung"} (${feature.position.x},${feature.position.y})`).join(", ")}</dd></div>}
           {territory.weakened !== undefined && <div><dt>Schwächung</dt><dd>{territory.weakened ? "Ja" : "Nein"}</dd></div>}
-          {territory.participatedInWarThisRound !== undefined && <div><dt>Krieg diese Runde</dt><dd>{territory.participatedInWarThisRound ? "Ja" : "Nein"}</dd></div>}
+          {(warParticipationCount > 0 || territory.participatedInWarThisRound !== undefined) && <div><dt>Kriege diese Runde</dt><dd>{warParticipationCount} von {warParticipationLimit}{isLarge ? ` · selbst begonnen: ${warsInitiated} von 1` : ""}</dd></div>}
           {card?.additionalActivationNumber !== undefined && <div><dt>Zusätzliche Zahl</dt><dd>{card.additionalActivationNumber}</dd></div>}
           {card?.additionalSuit && <div><dt>Zusätzliches Symbol</dt><dd>{suitSymbol(card.additionalSuit)} {suitName(card.additionalSuit)}</dd></div>}
           {localInfluence.length > 0 && <div><dt>Lokaler Einfluss</dt><dd>{localInfluence.map(([id, amount]) => `${playerName(id)} ${amount}`).join(" · ")}</dd></div>}

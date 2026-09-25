@@ -150,6 +150,43 @@ test("file snapshots restore waiting and running rooms without raw session token
   }
 });
 
+test("war participation counters survive a persisted room restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vedras-war-counters-"));
+  try {
+    const store = new FileRoomStore(join(directory, "rooms"));
+    const roomsA = manager(store);
+    const { room, participant: anna, guest } = await startTwoPlayers(roomsA);
+    const snapshot = await store.load(room.roomId);
+    const baseState = createGameState({
+      gameId: room.roomId,
+      startPlayerId: anna.playerId,
+      players: [{ id: anna.playerId, name: "Anna" }, { id: guest.participant.playerId, name: "Ben" }],
+    });
+    const state = {
+      ...baseState,
+      territories: [
+        { id: "A", ownerId: anna.playerId, warParticipationCountThisRound: 1, warsInitiatedThisRound: 1 },
+        { id: "B", ownerId: guest.participant.playerId, warParticipationCountThisRound: 2, warsInitiatedThisRound: 0 },
+      ],
+    };
+    await store.save({ ...snapshot, status: "RUNNING", revision: room.revision + 1, gameState: { ...state, phase: GamePhase.ActionPhase } });
+
+    const roomsB = manager(store);
+    await roomsB.restore();
+    const restored = roomsB.getRoom(room.roomId).gameState;
+    assert.deepEqual(restored.territories.map((territory) => ({
+      id: territory.id,
+      participation: territory.warParticipationCountThisRound,
+      initiated: territory.warsInitiatedThisRound,
+    })), [
+      { id: "A", participation: 1, initiated: 1 },
+      { id: "B", participation: 2, initiated: 0 },
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("a failed durable save keeps the previous authoritative state and revision", async () => {
   const store = new TestRoomStore();
   const rooms = manager(store);

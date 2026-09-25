@@ -27,7 +27,7 @@ function relevantHint(state: GameReadModel, viewerPlayerId: string | undefined, 
     };
   }
   if (state.phase === GamePhase.Setup && !progress.seen.factions) return {
-    step: "factions", title: "Deine geheime Fraktion", text: "Sie gibt am Ende +25 % für deine Gebietskarten mit ihrem ursprünglichen Symbol. Zeige sie nur dir selbst an.", topic: "factions",
+    step: "factions", title: "Deine geheime Fraktion", text: "Sie gibt am Ende +30 % für deine Gebietskarten mit ihrem ursprünglichen Symbol. Zeige sie nur dir selbst an.", topic: "factions",
   };
   if (state.phase === GamePhase.ActivationPhase && ownTurn && !progress.seen.activation) return {
     step: "activation", title: "Aktiviere passende Karten", text: "Die freigegebenen Gebiete tragen mindestens eine aktuelle Aktivierungszahl. Wähle dann ihre Symbolfähigkeit.", topic: "activation",

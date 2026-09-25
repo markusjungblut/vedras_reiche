@@ -1,7 +1,7 @@
 import {
   areCellsOrthogonallyConnected, GameActionType, getAvailableWarSpades,
   getCellsWithinBorderDepth, getMaximumLegalBorderAdvance, getMinimumTerritoryArea, getSharedBorder, getTerritoryCells,
-  scaleGridDepth, validateBorderAdvance, validateTerritorySplit,
+  getNeutralDiamondDepth, scaleGridDepth, validateBorderAdvance, validateTerritorySplit,
   type GameAction, type GridCell,
 } from "@vedras/game-core";
 import type { GameReadModel } from "../game-read-model";
@@ -52,7 +52,7 @@ export function getMapEditor(state: GameReadModel, selectedKeys?: readonly strin
   const effect = state.pendingDiamondBorderChanges[0];
   if (effect) {
     const border = getSharedBorder(map, effect.sourceTerritoryId, effect.neutralTerritoryId);
-    return claimEditor(effect.id, effect.neutralTerritoryId, effect.sourceTerritoryId, border, scaleGridDepth(2, map));
+    return claimEditor(effect.id, effect.neutralTerritoryId, effect.sourceTerritoryId, border, getNeutralDiamondDepth(map));
   }
   return undefined;
 }
@@ -205,7 +205,7 @@ export function NeutralDiamondControls({ state, editor, onAction }: {
 }) {
   const effect = state.pendingDiamondBorderChanges[0];
   if (!effect || !editor || !state.map) return null;
-  const maximumDepth = scaleGridDepth(2, state.map);
+  const maximumDepth = getNeutralDiamondDepth(state.map);
   const validation = validateBorderAdvance(state.map, effect.sourceTerritoryId, effect.neutralTerritoryId,
     getSharedBorder(state.map, effect.sourceTerritoryId, effect.neutralTerritoryId), maximumDepth, editor.selected);
   return <section className="control-section" aria-label="Neutrale ♦-Grenze">

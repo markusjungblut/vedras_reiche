@@ -5,11 +5,49 @@ import { GameEventType } from "../events/game-event.js";
 import type { PlayerId, TerritoryId } from "../model/ids.js";
 import { PointOfInterestType } from "../model/point-of-interest.js";
 import { SettlementKind, type SettlementFeature } from "../model/territory.js";
+import { getFrontTerritoryThreshold } from "../rules/territory-size.js";
 import { GamePhase } from "../state/game-phase.js";
 import { getPointOfInterestTerritory, getSettlementTerritory, getStateAdjacentTerritoryIds, getStateTerritoryArea } from "../state/geometry-selectors.js";
 import type { GameState } from "../state/game-state.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { GameResult, PlayerScore, RealmComponent, ScoringState, TerritoryScoreBreakdown } from "./scoring-state.js";
+
+export const SECRET_FACTION_BONUS_PERCENT = 30;
+export const JUNCTION_BONUS_PER_NEIGHBOR_PERCENT = 15;
+export const JUNCTION_BONUS_CAP_PERCENT = 75;
+export const FRONT_TERRITORY_BONUS_PER_ENEMY_PERCENT = 20;
+export const GLOBAL_INFLUENCE_SCORE_POINTS = 10;
+
+export function getLargestRealmBonusPercent(playerCount: number): number {
+  if (playerCount === 2) return 10;
+  if (playerCount === 3) return 15;
+  return 20;
+}
+
+export function getJunctionBonusPercent(adjacentTerritoryCount: number): number {
+  return Math.min(JUNCTION_BONUS_CAP_PERCENT, Math.max(0, adjacentTerritoryCount) * JUNCTION_BONUS_PER_NEIGHBOR_PERCENT);
+}
+
+/** Front bonuses have deliberately no cap; the small territory threshold limits their absolute value. */
+export function getFrontTerritoryBonusPercent(enemyNeighborCount: number): number {
+  return Math.max(0, enemyNeighborCount) * FRONT_TERRITORY_BONUS_PER_ENEMY_PERCENT;
+}
+
+/** A front territory is evaluated only at scoring time from the current authoritative map. */
+export function isFrontTerritory(state: GameState, territoryId: TerritoryId): boolean {
+  return state.map !== undefined && state.territories.some((territory) => territory.id === territoryId)
+    && getStateTerritoryArea(state, territoryId) <= getFrontTerritoryThreshold(state.map);
+}
+
+/** Counts unique controlled enemy territories sharing at least one orthogonal border. */
+export function getFrontTerritoryEnemyNeighborCount(state: GameState, territoryId: TerritoryId): number {
+  const territory = state.territories.find((candidate) => candidate.id === territoryId);
+  if (territory?.ownerId === undefined || territory.ownerId === null) return 0;
+  return getStateAdjacentTerritoryIds(state, territoryId).filter((adjacentId) => {
+    const adjacent = state.territories.find((candidate) => candidate.id === adjacentId);
+    return adjacent?.ownerId !== undefined && adjacent.ownerId !== null && adjacent.ownerId !== territory.ownerId;
+  }).length;
+}
 
 function componentId(playerId: PlayerId, territoryIds: readonly TerritoryId[]): string {
   return `realm:${playerId}:${[...territoryIds].sort().join("+")}`;
@@ -109,26 +147,37 @@ function createFinalResult(state: GameState, scoring: ScoringState): GameResult 
       .filter((territory) => territory.ownerId === player.id)
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((territory) => {
+        const isCurrentFrontTerritory = isFrontTerritory(state, territory.id);
+        const frontTerritoryEnemyNeighborCount = isCurrentFrontTerritory
+          ? getFrontTerritoryEnemyNeighborCount(state, territory.id) : 0;
+        const frontTerritoryBonusPercent = getFrontTerritoryBonusPercent(frontTerritoryEnemyNeighborCount);
         const factionBonusPercent = territory.card !== undefined && player.secretFactionSuit !== undefined &&
-          territory.card.suit === player.secretFactionSuit ? 25 : 0;
-        const largestRealmBonusPercent = selectedRealmIds.has(territory.id) ? 25 : 0;
+          territory.card.suit === player.secretFactionSuit ? SECRET_FACTION_BONUS_PERCENT : 0;
+        const largestRealmBonusPercent = selectedRealmIds.has(territory.id) ? getLargestRealmBonusPercent(state.players.length) : 0;
         const developmentBonusPercent = getDevelopmentBonusPercent(state, territory.id);
         const landmarkBonusPercent = countPointsOfInterest(state, territory.id, PointOfInterestType.Landmark) * 25;
         const hubBonusPercent = countPointsOfInterest(state, territory.id, PointOfInterestType.Junction)
-          * Math.min(50, getStateAdjacentTerritoryIds(state, territory.id).length * 10);
+          * getJunctionBonusPercent(getStateAdjacentTerritoryIds(state, territory.id).length);
         const relicBonusPercent = (activeRelicCounts[player.id] ?? 0) >= 2
           ? countPointsOfInterest(state, territory.id, PointOfInterestType.Relic) * 25 : 0;
-        const totalBonusPercent = factionBonusPercent + largestRealmBonusPercent + developmentBonusPercent
+        const totalBonusPercent = frontTerritoryBonusPercent + factionBonusPercent + largestRealmBonusPercent + developmentBonusPercent
           + landmarkBonusPercent + hubBonusPercent + relicBonusPercent;
         const baseArea = getStateTerritoryArea(state, territory.id);
-        return { territoryId: territory.id, baseArea, factionBonusPercent, largestRealmBonusPercent,
+        return { territoryId: territory.id, baseArea, isFrontTerritory: isCurrentFrontTerritory,
+          frontTerritoryEnemyNeighborCount, frontTerritoryBonusPercent, factionBonusPercent, largestRealmBonusPercent,
           developmentBonusPercent, landmarkBonusPercent, hubBonusPercent, relicBonusPercent, totalBonusPercent,
           scoreHundredths: baseArea * (100 + totalBonusPercent) };
       });
+    const territoryScoreHundredths = territoryScores.reduce((total, score) => total + score.scoreHundredths, 0);
+    const remainingGlobalInfluence = player.globalInfluence ?? 0;
+    const remainingGlobalInfluenceScoreHundredths = remainingGlobalInfluence * GLOBAL_INFLUENCE_SCORE_POINTS * 100;
     return {
       playerId: player.id,
       territoryScores,
-      totalScoreHundredths: territoryScores.reduce((total, score) => total + score.scoreHundredths, 0),
+      territoryScoreHundredths,
+      remainingGlobalInfluence,
+      remainingGlobalInfluenceScoreHundredths,
+      totalScoreHundredths: territoryScoreHundredths + remainingGlobalInfluenceScoreHundredths,
       controlledTerritoryCount: territoryScores.length,
       controlledArea: territoryScores.reduce((total, score) => total + score.baseArea, 0),
       activeRelicCount: activeRelicCounts[player.id] ?? 0,

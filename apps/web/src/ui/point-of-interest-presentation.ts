@@ -1,4 +1,4 @@
-import { getPointOfInterestTerritory, getSharedBorder, PointOfInterestType } from "@vedras/game-core";
+import { getJunctionBonusPercent, getPointOfInterestTerritory, getSharedBorder, PointOfInterestType } from "@vedras/game-core";
 import type { GameReadModel } from "../game-read-model";
 
 export interface PointOfInterestPresentation {
@@ -17,7 +17,7 @@ export const POINT_OF_INTEREST_PRESENTATIONS: Readonly<Record<PointOfInterestTyp
   },
   [PointOfInterestType.Junction]: {
     type: PointOfInterestType.Junction, symbol: "◎", name: "Knotenpunkt",
-    shortEffect: "+10 % Wertung je unterschiedlichem angrenzenden Gebiet, höchstens +50 %.",
+    shortEffect: "+15 % Wertung je unterschiedlichem angrenzenden Gebiet, höchstens +75 %.",
     placementHint: "Wähle eine freie Rasterzelle für den Knotenpunkt.",
   },
   [PointOfInterestType.Fortress]: {
@@ -46,7 +46,7 @@ export function describePointOfInterest(state: GameReadModel, poi: GameReadModel
     const adjacent = territoryId === undefined || state.map === undefined ? 0
       : state.territories.filter((territory) => territory.id !== territoryId
         && getSharedBorder(state.map!, territoryId, territory.id).segments.length > 0).length;
-    return `${presentation.symbol} ${presentation.name} · ${presentation.shortEffect} Aktuell: +${Math.min(50, adjacent * 10)} % (${adjacent} Nachbargebiete).`;
+    return `${presentation.symbol} ${presentation.name} · ${presentation.shortEffect} Aktuell: +${getJunctionBonusPercent(adjacent)} % (${adjacent} Nachbargebiete).`;
   }
   if (poi.type === PointOfInterestType.Relic) {
     const ownerId = territoryId === undefined ? undefined : state.territories.find((territory) => territory.id === territoryId)?.ownerId;

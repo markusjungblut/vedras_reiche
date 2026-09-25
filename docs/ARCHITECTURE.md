@@ -102,7 +102,7 @@ zwei Startauktionsrunden abschließen
 
 `startRound` prüft den Abschluss der vorherigen Runde. Während einer laufenden Aktionsphase, Auktion oder ausstehenden Teilung kann keine neue Runde gestartet werden. Nach der letzten Aktionsphase geht der Zustand in `SCORING`. Der Core berechnet dort die Reichskomponenten aus der Rastergeometrie, wartet nur bei Gleichstand der größten Komponente auf `ChooseLargestRealmAction` und erstellt anschließend das unveränderliche `GameResult` in `FINISHED`. In `FINISHED` sind reguläre Aktionen gesperrt.
 
-Die Wertung bleibt vollständig im Game Core: `TerritoryScoreBreakdown` enthält Rasterfläche, additive Prozentboni und exakte Hundertstel, `PlayerScore` aggregiert die kontrollierten Gebiete. Der Browser rundet nur die angezeigten Endpunkte auf ganze Punkte; Sieger und Gleichstände beruhen auf den exakten Hundertsteln. `createGameViewForPlayer` verbirgt fremde Fraktionen bis `FINISHED` und legt sie für die öffentliche Siegerehrung anschließend offen.
+Die Wertung bleibt vollständig im Game Core: `TerritoryScoreBreakdown` enthält Rasterfläche, additive Prozentboni und exakte Hundertstel. Ein Frontgebiet wird erst bei der Endwertung aus der aktuellen Geometrie abgeleitet: Es darf höchstens `floor(Kartenfläche × 3 %)` Zellen haben und erhält `+20 %` je unterschiedlichem gegnerischen Nachbargebiet. `PlayerScore` aggregiert die kontrollierten Gebiete und addiert je verbleibendem globalem Einfluss `10` feste Punkte; lokaler Einfluss hat keinen Endwert. Der Browser rundet nur die angezeigten Endpunkte auf ganze Punkte; Sieger und Gleichstände beruhen auf den exakten Hundertsteln. `createGameViewForPlayer` verbirgt fremde Fraktionen bis `FINISHED` und legt sie für die öffentliche Siegerehrung anschließend offen.
 
 ## Startauktionen
 
@@ -158,7 +158,7 @@ Für die zweite ♣-Aktivierungszahl bezieht der Core die zufällig gezogene Geb
 
 ## Rundenbezogene Effekte
 
-Gespeicherte ♠-Aktivierungen bleiben für die laufende Runde verfügbar und können später im Krieg genau einmal verbraucht werden. Nicht genutzte Aktivierungen verfallen am Rundenende. Die Kriegsteilnahme-Sperre je Gebiet wird bei Rundenbeginn zurückgesetzt; Schwächung bleibt bestehen. Auch der Aktivierungsfortschritt und die drei Würfelzahlen gehören zur laufenden Runde. Grenzmarkierungen bleiben bis zum nächsten Krieg an ihrer Grenze bestehen und werden bei dessen Beginn entfernt.
+Gespeicherte ♠-Aktivierungen bleiben für die laufende Runde verfügbar und können später im Krieg genau einmal verbraucht werden. Nicht genutzte Aktivierungen verfallen am Rundenende. Der Zustand speichert je Gebiet die Kriegsbeteiligungen und begonnenen Kriege; beides wird bei Rundenbeginn zurückgesetzt, Schwächung bleibt bestehen. Normale Gebiete dürfen an einem Krieg teilnehmen. Großgebiete ab `ceil(Kartenfläche × 6 %)` dürfen an zwei Kriegen teilnehmen, aber nur einen davon beginnen; die Prüfung verwendet stets die aktuelle Rasterfläche. Auch der Aktivierungsfortschritt und die drei Würfelzahlen gehören zur laufenden Runde. Grenzmarkierungen bleiben bis zum nächsten Krieg an ihrer Grenze bestehen und werden bei dessen Beginn entfernt.
 
 ## Determinismus und Replay
 
@@ -166,11 +166,11 @@ Alle Zufallswerte stammen aus einer austauschbaren `RandomSource`; im Regelcode 
 
 ## Nachbarschaft und Grenzmarkierung
 
-♣-Entwicklungsziele, ♥-Einflussziele, ♦-Nachbarn, Auktions- und Kriegsziele verwenden die aus gemeinsamen Rasterkanten berechnete Nachbarschaft. Eine gegnerische markierte Grenze wird über ein stabiles, reihenfolgeunabhängiges Paar von Gebiets-IDs identifiziert; `A–B` und `B–A` bezeichnen dieselbe Grenze. Neutrale ♦-Grenzverschiebungen verwenden denselben Korridorvalidator wie Kriegsgrenzgewinne mit der skalierten Basis-Tiefe 2. Die Aktivierung bleibt bis zur bestätigten Geometrieänderung offen; eine leere Auswahl ist zulässig.
+♣-Entwicklungsziele, ♥-Einflussziele, ♦-Nachbarn, Auktions- und Kriegsziele verwenden die aus gemeinsamen Rasterkanten berechnete Nachbarschaft. Eine gegnerische markierte Grenze wird über ein stabiles, reihenfolgeunabhängiges Paar von Gebiets-IDs identifiziert; `A–B` und `B–A` bezeichnen dieselbe Grenze. Neutrale ♦-Grenzverschiebungen verwenden denselben Korridorvalidator wie Kriegsgrenzgewinne mit der skalierten Basis-Tiefe 3 auf der A4-Referenzkarte. Die Aktivierung bleibt bis zur bestätigten Geometrieänderung offen; eine leere Auswahl ist zulässig.
 
 ## Kriegsablauf
 
-`StartWar` prüft Spieler, Besitzer, Raster-Nachbarschaft, freie Grundaktion und beide Kriegsteilnahme-Sperren. Der `WarSnapshot` hält die beiden ursprünglichen Flächen, die gemeinsame Rastergrenze und eine mögliche ♦-Markierung fest. Beide Gebiete werden sofort für den Rest der Runde gesperrt. Der Ablauf ist:
+`StartWar` prüft Spieler, Besitzer, Raster-Nachbarschaft, freie Grundaktion sowie die zentralen Beteiligungs- und Initiatorlimits. Der `WarSnapshot` hält die beiden ursprünglichen Flächen, die gemeinsame Rastergrenze und eine mögliche ♦-Markierung fest. Der Ablauf ist:
 
 ```text
 AWAITING_COMBAT_CHOICES

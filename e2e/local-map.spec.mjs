@@ -138,6 +138,20 @@ test("map modes and strategic-point effects are available in the player view", a
   await expect(page.getByRole("status")).toContainText("+25 % Wertung für dieses Gebiet");
 });
 
+test("the scoring result shows remaining global influence separately from territory value", async ({ page }) => {
+  await openWithoutIntroduction(page, "/?developer=1");
+  await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Endwertung" }).click();
+  await page.getByRole("button", { name: /Reich A/ }).click();
+
+  const result = page.getByRole("region", { name: "Endergebnis" });
+  await expect(result).toBeVisible();
+  await expect(result.getByText("Gebietswertung", { exact: true }).first()).toBeVisible();
+  await expect(result.getByText("Restlicher globaler Einfluss", { exact: true }).first()).toBeVisible();
+  await expect(result.getByText("3 × 10 = 30", { exact: true })).toBeVisible();
+  await expect(result.getByText("Gesamt", { exact: true }).first()).toBeVisible();
+});
+
 test("the desktop table uses side space and keeps the territory overview below it", async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 1000 });
   await openWithoutIntroduction(page, "/?developer=1");

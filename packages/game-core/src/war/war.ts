@@ -15,6 +15,7 @@ import type { TerritoryId } from "../model/ids.js";
 import { PointOfInterestType } from "../model/point-of-interest.js";
 import { getBreakthroughThreshold } from "../rules/territory-size.js";
 import { scaleGridDepth } from "../rules/grid-depth.js";
+import { lockTerritoryAfterWarCut } from "../rules/war-participation.js";
 import { finishCurrentBasicAction } from "../state/action-phase.js";
 import type { CombatResult, PendingWar } from "../state/action-phase-state.js";
 import { GamePhase } from "../state/game-phase.js";
@@ -250,8 +251,8 @@ export function chooseWarCut(
     ...state, map,
     territories: [
       ...state.territories.map((territory) => territory.id === loser.id
-        ? { ...withoutCached, participatedInWarThisRound: true } : territory),
-      { id: newId, ownerId: winnerPlayerId, card: newCard, participatedInWarThisRound: true },
+        ? lockTerritoryAfterWarCut(withoutCached) : territory),
+      lockTerritoryAfterWarCut({ id: newId, ownerId: winnerPlayerId, card: newCard, participatedInWarThisRound: true }),
     ],
   });
   const descriptions: EventDescription[] = [{ type: GameEventType.WarCutChoiceMade, actorId: action.playerId,

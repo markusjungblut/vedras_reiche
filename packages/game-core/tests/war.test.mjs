@@ -5,7 +5,9 @@ import {
   DomainErrorCode, GameActionType, GameEventType, GamePhase,
   getCellsWithinBorderDepth, getPointOfInterestTerritory, getSharedBorder,
   getTerritoryArea, PointOfInterestType, Suit, validateBorderAdvance,
-  assessBorderAdvanceLimitation, getMaximumLegalBorderAdvance,
+  assessBorderAdvanceLimitation, canTerritoryParticipateInWar, canTerritoryStartWar,
+  getLargeTerritoryThreshold, getMaximumLegalBorderAdvance,
+  getPotentialWarTargets, isLargeTerritory,
 } from "../dist/index.js";
 
 const timestamp = "2026-09-18T15:00:00.000Z";
@@ -116,7 +118,7 @@ test("normal, strong, and ♦-marked wars use scaled grid depths on a 100 by 100
   assert.equal(fight(start(largeWarFixture({ attackerWidth: 25 })), [6, 3]).pendingWar.maximumDepth, 8);
 });
 
-test("neutral ♦ accepts a connected four-cell deep transfer on a 100 by 100 map", () => {
+test("neutral ♦ accepts a connected six-cell deep transfer on a 100 by 100 map", () => {
   const base = largeWarFixture();
   const state = {
     ...base,
@@ -131,8 +133,72 @@ test("neutral ♦ accepts a connected four-cell deep transfer on a 100 by 100 ma
     choice: { type: "DIAMOND_NEUTRAL_BORDER", targetTerritoryId: "B" } }).state;
   const effect = pending.pendingDiamondBorderChanges[0];
   const resolved = act(pending, { type: GameActionType.ResolveNeutralDiamond, effectId: effect.id, playerId: "P",
-    claimedCells: [{ x: 50, y: 0 }, { x: 51, y: 0 }, { x: 52, y: 0 }, { x: 53, y: 0 }] }).state;
-  assert.deepEqual([50, 51, 52, 53].map((x) => resolved.map.cells[`${x},0`]), ["A", "A", "A", "A"]);
+    claimedCells: [{ x: 50, y: 0 }, { x: 51, y: 0 }, { x: 52, y: 0 }, { x: 53, y: 0 }, { x: 54, y: 0 }, { x: 55, y: 0 }] }).state;
+  assert.deepEqual([50, 51, 52, 53, 54, 55].map((x) => resolved.map.cells[`${x},0`]), ["A", "A", "A", "A", "A", "A"]);
+});
+
+function warEligibilityState({ width = 50, height = 50, area = 150, participationCount = 0, initiatedCount = 0 } = {}) {
+  const cells = {};
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    cells[`${x},${y}`] = y * width + x < area ? "A" : "B";
+  }
+  const setup = createGameState({ gameId: "war-eligibility", players: [{ id: "P", name: "P" }, { id: "Q", name: "Q" }], startPlayerId: "P" });
+  return {
+    ...setup,
+    map: createGridMap({ width, height }, cells),
+    territories: [
+      { id: "A", ownerId: "P", warParticipationCountThisRound: participationCount, warsInitiatedThisRound: initiatedCount },
+      { id: "B", ownerId: "Q" },
+    ],
+  };
+}
+
+test("large territory threshold is six percent of the current map area", () => {
+  assert.equal(getLargeTerritoryThreshold({ width: 50, height: 50 }), 150);
+  assert.equal(isLargeTerritory(warEligibilityState({ area: 149 }), "A"), false);
+  assert.equal(isLargeTerritory(warEligibilityState({ area: 150 }), "A"), true);
+  assert.equal(isLargeTerritory(warEligibilityState({ area: 151 }), "A"), true);
+  assert.equal(getLargeTerritoryThreshold({ width: 100, height: 50 }), 300);
+  assert.equal(isLargeTerritory(warEligibilityState({ width: 100, height: 50, area: 299 }), "A"), false);
+  assert.equal(isLargeTerritory(warEligibilityState({ width: 100, height: 50, area: 300 }), "A"), true);
+});
+
+test("war participation dynamically permits one extra defense only for current large territories", () => {
+  const largeAfterAttack = warEligibilityState({ area: 150, participationCount: 1, initiatedCount: 1 });
+  assert.deepEqual(canTerritoryStartWar(largeAfterAttack, "A"), { allowed: false, reason: "LARGE_TERRITORY_INITIATOR_LIMIT" });
+  assert.deepEqual(canTerritoryParticipateInWar(largeAfterAttack, "A"), { allowed: true });
+  assert.deepEqual(getPotentialWarTargets(largeAfterAttack, "Q"), [{ attackerTerritoryId: "B", defenderTerritoryId: "A" }]);
+  const attackAgain = { ...largeAfterAttack, phase: GamePhase.ActionPhase, activePlayerId: "P",
+    actionPhase: { completedPlayerIds: [], auctionsOpenedByActivePlayer: 0, secondAuctionAvailable: false } };
+  assert.throws(() => start(attackAgain), (error) => error.code === DomainErrorCode.LargeTerritoryInitiatorLimitReached);
+
+  const afterTwoWars = { ...largeAfterAttack, territories: largeAfterAttack.territories.map((territory) => territory.id === "A"
+    ? { ...territory, warParticipationCountThisRound: 2 } : territory) };
+  assert.deepEqual(canTerritoryParticipateInWar(afterTwoWars, "A"), { allowed: false, reason: "LARGE_TERRITORY_LIMIT" });
+
+  const normalAfterOneWar = warEligibilityState({ area: 149, participationCount: 1 });
+  assert.deepEqual(canTerritoryParticipateInWar(normalAfterOneWar, "A"), { allowed: false, reason: "NORMAL_TERRITORY_LIMIT" });
+  const normalAttackAgain = { ...normalAfterOneWar, phase: GamePhase.ActionPhase, activePlayerId: "P",
+    actionPhase: { completedPlayerIds: [], auctionsOpenedByActivePlayer: 0, secondAuctionAvailable: false } };
+  assert.throws(() => start(normalAttackAgain), (error) => error.code === DomainErrorCode.TerritoryAlreadyInWar);
+
+  const shrunkLarge = warEligibilityState({ area: 145, participationCount: 1 });
+  assert.deepEqual(canTerritoryParticipateInWar(shrunkLarge, "A"), { allowed: false, reason: "NORMAL_TERRITORY_LIMIT" });
+  const grownTerritory = warEligibilityState({ area: 155, participationCount: 1 });
+  assert.deepEqual(canTerritoryParticipateInWar(grownTerritory, "A"), { allowed: true });
+});
+
+test("starting a war records participation and initiation counts", () => {
+  const base = warEligibilityState({ area: 150 });
+  const state = { ...base, phase: GamePhase.ActionPhase, activePlayerId: "P",
+    actionPhase: { completedPlayerIds: [], auctionsOpenedByActivePlayer: 0, secondAuctionAvailable: false } };
+  const started = start(state);
+  const attacker = started.territories.find((territory) => territory.id === "A");
+  const defender = started.territories.find((territory) => territory.id === "B");
+  assert.equal(attacker.warParticipationCountThisRound, 1);
+  assert.equal(attacker.warsInitiatedThisRound, 1);
+  assert.equal(defender.warParticipationCountThisRound, 1);
+  assert.equal(defender.warsInitiatedThisRound, 0);
 });
 
 test("empty gain is legal at minimum area; claiming a cell there is rejected", () => {
@@ -300,6 +366,8 @@ test("war cut keeps the chosen original card and moves POIs and settlements with
   assert.equal(newPart.card.additionalSuit, undefined);
   assert.notEqual(`${newPart.card.suit}:${newPart.card.activationNumber}`, `${state.territories[1].card.suit}:${state.territories[1].card.activationNumber}`);
   assert.equal(newPart.participatedInWarThisRound, true);
+  assert.equal(newPart.warParticipationLockedThisRound, true);
+  assert.deepEqual(canTerritoryParticipateInWar(chosen, newPart.id), { allowed: false, reason: "NORMAL_TERRITORY_LIMIT" });
   assert.equal(getPointOfInterestTerritory(chosen, chosen.pointsOfInterest[0]), newPart.id);
   assert.equal(newPart.settlementFeature.position.x, 8);
   assert.equal(chosen.pendingWar, undefined);

@@ -41,8 +41,8 @@ export function startRound(
     : getNextPlayer(playerOrder, state.startPlayerId);
   const activationNumbers = rollActivationNumbers(randomSource);
   const territories = state.territories.map((territory) =>
-    territory.participatedInWarThisRound
-      ? { ...territory, participatedInWarThisRound: false }
+    territory.participatedInWarThisRound || territory.warParticipationCountThisRound !== undefined || territory.warsInitiatedThisRound !== undefined || territory.warParticipationLockedThisRound
+      ? { ...territory, participatedInWarThisRound: false, warParticipationCountThisRound: 0, warsInitiatedThisRound: 0, warParticipationLockedThisRound: false }
       : territory,
   );
   const provisionalState: GameState = { ...state, territories };

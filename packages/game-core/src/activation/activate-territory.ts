@@ -14,7 +14,7 @@ import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { RandomSource } from "../utils/random-source.js";
 import { applySymbolAbility } from "./apply-symbol-ability.js";
 import { getSharedBorder, reconcileMapBoundFeatures, validateBorderAdvance } from "../map/index.js";
-import { scaleGridDepth } from "../rules/grid-depth.js";
+import { getNeutralDiamondDepth } from "../rules/grid-depth.js";
 import type { ResolveNeutralDiamondAction } from "../actions/game-action.js";
 import { resolveDiamondCorrection, setWarSpadeChoice, proposeBorderAdvance, proposeWarCut, chooseWarCut } from "../war/war.js";
 import { chooseLargestRealm } from "../scoring/scoring.js";
@@ -140,7 +140,7 @@ export function resolveNeutralDiamond(
     throw new DomainError(DomainErrorCode.InvalidDiamondNeutralChange);
   }
   const border = getSharedBorder(state.map, source.id, target.id);
-  const validation = validateBorderAdvance(state.map, source.id, target.id, border, scaleGridDepth(2, state.map), action.claimedCells);
+  const validation = validateBorderAdvance(state.map, source.id, target.id, border, getNeutralDiamondDepth(state.map), action.claimedCells);
   if (!validation.valid || validation.map === undefined) {
     throw new DomainError(DomainErrorCode.InvalidDiamondNeutralChange, validation.reason);
   }

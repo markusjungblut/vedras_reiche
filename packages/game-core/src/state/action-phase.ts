@@ -10,6 +10,12 @@ import type { GameState } from "./game-state.js";
 import { areStateTerritoriesAdjacent } from "./geometry-selectors.js";
 import { getSharedBorder, getTerritoryArea } from "../map/grid-map.js";
 import { beginScoring } from "../scoring/scoring.js";
+import {
+  canTerritoryParticipateInWar,
+  canTerritoryStartWar,
+  recordWarParticipation,
+  type WarParticipationBlockReason,
+} from "../rules/war-participation.js";
 
 export interface PotentialBasicActions {
   readonly canOpenAuction: boolean;
@@ -34,11 +40,22 @@ export interface PotentialWarTarget {
 
 /** Returns only pairs which may still fight in this round. */
 export function getPotentialWarTargets(state: ActionTargetReadState, playerId: PlayerId): PotentialWarTarget[] {
-  const own = state.territories.filter((territory) => territory.ownerId === playerId && !territory.participatedInWarThisRound);
-  const opponents = state.territories.filter((territory) => territory.ownerId !== null && territory.ownerId !== playerId && !territory.participatedInWarThisRound);
+  const own = state.territories.filter((territory) => territory.ownerId === playerId && canTerritoryStartWar(state, territory.id).allowed);
+  const opponents = state.territories.filter((territory) => territory.ownerId !== null && territory.ownerId !== playerId && canTerritoryParticipateInWar(state, territory.id).allowed);
   return own.flatMap((attacker) => opponents
     .filter((defender) => areStateTerritoriesAdjacent(state, attacker.id, defender.id))
     .map((defender) => ({ attackerTerritoryId: attacker.id, defenderTerritoryId: defender.id })));
+}
+
+function throwWarParticipationError(reason: WarParticipationBlockReason): never {
+  switch (reason) {
+    case "LARGE_TERRITORY_LIMIT":
+      throw new DomainError(DomainErrorCode.LargeTerritoryWarLimitReached);
+    case "LARGE_TERRITORY_INITIATOR_LIMIT":
+      throw new DomainError(DomainErrorCode.LargeTerritoryInitiatorLimitReached);
+    case "NORMAL_TERRITORY_LIMIT":
+      throw new DomainError(DomainErrorCode.TerritoryAlreadyInWar);
+  }
 }
 
 export function getPotentialBasicActions(state: ActionTargetReadState, playerId: PlayerId): PotentialBasicActions {
@@ -230,9 +247,11 @@ export function startPendingWar(state: GameState, action: StartWarAction, timest
       defender.ownerId === action.playerId || !areStateTerritoriesAdjacent(state, attacker.id, defender.id)) {
     throw new DomainError(DomainErrorCode.InvalidWarTarget);
   }
-  if (attacker.participatedInWarThisRound || defender.participatedInWarThisRound || state.map === undefined) {
-    throw new DomainError(DomainErrorCode.TerritoryAlreadyInWar);
-  }
+  if (state.map === undefined) throw new DomainError(DomainErrorCode.InvalidWarTarget);
+  const attackerParticipation = canTerritoryStartWar(state, attacker.id);
+  if (!attackerParticipation.allowed) throwWarParticipationError(attackerParticipation.reason!);
+  const defenderParticipation = canTerritoryParticipateInWar(state, defender.id);
+  if (!defenderParticipation.allowed) throwWarParticipationError(defenderParticipation.reason!);
   const mark = state.borderMarks.find((item) => item.territoryIds.includes(attacker.id) && item.territoryIds.includes(defender.id));
   const warId = `${state.gameId}:war:${state.events.length + 1}`;
   const events = createEvents(state, timestamp, [{
@@ -258,8 +277,9 @@ export function startPendingWar(state: GameState, action: StartWarAction, timest
         spadeChoices: {},
       },
       borderMarks: mark === undefined ? state.borderMarks : state.borderMarks.filter((item) => item.id !== mark.id),
-      territories: state.territories.map((territory) => territory.id === attacker.id || territory.id === defender.id
-        ? { ...territory, participatedInWarThisRound: true } : territory),
+      territories: state.territories.map((territory) => territory.id === attacker.id
+        ? recordWarParticipation(territory, true)
+        : territory.id === defender.id ? recordWarParticipation(territory, false) : territory),
       actionPhase: { ...state.actionPhase, currentActionKind: "WAR" },
       events: [...state.events, ...events],
     },

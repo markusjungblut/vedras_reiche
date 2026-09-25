@@ -287,8 +287,9 @@ function scoringScenario(seed: number): DemoScenario {
   const state: GameState = {
     ...base,
     phase: GamePhase.Scoring,
-    players: base.players.map((player) => ({ ...player, secretFactionSuit: player.id === "anna" ? Suit.Diamonds
-      : player.id === "ben" ? Suit.Clubs : Suit.Spades })),
+    players: base.players.map((player) => ({ ...player, globalInfluence: player.id === "anna" ? 3
+      : player.id === "ben" ? 1 : 0, secretFactionSuit: player.id === "anna" ? Suit.Diamonds
+        : player.id === "ben" ? Suit.Clubs : Suit.Spades })),
     territories,
     pointsOfInterest: [
       { id: "score-landmark", type: PointOfInterestType.Landmark, position: { x: 11, y: 2 } },

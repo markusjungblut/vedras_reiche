@@ -1,11 +1,11 @@
-import { DomainError, DomainErrorCode, GamePhase, MapCreationStage, PointOfInterestType, getBreakthroughThreshold, getMinimumTerritoryArea, scaleGridDepth } from "@vedras/game-core";
+import { DomainError, DomainErrorCode, GamePhase, MapCreationStage, PointOfInterestType, getBreakthroughThreshold, getMinimumTerritoryArea, getNeutralDiamondDepth, scaleGridDepth } from "@vedras/game-core";
 import type { GameReadModel } from "../game-read-model";
 import { getPointOfInterestPresentation, POINT_OF_INTEREST_RULE_SUMMARY } from "../ui/point-of-interest-presentation.js";
 
 export type RuleHelpId =
   | "overview" | "mapCreation" | "pois" | "territoryCards" | "factions" | "startAuctions"
   | "rounds" | "activation" | "diamonds" | "clubs" | "hearts" | "spades" | "auctions"
-  | "war" | "borderGains" | "breakthrough" | "cutAndChoose" | "scoring";
+  | "war" | "borderGains" | "breakthrough" | "cutAndChoose" | "frontTerritory" | "scoring";
 
 export interface RuleHelpTopic {
   readonly id: RuleHelpId;
@@ -35,7 +35,7 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   factions: {
     id: "factions", title: "Fraktionen", short: "Deine geheime Fraktion belohnt Gebietskarten ihres ursprünglichen Symbols.",
-    long: "In der Endwertung erhält jedes deiner Gebiete mit dem ursprünglichen Symbol deiner geheimen Fraktion +25 %. Die Fraktion ist persönliche Information und wird anderen Spielern nicht angezeigt.", keywords: ["geheim", "25", "prozent", "symbol", "wertung"],
+    long: "In der Endwertung erhält jedes deiner Gebiete mit dem ursprünglichen Symbol deiner geheimen Fraktion +30 %. Die Fraktion ist persönliche Information und wird anderen Spielern nicht angezeigt.", keywords: ["geheim", "30", "prozent", "symbol", "wertung"],
   },
   startAuctions: {
     id: "startAuctions", title: "Startauktionen", short: "Startgebiete werden in getrennten, verdeckten Startauktionen vergeben.",
@@ -71,7 +71,7 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   war: {
     id: "war", title: "Krieg", short: "Ein eigenes Gebiet greift ein angrenzendes gegnerisches Gebiet an.",
-    long: "Beide Seiten können verdeckt verfügbare ♠-Effekte festlegen. Danach würfelt der Core und berücksichtigt ♠- sowie Festungsboni. Je nach Ergebnis endet der Krieg unentschieden, verschiebt eine Grenze, erobert ein Gebiet oder löst eine Teilung aus.", keywords: ["angriff", "verteidigung", "würfel", "festung", "geschwächt"],
+    long: "Beide Seiten können verdeckt verfügbare ♠-Effekte festlegen. Danach würfelt der Core und berücksichtigt ♠- sowie Festungsboni. Normale Gebiete können pro Runde an einem Krieg beteiligt sein. Großgebiete ab 6 % der Kartenfläche können an zwei Kriegen beteiligt sein, aber nur einen davon selbst beginnen. Je nach Ergebnis endet der Krieg unentschieden, verschiebt eine Grenze, erobert ein Gebiet oder löst eine Teilung aus.", keywords: ["angriff", "verteidigung", "würfel", "festung", "geschwächt", "großgebiet"],
   },
   borderGains: {
     id: "borderGains", title: "Grenzgewinn", short: "Nach einem passenden Kampfergebnis übernimmt der Gewinner Zellen entlang der gemeinsamen Grenze.",
@@ -85,22 +85,27 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
     id: "cutAndChoose", title: "Cut-and-Choose", short: "Eine Person teilt regelkonform, die andere wählt zuerst.",
     long: "Bei einer Auktion bestimmt der Core Divider und First Chooser aus dem Gleichstand und der Spielreihenfolge. Der Divider zieht eine gültige Teilung; der First Chooser wählt einen Teil. Im Krieg zieht der Gewinner die Grenze und der Verlierer wählt zuerst, welchen Teil er behält. Beide Teile brauchen mindestens {minimumTerritoryArea} Kästchen und müssen zusammenhängend sein.", keywords: ["teilung", "divider", "chooser", "gleichstand", "krieg", "auktion"],
   },
+  frontTerritory: {
+    id: "frontTerritory", title: "Frontgebiet", short: "Kleine Gebiete an gegnerischen Grenzen erhalten am Spielende einen Bonus.",
+    long: "Ein Gebiet mit höchstens 3 % der gesamten Kartenfläche erhält bei Spielende +20 % je unterschiedlichem angrenzenden gegnerischen Gebiet. Eigene und neutrale Gebiete zählen nicht. Der Bonus wird nur bei der Endwertung aus der aktuellen Karte bestimmt.", keywords: ["front", "gegner", "grenze", "20", "prozent", "wertung"],
+  },
   scoring: {
     id: "scoring", title: "Wertung", short: "Am Ende werden Fläche und regelkonforme Boni je Gebiet addiert.",
-    long: "Die Wertung zeigt pro Gebiet die Fläche und die einzelnen Bonusanteile: geheime Fraktion, größtes Reich, Entwicklungen und Strategische Punkte. Bei Gleichständen um das größte Reich wählt der betroffene Spieler einen zulässigen Bereich. Die höchste Gesamtwertung gewinnt.", keywords: ["ende", "punkte", "fläche", "größtes reich", "boni", "sieg"],
+    long: "Die Wertung zeigt pro Gebiet die Fläche und die einzelnen Bonusanteile: geheime Fraktion, größtes Reich, Entwicklungen, Strategische Punkte und Frontgebiet. Bei Gleichständen um das größte Reich wählt der betroffene Spieler einen zulässigen Bereich. Jeder verbleibende globale Einfluss ist 10 Punkte wert; lokaler Einfluss wird nicht gewertet. Die höchste Gesamtwertung gewinnt.", keywords: ["ende", "punkte", "fläche", "größtes reich", "frontgebiet", "globaler einfluss", "boni", "sieg"],
   },
 };
 
 export const GLOSSARY: readonly { readonly term: string; readonly definition: string; readonly keywords: readonly string[] }[] = [
   { term: "Aktivierung", definition: "Die Nutzung einer eigenen Gebietskarte mit aktueller Aktivierungszahl.", keywords: ["zahlen", "runde"] },
   { term: "Grundgebot", definition: "Der feste Gebotsteil einer normalen Auktion. Verfügbare Werte verwaltet der Core.", keywords: ["auktion", "bieten"] },
-  { term: "Globaler Einfluss", definition: "Spielerweiter Einfluss, der in normalen Auktionen eingesetzt werden kann.", keywords: ["herz", "gebot"] },
-  { term: "Lokaler Einfluss", definition: "Einfluss auf genau einem neutralen Gebiet; er zählt nur in dessen Auktion.", keywords: ["herz", "gebot", "neutral"] },
+  { term: "Globaler Einfluss", definition: "Spielerweiter Einfluss, der in normalen Auktionen eingesetzt werden kann und am Spielende je 10 Punkte wert ist.", keywords: ["herz", "gebot", "wertung"] },
+  { term: "Lokaler Einfluss", definition: "Einfluss auf genau einem neutralen Gebiet; er zählt nur in dessen Auktion und wird am Spielende nicht gewertet.", keywords: ["herz", "gebot", "neutral", "wertung"] },
+  { term: "Frontgebiet", definition: "Ein Gebiet mit höchstens 3 % der Kartenfläche erhält bei der Endwertung +20 % je unterschiedlichem angrenzenden gegnerischen Gebiet.", keywords: ["front", "gegner", "grenze", "wertung"] },
   { term: "Geschwächt", definition: "Ein Gebiet, bei dem der vorherige Grenzverlust keine ausreichende Fläche zurückgelassen hätte. Ein späterer Verlust führt zur Eroberung.", keywords: ["krieg", "grenzgewinn"] },
   { term: "Durchbruch", definition: "Kampfergebnis, das bei ausreichender Gebietsgröße eine Teilung auslösen kann.", keywords: ["cut and choose", "krieg"] },
   { term: "Cut-and-Choose", definition: "Teilungsablauf: Eine Person teilt, die andere wählt zuerst.", keywords: ["divider", "chooser", "gleichstand"] },
   { term: "Strategischer Punkt", definition: "Wahrzeichen, Knotenpunkt, Festung oder Relikt auf einer Rasterzelle.", keywords: ["wahrzeichen", "festung", "relikt"] },
-  { term: "Fraktion", definition: "Dein geheimes Symbol für den +25-%-Bonus auf Gebietskarten mit ihrem ursprünglichen Symbol.", keywords: ["geheim", "wertung"] },
+  { term: "Fraktion", definition: "Dein geheimes Symbol für den +30-%-Bonus auf Gebietskarten mit ihrem ursprünglichen Symbol.", keywords: ["geheim", "wertung"] },
 ];
 
 export interface HelpValues {
@@ -117,7 +122,7 @@ export function getHelpValues(state: GameReadModel): HelpValues {
     ? { minimumTerritoryArea: 0, cutAndChooseThreshold: 0, neutralDiamondDepth: 0, normalAdvanceDepth: 0, strongAdvanceDepth: 0 }
     : {
       minimumTerritoryArea: getMinimumTerritoryArea(map), cutAndChooseThreshold: getBreakthroughThreshold(map),
-      neutralDiamondDepth: scaleGridDepth(2, map), normalAdvanceDepth: scaleGridDepth(2, map), strongAdvanceDepth: scaleGridDepth(4, map),
+      neutralDiamondDepth: getNeutralDiamondDepth(map), normalAdvanceDepth: scaleGridDepth(2, map), strongAdvanceDepth: scaleGridDepth(4, map),
     };
 }
 
@@ -192,8 +197,8 @@ export function getCurrentHelp(state: GameReadModel, viewerPlayerId?: string): C
     case GamePhase.RoundReady: return { title: "Nächste Runde", action: "Starte die Runde; danach legt der Core die Aktivierungszahlen fest.", topicIds: ["rounds", "activation"] };
     case GamePhase.ActivationPhase: return { title: "Aktivierung", action: state.activePlayerId === viewerPlayerId ? "Wähle eines deiner vom Core freigegebenen Gebiete und nutze sein Symbol." : `${name(state, state.activePlayerId)} aktiviert gerade ein Gebiet.`, topicIds: ["activation", "diamonds", "clubs", "hearts", "spades"] };
     case GamePhase.ActionPhase: return { title: "Aktionsphase", action: state.activePlayerId === viewerPlayerId ? "Wähle eine vom Core angebotene Auktion oder einen Krieg." : `${name(state, state.activePlayerId)} führt gerade eine Grundaktion aus.`, topicIds: ["auctions", "war", "rounds"] };
-    case GamePhase.Scoring: return { title: "Wertung", action: "Wähle bei Bedarf einen zulässigen größten Reichsbereich; danach rechnet der Core das Ergebnis aus.", topicIds: ["scoring", "factions", "pois"] };
-    case GamePhase.Finished: return { title: "Partie beendet", action: "Die Endwertung zeigt alle Punkte und den Sieger.", topicIds: ["scoring", "overview"] };
+    case GamePhase.Scoring: return { title: "Wertung", action: "Wähle bei Bedarf einen zulässigen größten Reichsbereich; danach rechnet der Core das Ergebnis aus.", topicIds: ["scoring", "frontTerritory", "factions", "pois"] };
+    case GamePhase.Finished: return { title: "Partie beendet", action: "Die Endwertung zeigt alle Punkte und den Sieger.", topicIds: ["scoring", "frontTerritory", "overview"] };
   }
 }
 
@@ -218,6 +223,9 @@ const DOMAIN_MESSAGES: Partial<Record<DomainErrorCode, string>> = {
   [DomainErrorCode.InvalidBorderAdvance]: "Dieser Grenzgewinn ist nicht zulässig.",
   [DomainErrorCode.CellOutsideWarCorridor]: "Diese Zelle liegt außerhalb des zulässigen Grenzkorridors.",
   [DomainErrorCode.InvalidWarTarget]: "Diese Gebiete können keinen Krieg gegeneinander führen.",
+  [DomainErrorCode.TerritoryAlreadyInWar]: "Dieses Gebiet war in dieser Runde bereits in einem Krieg beteiligt.",
+  [DomainErrorCode.LargeTerritoryWarLimitReached]: "Dieses Großgebiet war in dieser Runde bereits an zwei Kriegen beteiligt.",
+  [DomainErrorCode.LargeTerritoryInitiatorLimitReached]: "Ein Großgebiet darf pro Runde höchstens einen Krieg selbst beginnen.",
   [DomainErrorCode.InvalidSpadeActivation]: "Dieser ♠-Effekt steht in diesem Krieg nicht zur Verfügung.",
   [DomainErrorCode.SpadeChoiceAlreadyLocked]: "Deine ♠-Entscheidung ist bereits verdeckt festgelegt.",
   [DomainErrorCode.InvalidSplitResolution]: "Diese Teilung entspricht nicht den aktuellen Vorgaben.",

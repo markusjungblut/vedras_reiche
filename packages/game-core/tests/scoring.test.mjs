@@ -15,6 +15,10 @@ import {
   GameActionType,
   GameEventType,
   GamePhase,
+  getFrontTerritoryBonusPercent,
+  getFrontTerritoryThreshold,
+  getJunctionBonusPercent,
+  getLargestRealmBonusPercent,
   PointOfInterestType,
   SettlementKind,
   Suit,
@@ -42,6 +46,17 @@ function stateFromRows({ rows, territories, players = [{ id: "anna", secretFacti
   };
 }
 
+function stateFromGrid({ width, height, format = "A4", cells, territories, players = [{ id: "anna", secretFactionSuit: Suit.Hearts }], pointsOfInterest = [] }) {
+  const gamePlayers = players.length >= 2 ? players : [...players, { id: "ben" }];
+  return {
+    ...createGameState({ gameId: "score-grid-test", players: gamePlayers, startPlayerId: gamePlayers[0].id }),
+    phase: GamePhase.Scoring,
+    territories,
+    map: createGridMap({ width, height, format }, cells),
+    pointsOfInterest,
+  };
+}
+
 function playerResult(state, playerId = "anna") {
   return state.result.playerResults.find((result) => result.playerId === playerId);
 }
@@ -63,9 +78,9 @@ test("scoring adds territory bonuses once and keeps exact hundredths", () => {
   const score = territoryScore(scored, "A");
   assert.equal(scored.phase, GamePhase.Finished);
   assert.equal(score.baseArea, 100);
-  assert.equal(score.totalBonusPercent, 125);
-  assert.equal(score.scoreHundredths, 22500);
-  assert.equal(formatScoreHundredths(score.scoreHundredths), "225");
+  assert.equal(score.totalBonusPercent, 115);
+  assert.equal(score.scoreHundredths, 21500);
+  assert.equal(formatScoreHundredths(score.scoreHundredths), "215");
 });
 
 test("faction scoring considers only the card's original suit", () => {
@@ -74,18 +89,29 @@ test("faction scoring considers only the card's original suit", () => {
   });
   const score = territoryScore(beginScoring(state, timestamp).state, "A");
   assert.equal(score.factionBonusPercent, 0);
-  assert.equal(score.largestRealmBonusPercent, 25);
+  assert.equal(score.largestRealmBonusPercent, 10);
 });
 
-test("an exact quarter bonus keeps twenty-three cells at 28,75 points", () => {
+test("the faction bonus is thirty percent for the original suit", () => {
+  const state = stateFromRows({ rows: ["A"], territories: [territory("A", "anna", Suit.Hearts)] });
+  assert.equal(territoryScore(beginScoring(state, timestamp).state, "A").factionBonusPercent, 30);
+});
+
+test("an exact ten-percent realm bonus keeps hundredths precise", () => {
   const state = stateFromRows({ rows: ["A".repeat(23)], players: [{ id: "anna", secretFactionSuit: Suit.Spades }],
     territories: [territory("A", "anna", Suit.Diamonds)],
   });
   const score = territoryScore(beginScoring(state, timestamp).state, "A");
-  assert.equal(score.totalBonusPercent, 25);
-  assert.equal(score.scoreHundredths, 2875);
-  assert.equal(formatScoreHundredths(score.scoreHundredths), "28,75");
-  assert.equal(formatRoundedScoreHundredths(score.scoreHundredths), "29");
+  assert.equal(score.totalBonusPercent, 10);
+  assert.equal(score.scoreHundredths, 2530);
+  assert.equal(formatScoreHundredths(score.scoreHundredths), "25,30");
+  assert.equal(formatRoundedScoreHundredths(score.scoreHundredths), "25");
+});
+
+test("largest-realm bonus follows the player count", () => {
+  assert.equal(getLargestRealmBonusPercent(2), 10);
+  assert.equal(getLargestRealmBonusPercent(3), 15);
+  for (const playerCount of [4, 5, 6]) assert.equal(getLargestRealmBonusPercent(playerCount), 20);
 });
 
 test("the geometrically largest realm receives the bonus on each of its territories", () => {
@@ -94,8 +120,8 @@ test("the geometrically largest realm receives the bonus on each of its territor
     territories: [territory("A", "anna"), territory("B", "anna"), territory("C", "anna")],
   });
   const scored = beginScoring(state, timestamp).state;
-  assert.equal(territoryScore(scored, "A").largestRealmBonusPercent, 25);
-  assert.equal(territoryScore(scored, "B").largestRealmBonusPercent, 25);
+  assert.equal(territoryScore(scored, "A").largestRealmBonusPercent, 10);
+  assert.equal(territoryScore(scored, "B").largestRealmBonusPercent, 10);
   assert.equal(territoryScore(scored, "C").largestRealmBonusPercent, 0);
 });
 
@@ -112,7 +138,7 @@ test("tied largest realms wait for the owner's valid choice", () => {
   const completed = chooseLargestRealm(waiting.state, { type: GameActionType.ChooseLargestRealm, playerId: "anna", componentId: candidates[0] }, timestamp).state;
   assert.equal(completed.phase, GamePhase.Finished);
   const selected = completed.scoring.realmComponents.find((component) => component.id === candidates[0]);
-  for (const territoryId of selected.territoryIds) assert.equal(territoryScore(completed, territoryId).largestRealmBonusPercent, 25);
+  for (const territoryId of selected.territoryIds) assert.equal(territoryScore(completed, territoryId).largestRealmBonusPercent, 10);
   const unselectedId = selected.territoryIds[0] === "A" ? "B" : "A";
   assert.equal(territoryScore(completed, unselectedId).largestRealmBonusPercent, 0);
   assert.ok(completed.events.some((event) => event.type === GameEventType.LargestRealmChoiceRequired));
@@ -129,14 +155,90 @@ function hubState(hubCount, threeNeighbors) {
   return stateFromRows({ rows, territories: [...territoryIds].map((id) => territory(id, id === "A" ? "anna" : null)), pointsOfInterest });
 }
 
-test("each hub caps its adjacent-territory bonus at fifty percent", () => {
+test("each hub caps its adjacent-territory bonus at seventy-five percent", () => {
   const scored = beginScoring(hubState(1, false), timestamp).state;
-  assert.equal(territoryScore(scored, "A").hubBonusPercent, 50);
+  assert.equal(territoryScore(scored, "A").hubBonusPercent, 75);
 });
 
 test("multiple hubs stack their individually capped bonuses", () => {
   const scored = beginScoring(hubState(2, true), timestamp).state;
-  assert.equal(territoryScore(scored, "A").hubBonusPercent, 60);
+  assert.equal(territoryScore(scored, "A").hubBonusPercent, 90);
+});
+
+test("junction bonuses add fifteen percent per distinct neighbor and cap at five", () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map(getJunctionBonusPercent), [15, 30, 45, 60, 75, 75]);
+});
+
+function areaState(width, height, area) {
+  const cells = {};
+  for (let index = 0; index < area; index += 1) cells[`${index % width},${Math.floor(index / width)}`] = "A";
+  return stateFromGrid({ width, height, territories: [territory("A", "anna")] , cells });
+}
+
+function frontBorderState(enemyTerritoryCount, area = 60) {
+  const cells = {};
+  const territoryWidth = 10;
+  const territoryHeight = area / territoryWidth;
+  for (let y = 20; y < 20 + territoryHeight; y += 1) for (let x = 20; x < 30; x += 1) cells[`${x},${y}`] = "A";
+  const enemies = Array.from({ length: enemyTerritoryCount }, (_, index) => `enemy-${index}`);
+  for (const [index, territoryId] of enemies.entries()) {
+    for (let x = 20 + index * 2; x < 22 + index * 2; x += 1) cells[`${x},19`] = territoryId;
+  }
+  return stateFromGrid({ width: 50, height: 50, cells, players: [{ id: "anna" }, { id: "ben" }],
+    territories: [territory("A", "anna"), ...enemies.map((territoryId) => territory(territoryId, "ben"))] });
+}
+
+test("front territory thresholds use three percent of each map", () => {
+  assert.equal(getFrontTerritoryThreshold({ width: 50, height: 50 }), 75);
+  assert.equal(getFrontTerritoryThreshold({ width: 100, height: 50 }), 150);
+  assert.equal(territoryScore(beginScoring(areaState(50, 50, 75), timestamp).state, "A").isFrontTerritory, true);
+  assert.equal(territoryScore(beginScoring(areaState(50, 50, 76), timestamp).state, "A").isFrontTerritory, false);
+  assert.equal(territoryScore(beginScoring(areaState(100, 50, 150), timestamp).state, "A").isFrontTerritory, true);
+  assert.equal(territoryScore(beginScoring(areaState(100, 50, 151), timestamp).state, "A").isFrontTerritory, false);
+});
+
+test("front territories receive twenty percent for each unique enemy territory without a cap", () => {
+  for (const enemyTerritoryCount of [0, 1, 2, 3, 5]) {
+    const score = territoryScore(beginScoring(frontBorderState(enemyTerritoryCount), timestamp).state, "A");
+    assert.equal(score.isFrontTerritory, true);
+    assert.equal(score.frontTerritoryEnemyNeighborCount, enemyTerritoryCount);
+    assert.equal(score.frontTerritoryBonusPercent, enemyTerritoryCount * 20);
+  }
+  assert.equal(getFrontTerritoryBonusPercent(5), 100);
+});
+
+test("front territory neighbors count territories, excluding own, neutral, and diagonal contact", () => {
+  const cells = {};
+  for (let y = 20; y < 26; y += 1) for (let x = 20; x < 30; x += 1) cells[`${x},${y}`] = "A";
+  for (let x = 20; x < 22; x += 1) cells[`${x},19`] = "B";
+  for (let x = 22; x < 24; x += 1) cells[`${x},19`] = "C";
+  for (let y = 20; y < 26; y += 1) cells[`19,${y}`] = "OWN";
+  cells["19,19"] = "DIAGONAL";
+  const state = stateFromGrid({ width: 50, height: 50, cells, players: [{ id: "anna" }, { id: "ben" }, { id: "clara" }], territories: [
+    territory("A", "anna"), territory("B", "ben"), territory("C", "ben"), territory("OWN", "anna"), territory("DIAGONAL", "clara"),
+  ] });
+  const score = territoryScore(beginScoring(state, timestamp).state, "A");
+  assert.equal(score.frontTerritoryEnemyNeighborCount, 2);
+  assert.equal(score.frontTerritoryBonusPercent, 40);
+});
+
+test("territories above three percent receive no front bonus", () => {
+  const score = territoryScore(beginScoring(frontBorderState(5, 100), timestamp).state, "A");
+  assert.equal(score.isFrontTerritory, false);
+  assert.equal(score.frontTerritoryEnemyNeighborCount, 0);
+  assert.equal(score.frontTerritoryBonusPercent, 0);
+});
+
+test("remaining global influence adds fixed end points while local influence adds none", () => {
+  for (const globalInfluence of [0, 1, 3, 4]) {
+    const state = stateFromRows({ rows: ["A"], players: [{ id: "anna", globalInfluence }], territories: [
+      territory("A", "anna", Suit.Spades, { localInfluenceByPlayerId: { anna: 99, ben: 50 } }),
+    ] });
+    const result = playerResult(beginScoring(state, timestamp).state, "anna");
+    assert.equal(result.remainingGlobalInfluence, globalInfluence);
+    assert.equal(result.remainingGlobalInfluenceScoreHundredths, globalInfluence * 1000);
+    assert.equal(result.totalScoreHundredths, result.territoryScoreHundredths + globalInfluence * 1000);
+  }
 });
 
 test("relics activate only after their owner controls at least two", () => {

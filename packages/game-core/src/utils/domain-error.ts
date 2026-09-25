@@ -37,6 +37,8 @@ export enum DomainErrorCode {
   LegalActionAvailable = "LEGAL_ACTION_AVAILABLE",
   PendingWarRequired = "PENDING_WAR_REQUIRED",
   TerritoryAlreadyInWar = "TERRITORY_ALREADY_IN_WAR",
+  LargeTerritoryWarLimitReached = "LARGE_TERRITORY_WAR_LIMIT_REACHED",
+  LargeTerritoryInitiatorLimitReached = "LARGE_TERRITORY_INITIATOR_LIMIT_REACHED",
   InvalidWarTarget = "INVALID_WAR_TARGET",
   InvalidSpadeActivation = "INVALID_SPADE_ACTIVATION",
   SpadeChoiceAlreadyLocked = "SPADE_CHOICE_ALREADY_LOCKED",

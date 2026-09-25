@@ -3,6 +3,7 @@ import {
   fromCellKey,
   formatScoreHundredths,
   getPointOfInterestTerritory,
+  getWarParticipationCount,
   getSharedBorder,
   getStateTerritoryArea,
   mapScreenPointToLocal,
@@ -122,13 +123,14 @@ function sortTerritories(state: GameReadModel, territories: readonly Territory[]
 function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highlighted, activated, borderMarked, onSelect, playerName }: TerritoryCardProps) {
   const card = territory.card;
   const localInfluence = Object.entries(territory.localInfluenceByPlayerId ?? {}).filter(([, amount]) => amount > 0);
+  const warParticipationCount = getWarParticipationCount(territory);
   const classes = [
     "territory-card",
     territory.ownerId === null ? "owner-neutral" : `owner-${ownerIndex % 6}`,
     selected && "is-selected",
     highlighted && "is-neighbor",
     activated && "is-activated",
-    territory.participatedInWarThisRound && "is-war-locked",
+    warParticipationCount > 0 && "is-war-locked",
   ].filter(Boolean).join(" ");
 
   return (
@@ -150,7 +152,7 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
           {territory.settlement && <span title={territory.settlement === "CITY" ? "Stadt" : "Siedlung"}>{territory.settlement === "CITY" ? "Stadt" : "Siedlung"}{(territory.settlementFeatures?.length ?? 0) > 1 ? ` ×${territory.settlementFeatures!.length}` : ""}</span>}
           {borderMarked && <span title="Markierte Grenze">♦</span>}
           {territory.weakened && <span title="Geschwächt">Geschwächt</span>}
-          {territory.participatedInWarThisRound && <span title="Krieg diese Runde bereits ausgeführt">Kriegssperre</span>}
+          {warParticipationCount > 0 && <span title={`${warParticipationCount} Kriegsbeteiligung${warParticipationCount === 1 ? "" : "en"} in dieser Runde`}>Krieg {warParticipationCount}</span>}
         </span>
       </span>
       {localInfluence.length > 0 && <span className="territory-influence">Einfluss: {localInfluence.map(([id, amount]) => `${playerName(id)} ${amount}`).join(" · ")}</span>}

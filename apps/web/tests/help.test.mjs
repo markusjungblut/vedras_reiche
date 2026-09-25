@@ -51,6 +51,14 @@ test("help values use the current map instead of a fixed digital threshold", () 
   assert.match(renderRuleHelp(RULE_HELP.cutAndChoose, values).long, /mindestens 3 Kästchen/);
   assert.match(renderRuleHelp(RULE_HELP.breakthrough, values).long, /bei 6 Kästchen/);
   assert.match(renderRuleHelp(RULE_HELP.borderGains, values).long, /bis zu 1 Kästchen tief/);
+  assert.equal(getHelpValues({ map: { width: 50, height: 50 } }).neutralDiamondDepth, 3);
+});
+
+test("scoring help explains front territories and remaining influence", () => {
+  assert.match(RULE_HELP.frontTerritory.long, /höchstens 3 %/);
+  assert.match(RULE_HELP.frontTerritory.long, /\+20 %/);
+  assert.match(RULE_HELP.scoring.long, /globale Einfluss ist 10 Punkte wert/);
+  assert.match(RULE_HELP.scoring.long, /lokaler Einfluss wird nicht gewertet/);
 });
 
 test("map colors switch only with the authoritative phase and POI copy stays shared", () => {
@@ -60,11 +68,13 @@ test("map colors switch only with the authoritative phase and POI copy stays sha
   assert.equal(getMapColorRegime({ phase: GamePhase.ActivationPhase }), "OWNERSHIP");
   assert.equal(getMapColorRegime({ phase: GamePhase.ActionPhase }), "OWNERSHIP");
   assert.match(POINT_OF_INTEREST_PRESENTATIONS.LANDMARK.shortEffect, /\+25 % Wertung/);
-  assert.match(POINT_OF_INTEREST_PRESENTATIONS.JUNCTION.shortEffect, /höchstens \+50 %/);
+  assert.match(POINT_OF_INTEREST_PRESENTATIONS.JUNCTION.shortEffect, /\+15 %/);
+  assert.match(POINT_OF_INTEREST_PRESENTATIONS.JUNCTION.shortEffect, /höchstens \+75 %/);
   assert.match(POINT_OF_INTEREST_PRESENTATIONS.FORTRESS.shortEffect, /\+1 Verteidigung/);
   assert.match(POINT_OF_INTEREST_PRESENTATIONS.RELIC.shortEffect, /zwei Relikte/);
   assert.match(POINT_OF_INTEREST_RULE_SUMMARY, /★ Wahrzeichen/);
   assert.match(RULE_HELP.pois.long, /◆ Relikt/);
+  assert.match(RULE_HELP.factions.long, /\+30 %/);
 });
 
 test("domain errors receive understandable neutral messages", () => {

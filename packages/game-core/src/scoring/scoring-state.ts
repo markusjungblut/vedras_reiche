@@ -20,6 +20,9 @@ export interface ScoringState {
 export interface TerritoryScoreBreakdown {
   readonly territoryId: TerritoryId;
   readonly baseArea: number;
+  readonly isFrontTerritory: boolean;
+  readonly frontTerritoryEnemyNeighborCount: number;
+  readonly frontTerritoryBonusPercent: number;
   readonly factionBonusPercent: number;
   readonly largestRealmBonusPercent: number;
   readonly developmentBonusPercent: number;
@@ -34,6 +37,12 @@ export interface TerritoryScoreBreakdown {
 export interface PlayerScore {
   readonly playerId: PlayerId;
   readonly territoryScores: readonly TerritoryScoreBreakdown[];
+  /** Exact subtotal from controlled territory areas and their additive bonuses. */
+  readonly territoryScoreHundredths: number;
+  /** Global influence still held when final scoring begins. */
+  readonly remainingGlobalInfluence: number;
+  /** Exact fixed score from remaining global influence. */
+  readonly remainingGlobalInfluenceScoreHundredths: number;
   readonly totalScoreHundredths: number;
   readonly controlledTerritoryCount: number;
   readonly controlledArea: number;
