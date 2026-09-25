@@ -6,6 +6,8 @@ import type { Suit } from "../model/territory-card.js";
 import { DomainError, DomainErrorCode } from "../utils/domain-error.js";
 import type { PendingWar } from "../state/action-phase-state.js";
 import { GamePhase } from "../state/game-phase.js";
+import { getNextMapCreationStageForPlayer } from "../state/map-creation.js";
+import { MapCreationStage } from "../state/map-creation-state.js";
 
 export type VisibleAuctionBid = AuctionBid | { readonly submitted: true };
 export type PublicPlayerView = Pick<Player, "id" | "name" | "globalInfluence" | "availableBasicBids" | "turnStatus">;
@@ -13,6 +15,7 @@ export type PublicPlayerView = Pick<Player, "id" | "name" | "globalInfluence" | 
 export type PlayerInputStatus = "ACTION_REQUIRED" | "OPTIONAL_DECISION" | "SUBMITTED" | "WAITING" | "PROCESSING";
 export type PlayerInputAction =
   | "ACTIVATION" | "ACTIVATION_ROLL" | "START_BID" | "NORMAL_BID" | "BASIC_ACTION"
+  | "SETUP_BOUNDARY" | "SETUP_POI" | "SETUP_FINALIZE"
   | "SPLIT_DIVISION" | "SPLIT_CHOICE" | "WAR_SPADE_CHOICE" | "BORDER_ADVANCE"
   | "WAR_CUT_DIVISION" | "WAR_CUT_CHOICE" | "DIAMOND_CORRECTION" | "LARGEST_REALM";
 
@@ -23,6 +26,7 @@ export type PlayerInputAction =
 export interface PlayerInputState {
   readonly status: PlayerInputStatus;
   readonly action?: PlayerInputAction;
+  readonly nextAction?: PlayerInputAction;
   readonly activePlayerId?: PlayerId;
   readonly submittedBidCount?: number;
   readonly requiredBidCount?: number;
@@ -56,8 +60,15 @@ export interface PlayerGameView extends Omit<GameState, "auction" | "players" | 
   readonly playerInput: PlayerInputState;
 }
 
-function waiting(activePlayerId?: PlayerId): PlayerInputState {
-  return { status: "WAITING", ...(activePlayerId === undefined ? {} : { activePlayerId }) };
+function waiting(activePlayerId?: PlayerId, nextAction?: PlayerInputAction): PlayerInputState {
+  return { status: "WAITING", ...(activePlayerId === undefined ? {} : { activePlayerId }),
+    ...(nextAction === undefined ? {} : { nextAction }) };
+}
+
+function mapCreationAction(stage: MapCreationStage): PlayerInputAction {
+  if (stage === MapCreationStage.DrawTerritories) return "SETUP_BOUNDARY";
+  if (stage === MapCreationStage.ReadyToFinalize) return "SETUP_FINALIZE";
+  return "SETUP_POI";
 }
 
 function playerInputFor(state: GameState, viewerPlayerId: PlayerId): PlayerInputState {
@@ -108,12 +119,22 @@ function playerInputFor(state: GameState, viewerPlayerId: PlayerId): PlayerInput
       ? { status: "ACTION_REQUIRED", action: "DIAMOND_CORRECTION", activePlayerId: diamond.playerId }
       : waiting(diamond.playerId);
   }
+  const mapCreation = state.mapCreation;
+  if (state.phase === GamePhase.MapCreation && mapCreation !== undefined) {
+    if (mapCreation.activePlayerId === viewerPlayerId) {
+      return { status: "ACTION_REQUIRED", action: mapCreationAction(mapCreation.stage), activePlayerId: viewerPlayerId };
+    }
+    const nextStage = getNextMapCreationStageForPlayer(state, viewerPlayerId);
+    return waiting(mapCreation.activePlayerId, nextStage === undefined ? undefined : mapCreationAction(nextStage));
+  }
   const auction = state.auction;
   if (auction !== undefined) {
     const submittedBidCount = Object.keys(auction.submittedBids).length;
     const requiredBidCount = auction.eligiblePlayerIds.length;
     if (!auction.eligiblePlayerIds.includes(viewerPlayerId)) {
-      return { ...waiting(), submittedBidCount, requiredBidCount };
+      const nextAction = auction.kind === "START" && state.startAuctions?.round === 1 &&
+        state.startAuctions.awardedPlayerIds.includes(viewerPlayerId) ? "START_BID" : undefined;
+      return { ...waiting(undefined, nextAction), submittedBidCount, requiredBidCount };
     }
     return auction.submittedBids[viewerPlayerId] === undefined
       ? { status: "ACTION_REQUIRED", action: auction.kind === "START" ? "START_BID" : "NORMAL_BID", submittedBidCount, requiredBidCount }

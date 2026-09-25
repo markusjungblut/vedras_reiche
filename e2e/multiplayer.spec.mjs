@@ -66,12 +66,19 @@ test("two accounts create, join and start an authoritative room", async ({ brows
     await expect(map).toBeVisible();
     await expect(guest.getByRole("img", { name: "Vedras Rasterkarte" })).toBeVisible();
     await expect(host.getByRole("heading", { name: "Gebiete: 1 / 12" })).toBeVisible();
-    await expect(guest.getByRole("heading", { name: "Gebiete: 1 / 12" })).toBeVisible();
+    await expect(guest.getByRole("heading", { name: "Du bist nicht am Zug." })).toBeVisible();
+    await expect(guest.getByText("Als Nächstes: Gebiet zeichnen")).toBeVisible();
     await expect(host.locator(".game-header .room-status")).toContainText(roomCode);
     await expect(host.getByRole("button", { name: "Regelhilfe öffnen" })).toBeVisible();
     await host.locator(".party-menu > summary").click();
     await expect(host.getByLabel("Spieler im Raum")).toContainText("Ben · ● verbunden");
-    await host.locator(".party-menu > summary").click();
+    await host.locator(".music-menu > summary").click();
+    await expect(host.locator(".party-popover")).not.toBeVisible();
+    await expect(host.locator(".music-menu-content")).toBeVisible();
+    await host.getByRole("button", { name: "Regelhilfe öffnen" }).click();
+    await expect(host.locator(".music-menu-content")).not.toBeVisible();
+    await expect(host.locator(".help-drawer")).toBeVisible();
+    await host.locator(".help-drawer").getByRole("button", { name: "Regelhilfe schließen" }).click();
     await host.locator(".music-menu > summary").click();
     await guest.locator(".music-menu > summary").click();
     const hostTrack = host.getByText(/^Synchron im Raum:/);
@@ -110,21 +117,29 @@ test("four players complete four drawing turns before the first POI phase begins
     await Promise.all([host, ben, clara, dora].map((page) => expect(page.getByRole("img", { name: "Vedras Rasterkarte" })).toBeVisible()));
 
     await drawVerticalSetupBoundary(host, 10);
-    await Promise.all([host, ben, clara, dora].map((page) => expect(page.getByRole("region", { name: "Kartenbau" })).toContainText("Aktiver Spieler: Ben")));
-    await expect(host.getByRole("button", { name: "Grenzstift" })).toBeDisabled();
-    await expect(clara.getByRole("button", { name: "Grenzstift" })).toBeDisabled();
+    await expect(ben.locator(".action-panel")).toHaveClass(/is-turn-pulse/);
+    await ben.waitForTimeout(700);
+    await expect(ben.locator(".action-panel")).not.toHaveClass(/is-turn-pulse/);
+    await expect(host.getByRole("heading", { name: "Du bist nicht am Zug." })).toBeVisible();
+    await expect(host.locator(".connection-banner")).toHaveCount(0);
+    await expect(host.getByText("Als Nächstes:")).toHaveCount(0);
+    await expect(clara.getByRole("heading", { name: "Du bist nicht am Zug." })).toBeVisible();
+    await expect(clara.getByText("Als Nächstes: Gebiet zeichnen")).toBeVisible();
+    await expect(dora.getByRole("heading", { name: "Du bist nicht am Zug." })).toBeVisible();
+    await expect(ben.getByRole("heading", { name: "Du bist an der Reihe." })).toBeVisible();
     await expect(ben.getByRole("button", { name: "Grenzstift" })).not.toBeDisabled();
 
-    for (const [page, cut, regionCount] of [[ben, 20, 3], [clara, 30, 4]]) {
+    for (const [page, nextPage, cut, regionCount] of [[ben, clara, 20, 3], [clara, dora, 30, 4]]) {
       await drawVerticalSetupBoundary(page, cut);
-      await expect(page.getByText(`Gebiete: ${regionCount} / 20`)).toBeVisible();
+      await expect(nextPage.getByText(`Gebiete: ${regionCount} / 20`)).toBeVisible();
     }
 
     await expect(dora.getByRole("region", { name: "Kartenbau" })).toContainText("Aktiver Spieler: Dora");
     await expect(dora.getByText("Wahrzeichen platzieren")).toHaveCount(0);
     await drawVerticalSetupBoundary(dora, 40);
-    await expect(dora.getByRole("region", { name: "Strategische Punkte platzieren" })).toBeVisible();
-    await expect(dora.getByText("Wahrzeichen platzieren")).toBeVisible();
+    await expect(dora.getByRole("heading", { name: "Du bist nicht am Zug." })).toBeVisible();
+    await expect(host.getByRole("region", { name: "Strategische Punkte platzieren" })).toBeVisible();
+    await expect(host.getByRole("heading", { name: "Wahrzeichen platzieren", exact: true })).toBeVisible();
   } finally {
     await Promise.all(contexts.map((context) => context.close()));
   }

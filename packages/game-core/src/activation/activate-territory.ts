@@ -22,8 +22,10 @@ import {
   commitSetupBoundaryDraft,
   correctSetupBorders,
   finalizeMapCreation,
+  getSetupMapValidationIssues,
   placeSetupPointOfInterest,
 } from "../state/map-creation.js";
+import { MapCreationStage } from "../state/map-creation-state.js";
 import { completeActivationStep, getNextActivationResolverPlayer, rollNextActivationNumber, startRound } from "../state/start-round.js";
 
 export interface ActivationContext {
@@ -210,14 +212,28 @@ export function applyAction(
   switch (action.type) {
     case GameActionType.BeginMapCreation:
       return beginMapCreation(state, action, context.timestamp);
-    case GameActionType.CommitSetupBoundaryDraft:
-      return commitSetupBoundaryDraft(state, action, context.timestamp);
+    case GameActionType.CommitSetupBoundaryDraft: {
+      const committed = commitSetupBoundaryDraft(state, action, context.timestamp);
+      if (committed.state.mapCreation?.stage !== MapCreationStage.ReadyToFinalize ||
+          getSetupMapValidationIssues(committed.state).length > 0) return committed;
+      const finalized = finalizeMapCreation(committed.state, {
+        type: GameActionType.FinalizeMapCreation,
+        playerId: action.playerId,
+      }, context.randomSource, context.timestamp);
+      const started = beginStartAuctions(finalized.state, finalized.state.lastSetupPlayerId,
+        context.randomSource, context.timestamp);
+      return { state: started.state, events: [...committed.events, ...finalized.events, ...started.events] };
+    }
     case GameActionType.CorrectSetupBorders:
       return correctSetupBorders(state, action, context.timestamp);
     case GameActionType.PlaceSetupPointOfInterest:
       return placeSetupPointOfInterest(state, action, context.timestamp);
-    case GameActionType.FinalizeMapCreation:
-      return finalizeMapCreation(state, action, context.randomSource, context.timestamp);
+    case GameActionType.FinalizeMapCreation: {
+      const finalized = finalizeMapCreation(state, action, context.randomSource, context.timestamp);
+      const started = beginStartAuctions(finalized.state, finalized.state.lastSetupPlayerId,
+        context.randomSource, context.timestamp);
+      return { state: started.state, events: [...finalized.events, ...started.events] };
+    }
     case GameActionType.ActivateTerritory:
       return activateTerritory(state, action, context);
     case GameActionType.RollNextActivationNumber:

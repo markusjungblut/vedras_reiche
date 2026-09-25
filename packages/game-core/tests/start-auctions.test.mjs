@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   GameActionType, GameEventType, GamePhase, Suit,
   createGameState, createGridMap, createTerritoryCard, getTerritoryArea,
+  createGameViewForPlayer,
   proposeTerritorySplit, chooseSplitPart, startRound,
 } from "../dist/index.js";
 import {
@@ -72,6 +73,8 @@ test("two start auction rounds use disjoint P+1 displays and end with two territ
   assert.equal(firstBid.events.some((event) => event.type === GameEventType.AuctionBidsRevealed), false);
   state = bid(firstBid.state, "A", 1).state;
   assert.equal(state.territories[0].ownerId, "A");
+  assert.deepEqual(state.startAuctions.resolvedDisplayTerritoryIds, ["t1"]);
+  assert.equal(createGameViewForPlayer(state, "A").playerInput.nextAction, "START_BID");
   assert.equal(state.startAuctions.auctioneerPlayerId, "B");
   assert.deepEqual(state.startAuctions.availableBidsByPlayerId.A, [0, 2]);
   assert.deepEqual(state.startAuctions.availableBidsByPlayerId.B, [1, 2]);
@@ -135,6 +138,18 @@ test("a raster start auction tie uses divider proposal and chooser decision", ()
   assert.equal(state.startAuctions.round, 2);
 });
 
+test("a sole eligible bidder wins with zero and consumes that bid", () => {
+  let state = beginStartAuctions(makeSetup(), "B", new SequenceRandomSource([0, 0, 0]), timestamp).state;
+  state = bid(state, "A", 2).state;
+  state = bid(state, "B", 1).state;
+  const resolution = bid(state, "B", 0, new SequenceRandomSource([0, 0, 0]));
+  state = resolution.state;
+  assert.equal(state.territories.find((territory) => territory.id === "t2")?.ownerId, "B");
+  assert.equal(resolution.events.some((event) => event.type === GameEventType.AuctionBidsRevealed &&
+    event.payload.bids.B.value === 0), true);
+  assert.equal(state.startAuctions.round, 2);
+});
+
 test("all zero and later non-awards rotate the auctioneer and wrap the fixed display", () => {
   let state = beginStartAuctions(makeSetup(), "B", new SequenceRandomSource([0, 0, 0]), timestamp).state;
   state = open(state);
@@ -164,6 +179,7 @@ test("all zero and later non-awards rotate the auctioneer and wrap the fixed dis
   assert.equal(state.events.filter((event) => event.type === GameEventType.StartBidRefreshed).length, 2);
   state = open(state);
   assert.equal(state.auction.territoryId, "t1");
+  assert.deepEqual(state.startAuctions.resolvedDisplayTerritoryIds, []);
 });
 
 test("three highest bidders leave territory neutral and consume bids", () => {

@@ -846,6 +846,21 @@ function PhaseControls(props: ControlProps) {
   }
 }
 
+function setupNextActionLabel(action: string | undefined): string | undefined {
+  if (action === "SETUP_BOUNDARY") return "Gebiet zeichnen";
+  if (action === "SETUP_POI") return "Strategischen Punkt platzieren";
+  if (action === "SETUP_FINALIZE") return "Karte prüfen";
+  if (action === "START_BID") return "Startgebietsauktion";
+  return undefined;
+}
+
+function setupTurnPresentation(state: GameReadModel): { readonly isOwnTurn: boolean; readonly nextActionLabel?: string } | undefined {
+  if ((state.phase !== GamePhase.MapCreation && state.phase !== GamePhase.StartAuctions) || !("playerInput" in state)) return undefined;
+  const isOwnTurn = state.playerInput.status === "ACTION_REQUIRED" || state.playerInput.status === "OPTIONAL_DECISION";
+  const nextActionLabel = isOwnTurn ? undefined : setupNextActionLabel(state.playerInput.nextAction);
+  return { isOwnTurn, ...(nextActionLabel === undefined ? {} : { nextActionLabel }) };
+}
+
 export default function App() {
   const [seedInput, setSeedInput] = useState(String(DEFAULT_SEED));
   const [seed, setSeed] = useState(DEFAULT_SEED);
@@ -1474,6 +1489,9 @@ export default function App() {
     setSelectedTerritoryId((current) => current === territoryId ? undefined : territoryId);
   };
   const remoteInput = state !== null && "playerInput" in state ? state.playerInput : undefined;
+  const setupTurn = state !== null && multiplayer !== null ? setupTurnPresentation(state) : undefined;
+  const ownTurn = multiplayer === null || remoteInput === undefined ? undefined
+    : remoteInput.status === "ACTION_REQUIRED" || remoteInput.status === "OPTIONAL_DECISION";
   const highlightedIds = state === null ? [] : [
     ...(state.phase === GamePhase.ActivationPhase && (multiplayer === null || remoteInput?.action === "ACTIVATION") ? getAvailableActivationTerritoryIds(state) : []),
     ...(state.auction ? [state.auction.territoryId] : []),
@@ -1713,7 +1731,6 @@ export default function App() {
       setNotice("Einladung geteilt.");
     } catch { /* The share sheet was dismissed; this is not an application error. */ }
   };
-  const activeRoomPlayer = multiplayerRoom?.players.find((player) => player.playerId === state?.activePlayerId);
   const openRematchOffer = () => {
     if (rematchOfferRoomId === undefined) return;
     returnToMultiplayerStart();
@@ -1848,7 +1865,8 @@ export default function App() {
     </main> : <>
       <GameHeader state={state} playerName={name} mode={multiplayer ? "MULTIPLAYER" : "LOCAL"}
         viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} room={multiplayerRoom} connectionStatus={multiplayer ? remoteConnectionStatus : undefined}
-        onOpenHelp={() => openHelp()} onCopyRoomCode={multiplayerRoom ? () => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.") : undefined}
+        onOpenHelp={() => openHelp()} helpOpen={helpOpen} onCloseHelp={() => setHelpOpen(false)}
+        onCopyRoomCode={multiplayerRoom ? () => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.") : undefined}
         onCopyInviteLink={inviteLink ? () => void copyToClipboard(inviteLink, "Einladungslink kopiert.") : undefined}
         activationReveal={presentation.activationReveal}
         factionSuit={viewerFactionSuit} factionVisible={factionVisible} onFactionVisibleChange={setFactionVisible}
@@ -1886,7 +1904,6 @@ export default function App() {
           {remoteConnectionStatus === "RECONNECTING" && <span>Aktionen bleiben gesperrt, bis der Server den aktuellen Stand bestätigt hat.</span>}
           {(remoteConnectionStatus === "INVALID_SESSION" || remoteConnectionStatus === "ROOM_NOT_FOUND" || remoteConnectionStatus === "SESSION_REPLACED" || remoteConnectionStatus === "PLAYER_REMOVED") && <span className="button-row"><button type="button" className="secondary-button" onClick={returnToMultiplayerStart}>Zur Mehrspieler-Startseite</button><button type="button" className="destructive-button" onClick={() => multiplayer && requestForgetSavedMultiplayerSession(multiplayer.roomId)}>Lokale Sitzung vergessen</button></span>}
         </div>}
-        {multiplayer && activeRoomPlayer !== undefined && activeRoomPlayer.playerId !== multiplayer.playerId && <div role="status" className="connection-banner">Warte auf {activeRoomPlayer.name} …{activeRoomPlayer.connected ? "" : ` ${activeRoomPlayer.name} ist derzeit getrennt.`}</div>}
         {multiplayer && state.phase === GamePhase.Finished && rematchOfferRoomId !== undefined && rematchOfferRoomId !== multiplayer.roomId && <div role="status" className="connection-banner">Der Host hat ein Rematch erstellt. <button type="button" className="secondary-button" onClick={openRematchOffer}>Rematch beitreten</button></div>}
         <div className="game-table">
           <aside className="details-column" aria-label="Ausgewähltes Gebiet">
@@ -1909,7 +1926,7 @@ export default function App() {
               onWarSplitStrokePreview={previewWarSplitStroke} onWarSplitStrokeCommit={commitWarSplitStroke} />
           </div>
           <div className="action-column">
-            <ActionPanel><AuctionResultReveal result={presentation.auctionResult} playerName={name}/>
+            <ActionPanel setupTurn={setupTurn} ownTurn={ownTurn}><AuctionResultReveal result={presentation.auctionResult} playerName={name}/>
               <WarDiceReveal result={presentation.warDice}/>
               <fieldset className="action-lock" disabled={!multiplayerConnected}><PhaseControls state={state} actionTerritoryId={actionTerritoryId}
                 onSelectActionTerritory={setActionTerritoryId} onAction={dispatch} onStartRound={beginRound}

@@ -185,7 +185,7 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
   const contextualHint = setupEditor ? setupEditor.mode === "POI"
     ? "Strategischen Punkt platzieren: Wähle die in der Aktionsleiste beschriebene freie Rasterzelle."
     : setupEditor.mode === "ERASER" ? "Radiergummi: Ziehe über lokale Entwurfskanten, um sie zu entfernen."
-      : "Kartenbau: Ziehe von Rastervertex zu Rastervertex."
+      : undefined
     : editor ? editor.mode === "CUT"
       ? "Teilung: Klicke die Kästchen des Verlierergebiets, um Teil A zu formen."
       : editor.annexedDisconnectedCells.length > 0
@@ -787,7 +787,8 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
       const entry = poiEntries.find(({ poi }) => poi.id === activePoiId);
       if (entry === undefined) return null;
       const presentation = getPointOfInterestPresentation(entry.poi.type);
-      return <div className="map-poi-tooltip" role="status"><strong>{presentation.symbol} {presentation.name}</strong><span>{describePointOfInterest(state, entry.poi, entry.territoryId)}</span></div>;
+      return <div className="map-poi-tooltip" role="status"><div><strong>{presentation.symbol} {presentation.name}</strong><span>{describePointOfInterest(state, entry.poi, entry.territoryId)}</span></div>
+        <button type="button" className="map-poi-tooltip-close" aria-label="Hinweis zum strategischen Punkt schließen" onClick={() => setActivePoiId(undefined)}>×</button></div>;
     })()}
   </div>;
 }

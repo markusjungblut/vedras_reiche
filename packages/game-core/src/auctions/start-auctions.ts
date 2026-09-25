@@ -86,6 +86,10 @@ function openNextStartAuctionState(
   }
   if (displayIndex < 0) throw new DomainError(DomainErrorCode.NoEligibleStartTerritory);
   const territoryId = display[displayIndex]!;
+  const resolvedDisplayTerritoryIds = start.resolvedDisplayTerritoryIds ?? [];
+  const nextResolvedDisplayTerritoryIds = resolvedDisplayTerritoryIds.includes(territoryId)
+    ? []
+    : resolvedDisplayTerritoryIds;
   const eligiblePlayerIds = state.players
     .map((player) => player.id)
     .filter((id) => !start.awardedPlayerIds.includes(id));
@@ -93,7 +97,8 @@ function openNextStartAuctionState(
   return {
     state: {
       ...state,
-      startAuctions: { ...start, nextDisplayIndex: (displayIndex + 1) % display.length },
+      startAuctions: { ...start, resolvedDisplayTerritoryIds: nextResolvedDisplayTerritoryIds,
+        nextDisplayIndex: (displayIndex + 1) % display.length },
       auction: {
         id: auctionId,
         kind: "START",
@@ -139,6 +144,7 @@ export function beginStartAuctions(
       round: 1,
       displayTerritoryIds: display,
       firstDisplayTerritoryIds: display,
+      resolvedDisplayTerritoryIds: [],
       nextDisplayIndex: 0,
       auctioneerPlayerId: getNextPlayer(playerIds, resolvedLastSetupPlayerId),
       awardedPlayerIds: [],
@@ -175,10 +181,15 @@ function finishResolvedAuction(
   if (new Set(nextAwarded).size !== nextAwarded.length) {
     throw new DomainError(DomainErrorCode.InvalidStartAuctionState, "A player cannot win twice in one start round.");
   }
+  const resolvedTerritoryId = state.auction?.territoryId;
+  const resolvedDisplayTerritoryIds = resolvedTerritoryId === undefined
+    ? (start.resolvedDisplayTerritoryIds ?? [])
+    : [...new Set([...(start.resolvedDisplayTerritoryIds ?? []), resolvedTerritoryId])];
   const nextStart: StartAuctionsState = {
     ...start,
     auctioneerPlayerId: successorAuctioneer(state, start),
     awardedPlayerIds: nextAwarded,
+    resolvedDisplayTerritoryIds,
   };
   let nextState: GameState = { ...state, auction: undefined, pendingSplit: undefined, startAuctions: nextStart };
   if (nextAwarded.length === state.players.length && start.round === 1) {
@@ -195,6 +206,7 @@ function finishResolvedAuction(
         round: 2,
         displayTerritoryIds: display,
         firstDisplayTerritoryIds: start.firstDisplayTerritoryIds,
+        resolvedDisplayTerritoryIds: [],
         nextDisplayIndex: 0,
         auctioneerPlayerId: nextStart.auctioneerPlayerId,
         awardedPlayerIds: [],
@@ -297,8 +309,9 @@ export function submitStartAuctionBid(
     const bid = bids[id];
     return bid?.kind === "START" && bid.value === highest;
   });
+  const allZeroWithoutWinner = highest === 0 && auction.eligiblePlayerIds.length > 1;
   const consumed = refreshedBids(start, bids, state.players.length, auction.eligiblePlayerIds,
-    highest === 0 || tiedPlayerIds.length >= 3 ? [] : tiedPlayerIds);
+    allZeroWithoutWinner || tiedPlayerIds.length >= 3 ? [] : tiedPlayerIds);
   const reveal: EventDescription = { type: GameEventType.AuctionBidsRevealed,
     payload: { auctionId: auction.id, bids } };
   const baseDescriptions = [bidSubmitted, reveal, ...consumed.descriptions];
@@ -306,9 +319,9 @@ export function submitStartAuctionBid(
     startAuctions: { ...start, availableBidsByPlayerId: consumed.available },
     auction: { ...auction, submittedBids },
   };
-  if (highest === 0 || tiedPlayerIds.length >= 3) {
-    const reason = highest === 0 ? "ALL_ZERO" : "THREE_OR_MORE_HIGHEST";
-    const tieDescriptions: EventDescription[] = highest === 0 ? [] : [{
+  if (allZeroWithoutWinner || tiedPlayerIds.length >= 3) {
+    const reason = allZeroWithoutWinner ? "ALL_ZERO" : "THREE_OR_MORE_HIGHEST";
+    const tieDescriptions: EventDescription[] = allZeroWithoutWinner ? [] : [{
       type: GameEventType.AuctionTiedMultiplePlayers,
       payload: { auctionId: auction.id, territoryId: auction.territoryId,
         playerIds: tiedPlayerIds, reason },

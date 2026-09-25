@@ -53,6 +53,7 @@ test("local map creation, labels, zoom and pan use the live SVG map", async ({ p
   const map = page.getByRole("img", { name: "Vedras Rasterkarte" });
   await expect(map).toBeVisible();
   await expect(map).toHaveAttribute("data-map-color-regime", "SETUP_TERRITORIES");
+  await expect(page.getByText("Kartenbau: Ziehe von Rastervertex zu Rastervertex.", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Der Grenzstift snappt präzise auf Rastervertices und erzeugt nur Kanten zwischen Zellen.")).toHaveCount(0);
   const box = await map.boundingBox();
   if (box === null) throw new Error("Rasterkarte hat keine Bildschirmgeometrie.");
@@ -115,6 +116,10 @@ test("map modes and strategic-point effects are available in the player view", a
   await page.getByRole("button", { name: "Startauktionen" }).click();
   const startAuctionMap = page.getByRole("img", { name: "Vedras Rasterkarte" });
   await expect(startAuctionMap).toHaveAttribute("data-map-color-regime", "OWNERSHIP");
+  const startDisplay = page.getByLabel(/Startauktion Runde/);
+  await expect(startDisplay).toBeVisible();
+  await expect(startDisplay.locator(".start-auction-chip")).toHaveCount(4);
+  await expect(startDisplay.locator(".start-auction-chip.is-current")).toHaveCount(1);
   const auctionCells = startAuctionMap.locator("rect.map-cell.map-cell-current-auction");
   await expect(auctionCells.first()).toBeVisible();
   const neutralFills = await startAuctionMap.locator("rect.map-cell.map-cell-neutral").evaluateAll((cells) =>
@@ -129,8 +134,12 @@ test("map modes and strategic-point effects are available in the player view", a
   await page.getByRole("button", { name: "Gebot verdeckt abgeben" }).click();
   await page.getByLabel("Startgebot").selectOption("0");
   await page.getByRole("button", { name: "Gebot verdeckt abgeben" }).click();
+
   await page.getByLabel("Startgebot").selectOption("0");
   await page.getByRole("button", { name: "Gebot verdeckt abgeben" }).click();
+
+  await expect(startDisplay.locator(".start-auction-chip.is-done")).toHaveCount(1);
+  await expect(startDisplay.locator(".start-auction-chip.is-current")).toHaveCount(1);
 
   await expect(page.locator("rect.map-gain-overlay")).toHaveCount(auctionTerritoryCellCount);
   await expect(auctionTerritoryCells.first()).not.toHaveAttribute("data-owner-id", "");
@@ -156,7 +165,12 @@ test("map modes and strategic-point effects are available in the player view", a
   await expect(bonusMode).toHaveClass(/selected-button/);
 
   await page.getByRole("button", { name: /Wahrzeichen ★/ }).click();
-  await expect(page.getByRole("status")).toContainText("+25 % Wertung für dieses Gebiet");
+  const poiHint = page.locator(".map-poi-tooltip");
+  await expect(poiHint).toContainText("+25 % Wertung für dieses Gebiet");
+  await poiHint.getByRole("button", { name: "Hinweis zum strategischen Punkt schließen" }).click();
+  await expect(poiHint).toHaveCount(0);
+  await page.getByRole("button", { name: /Wahrzeichen ★/ }).hover();
+  await expect(page.locator(".map-poi-tooltip")).toContainText("+25 % Wertung für dieses Gebiet");
 });
 
 test("the scoring result shows remaining global influence separately from territory value", async ({ page }) => {

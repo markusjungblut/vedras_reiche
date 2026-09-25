@@ -5,11 +5,14 @@ interface MusicControlsProps {
   readonly onEnabledChange: (enabled: boolean) => void;
   readonly onVolumeChange: (volume: number) => void;
   readonly onStart: () => void;
+  readonly open?: boolean;
+  readonly onOpenChange?: (open: boolean) => void;
 }
 
 /** Local controls and credits for the room-synchronised presentation music. */
-export function MusicControls({ state, onEnabledChange, onVolumeChange, onStart }: MusicControlsProps) {
-  return <details className="music-menu">
+export function MusicControls({ state, onEnabledChange, onVolumeChange, onStart, open, onOpenChange }: MusicControlsProps) {
+  return <details className="music-menu" {...(open === undefined ? {} : { open })}
+    onToggle={onOpenChange === undefined ? undefined : (event) => onOpenChange(event.currentTarget.open)}>
     <summary>♫ Musik</summary>
     <div className="music-menu-content">
       <label className="music-switch"><input type="checkbox" checked={state.enabled} onChange={(event) => onEnabledChange(event.target.checked)} /> Hintergrundmusik</label>

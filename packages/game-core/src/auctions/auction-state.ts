@@ -31,6 +31,8 @@ export interface StartAuctionsState {
   readonly round: 1 | 2;
   readonly displayTerritoryIds: readonly TerritoryId[];
   readonly firstDisplayTerritoryIds: readonly TerritoryId[];
+  /** Territories already resolved in the current pass through this display. */
+  readonly resolvedDisplayTerritoryIds?: readonly TerritoryId[];
   /** Index where the next scan of the fixed display order begins. */
   readonly nextDisplayIndex: number;
   readonly auctioneerPlayerId: PlayerId;

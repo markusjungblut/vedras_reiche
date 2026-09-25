@@ -4,8 +4,9 @@ import test from "node:test";
 import {
   analyzeSetupPartitionChange,
   applyAction,
-  beginStartAuctions,
+  commitSetupBoundaryDraft,
   createGameState,
+  createGameViewForPlayer,
   deriveSetupRegions,
   DomainError,
   DomainErrorCode,
@@ -100,7 +101,7 @@ function poiTypeForStage(stage) {
 }
 
 function placeRequiredPois(state) {
-  while (poiTypeForStage(state.mapCreation.stage)) {
+  while (state.mapCreation && poiTypeForStage(state.mapCreation.stage)) {
     const type = poiTypeForStage(state.mapCreation.stage);
     const position = Object.keys(state.map.cells)
       .map((key) => { const [x, y] = key.split(",").map(Number); return { x, y }; })
@@ -122,6 +123,16 @@ test("starts with one fully assigned 50 by 50 setup region", () => {
   assert.equal(Object.values(state.map.cells).filter((id) => id === null).length, 0);
   assert.equal(Object.values(state.map.cells).filter((id) => id === "R01").length, 2500);
   assertCompletePartition(state.map, state.mapCreation.borders, [2500]);
+});
+
+test("player views project the current and safely known next map-creation input", () => {
+  const state = started();
+  assert.deepEqual(createGameViewForPlayer(state, "P1").playerInput, {
+    status: "ACTION_REQUIRED", action: "SETUP_BOUNDARY", activePlayerId: "P1",
+  });
+  assert.deepEqual(createGameViewForPlayer(state, "P2").playerInput, {
+    status: "WAITING", activePlayerId: "P1", nextAction: "SETUP_BOUNDARY",
+  });
 });
 
 test("a vertical center border from edge to edge creates two 1250-cell regions", () => {
@@ -313,6 +324,7 @@ test("partition analysis identifies exactly one split source", () => {
 
 test("the complete partition finalizes into stable territories and preserves prior game flow", () => {
   let state = started();
+  let stateBeforeFinalBoundary;
   const steps = [
     vertical(12),
     vertical(6),
@@ -326,25 +338,34 @@ test("the complete partition finalizes into stable territories and preserves pri
     horizontal(34, 12, 25),
     horizontal(34, 25, 50),
   ];
-  for (const edges of steps) {
+  for (const [index, edges] of steps.entries()) {
+    if (index === steps.length - 1) stateBeforeFinalBoundary = state;
     state = commit(state, edges);
     state = placeRequiredPois(state);
   }
-  assert.equal(state.mapCreation.regionCount, getStartingTerritoryCount(2));
-  assert.equal(state.mapCreation.stage, MapCreationStage.ReadyToFinalize);
+  assert.equal(state.mapCreation, undefined);
   assert.equal(Object.values(state.map.cells).filter((value) => value === null).length, 0);
   assert.equal(getSetupMapValidationIssues(state).length, 0);
-  state = applyAction(state, {
-    type: GameActionType.FinalizeMapCreation,
-    playerId: state.mapCreation.activePlayerId,
-  }, context(new SequenceRandomSource())).state;
-  assert.equal(state.phase, GamePhase.Setup);
+  assert.equal(state.phase, GamePhase.StartAuctions);
   assert.equal(state.territories.length, 12);
   assert.equal(state.map.cells["0,0"], "G01");
   assert.equal(state.territories.every((territory) => territory.card !== undefined && territory.ownerId === null), true);
   assert.deepEqual(Object.values(Suit).map((suit) => state.territories.filter((territory) => territory.card.suit === suit).length), [3, 3, 3, 3]);
-  state = beginStartAuctions(state, undefined, new SequenceRandomSource(), timestamp).state;
-  assert.equal(state.phase, GamePhase.StartAuctions);
+  assert.ok(state.auction);
+
+  assert.ok(stateBeforeFinalBoundary);
+  let reviewed = commitSetupBoundaryDraft(stateBeforeFinalBoundary, {
+    type: GameActionType.CommitSetupBoundaryDraft,
+    playerId: stateBeforeFinalBoundary.mapCreation.activePlayerId,
+    edges: steps.at(-1),
+  }, timestamp).state;
+  assert.equal(reviewed.mapCreation.stage, MapCreationStage.ReadyToFinalize);
+  reviewed = applyAction(reviewed, {
+    type: GameActionType.FinalizeMapCreation,
+    playerId: reviewed.mapCreation.activePlayerId,
+  }, context()).state;
+  assert.equal(reviewed.phase, GamePhase.StartAuctions);
+  assert.ok(reviewed.auction);
 });
 
 test("setup totals and POI requirements remain defined for every supported player count", () => {

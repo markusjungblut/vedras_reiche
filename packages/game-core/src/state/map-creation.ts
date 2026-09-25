@@ -106,6 +106,24 @@ function stageAfterDrawingTurn(playerCount: number, regionCount: number, target:
   return MapCreationStage.DrawTerritories;
 }
 
+/** Returns a next setup step only when the current accepted action determines it unambiguously. */
+export function getNextMapCreationStageForPlayer(state: GameState, playerId: PlayerId): MapCreationStage | undefined {
+  const mapCreation = state.mapCreation;
+  if (state.phase !== GamePhase.MapCreation || mapCreation === undefined ||
+      nextPlayer(state, mapCreation.activePlayerId) !== playerId) return undefined;
+  if (mapCreation.stage === MapCreationStage.DrawTerritories) {
+    const nextStage = stageAfterDrawingTurn(state.players.length, mapCreation.regionCount + 1, mapCreation.targetTerritoryCount);
+    // The final boundary is validated and advanced automatically. Its outcome is not known before the draft is submitted.
+    return nextStage === MapCreationStage.ReadyToFinalize ? undefined : nextStage;
+  }
+  const poiType = STAGE_POI_TYPES[mapCreation.stage];
+  if (poiType === undefined) return undefined;
+  const requirement = getSetupPoiRequirements(state.players.length)[poiType];
+  return mapCreation.placedPoiCounts[poiType] + 1 >= requirement
+    ? MapCreationStage.DrawTerritories
+    : mapCreation.stage;
+}
+
 function setupRegions(state: GameState, mapCreation = requireMapCreation(state)): SetupRegion[] {
   return deriveSetupRegions(state.map!, mapCreation.borders);
 }
