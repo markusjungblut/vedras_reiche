@@ -525,6 +525,18 @@ function ActivationControls({ state, actionTerritoryId, onSelectActionTerritory,
   const [clubTarget, setClubTarget] = useState("");
   const [clubChoice, setClubChoice] = useState<ActivationChoice["type"]>("CLUB_BUILD_SETTLEMENT");
   const [extraSuit, setExtraSuit] = useState<Suit>(Suit.Diamonds);
+  const awaitingRoll = availableIds.length === 0 && state.activation !== undefined &&
+    state.activation.pendingTerritoryIds.length === 0 && state.activationNumbers.length < 3 &&
+    state.activePlayerId === state.startPlayerId;
+  if (awaitingRoll && state.activePlayerId) return <section className="control-section" aria-label="Nächste Aktivierungszahl">
+    <div className="section-kicker">Aktivierungsphase</div>
+    <h3>Aktivierung {state.activationNumbers.length + 1}/3</h3>
+    {state.activationNumbers.length > 0 && <p>Bisherige Zahlen: {state.activationNumbers.join(" · ")}</p>}
+    <p>{playerName(state, state.startPlayerId)} bestimmt die nächste Aktivierungszahl.</p>
+    <button type="button" className="primary-button" onClick={() => onAction({
+      type: GameActionType.RollNextActivationNumber, playerId: state.startPlayerId,
+    })}>Nächste Aktivierungszahl würfeln</button>
+  </section>;
   if (!territory?.card || !state.activePlayerId) return <p>Keine offene Aktivierung.</p>;
   const sourceSuit = territory.card.additionalSuit === undefined ? territory.card.suit
     : [territory.card.suit, territory.card.additionalSuit].includes(suitChoice) ? suitChoice : territory.card.suit;
@@ -546,7 +558,8 @@ function ActivationControls({ state, actionTerritoryId, onSelectActionTerritory,
   return <section className="control-section" aria-label="Aktivierung">
     <div className="section-kicker">Aktivierungsphase</div>
     <h3>{playerName(state, state.activePlayerId)} aktiviert</h3>
-    <p>Aktivierungszahlen: <ActivationNumberReveal numbers={state.activationNumbers} reveal={activationReveal}/></p>
+    <p><b>Aktivierung {state.activationNumbers.length}/3</b> · Zahl: {state.activation?.currentActivationNumber ?? state.activationNumbers.at(-1) ?? "–"}</p>
+    <p>Bisherige Zahlen: <ActivationNumberReveal numbers={state.activationNumbers} reveal={activationReveal}/></p>
     <div className="button-row">
       {availableIds.map((id) => <button key={id} type="button"
         className={id === chosenId ? "selected-button" : "secondary-button"}
@@ -605,7 +618,7 @@ function ActivationControls({ state, actionTerritoryId, onSelectActionTerritory,
                 };
           activate(choice);
         }}>Aktivieren</button>
-      <small>Eine neu erhaltene zweite Zahl wirkt erst ab der nächsten Runde.</small>
+      <small>Eine neue zweite Zahl gilt für spätere Aktivierungsschritte dieser Runde; vergangene Würfe bleiben abgeschlossen.</small>
     </>}
     {sourceSuit === Suit.Hearts && <>
       <button type="button" className="primary-button"

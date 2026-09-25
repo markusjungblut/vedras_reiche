@@ -13,13 +13,16 @@ export type ActivationTerritoriesReadState = Pick<GameState, "players" | "territ
 export function getActivatedTerritories(
   state: ActivationTerritoriesReadState,
   activationNumbers: readonly number[],
+  alreadyActivatedTerritoryIds: readonly TerritoryId[] = [],
 ): TerritoryId[] {
   const rolledNumbers = new Set(activationNumbers);
   const playerIds = new Set(state.players.map((player) => player.id));
+  const alreadyActivated = new Set(alreadyActivatedTerritoryIds);
   const activated = new Set<TerritoryId>();
 
   for (const territory of state.territories) {
-    if (territory.ownerId === null || !playerIds.has(territory.ownerId) || territory.card === undefined) {
+    if (territory.ownerId === null || !playerIds.has(territory.ownerId) || territory.card === undefined ||
+        alreadyActivated.has(territory.id)) {
       continue;
     }
     const { activationNumber, additionalActivationNumber } = territory.card;

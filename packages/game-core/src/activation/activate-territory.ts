@@ -4,7 +4,6 @@ import { createEvents, type EventDescription } from "../events/create-events.js"
 import { GameEventType } from "../events/game-event.js";
 import { GamePhase } from "../state/game-phase.js";
 import type { GameState } from "../state/game-state.js";
-import { beginActionPhase } from "../state/action-phase.js";
 import { finishCurrentBasicAction, forfeitCurrentBasicAction, startPendingWar } from "../state/action-phase.js";
 import { beginStartAuctions, openNextStartAuction, submitStartAuctionBid } from "../auctions/start-auctions.js";
 import { openNormalAuction, submitNormalAuctionBid } from "../auctions/normal-auctions.js";
@@ -25,7 +24,7 @@ import {
   finalizeMapCreation,
   placeSetupPointOfInterest,
 } from "../state/map-creation.js";
-import { startRound } from "../state/start-round.js";
+import { completeActivationStep, getNextActivationResolverPlayer, rollNextActivationNumber, startRound } from "../state/start-round.js";
 
 export interface ActivationContext {
   readonly randomSource: RandomSource;
@@ -53,13 +52,16 @@ export function activateTerritory(
   if (territory.ownerId !== action.playerId) {
     throw new DomainError(DomainErrorCode.TerritoryNotOwned);
   }
-  if (state.activation.resolvedTerritoryIds.includes(action.territoryId)) {
+  const activatedTerritoryIds = state.activation.activatedTerritoryIdsThisRound ?? state.activation.resolvedTerritoryIds;
+  if (activatedTerritoryIds.includes(action.territoryId)) {
     throw new DomainError(DomainErrorCode.TerritoryAlreadyActivated);
   }
   if (!state.activation.pendingTerritoryIds.includes(action.territoryId) || territory.card === undefined) {
     throw new DomainError(DomainErrorCode.TerritoryNotActivated);
   }
-  const rolledNumbers = new Set(state.activationNumbers);
+  const rolledNumbers = new Set(state.activation.currentActivationNumber === undefined
+    ? state.activationNumbers
+    : [state.activation.currentActivationNumber]);
   if (!rolledNumbers.has(territory.card.activationNumber) &&
       (territory.card.additionalActivationNumber === undefined ||
         !rolledNumbers.has(territory.card.additionalActivationNumber))) {
@@ -92,9 +94,10 @@ export function activateTerritory(
   }
   const pendingTerritoryIds = state.activation.pendingTerritoryIds.filter((id) => id !== action.territoryId);
   const resolvedTerritoryIds = [...state.activation.resolvedTerritoryIds, action.territoryId];
-  const activePlayerHasPending = effect.state.territories.some((candidate) =>
-    candidate.ownerId === action.playerId && pendingTerritoryIds.includes(candidate.id));
-  const finished = pendingTerritoryIds.length === 0;
+  const nextActivePlayerId = effect.state.territories.some((candidate) =>
+    candidate.ownerId === action.playerId && pendingTerritoryIds.includes(candidate.id))
+    ? action.playerId
+    : getNextActivationResolverPlayer(effect.state, pendingTerritoryIds, action.playerId) ?? state.startPlayerId;
   const descriptions: EventDescription[] = [
     {
       type: GameEventType.TerritoryActivationStarted,
@@ -108,20 +111,18 @@ export function activateTerritory(
       payload: { playerId: action.playerId, territoryId: action.territoryId, selectedSuit },
     },
   ];
-  if (finished) {
-    descriptions.push({ type: GameEventType.ActivationPhaseFinished, payload: { round: state.round } });
-  }
   const newEvents = createEvents(state, context.timestamp, descriptions);
   const nextState: GameState = {
     ...effect.state,
     phase: GamePhase.ActivationPhase,
-    activation: { pendingTerritoryIds, resolvedTerritoryIds },
-    activePlayerId: action.playerId,
+    activation: { ...state.activation, pendingTerritoryIds, resolvedTerritoryIds,
+      activatedTerritoryIdsThisRound: [...activatedTerritoryIds, action.territoryId] },
+    activePlayerId: nextActivePlayerId,
     events: [...state.events, ...newEvents],
   };
-  if (!activePlayerHasPending) {
-    const actionPhase = beginActionPhase(nextState, context.timestamp);
-    return { state: actionPhase.state, events: [...newEvents, ...actionPhase.events] };
+  if (pendingTerritoryIds.length === 0) {
+    const completed = completeActivationStep(nextState, context.timestamp);
+    return { state: completed.state, events: [...newEvents, ...completed.events] };
   }
   return { state: nextState, events: newEvents };
 }
@@ -146,12 +147,14 @@ export function resolveNeutralDiamond(
   }
   const pendingTerritoryIds = state.activation.pendingTerritoryIds.filter((id) => id !== source.id);
   const resolvedTerritoryIds = [...state.activation.resolvedTerritoryIds, source.id];
+  const activatedTerritoryIds = state.activation.activatedTerritoryIdsThisRound ?? state.activation.resolvedTerritoryIds;
   const base = reconcileMapBoundFeatures({ ...state, map: validation.map,
     pendingDiamondBorderChanges: state.pendingDiamondBorderChanges.filter((item) => item.id !== effect.id),
   });
-  const activePlayerHasPending = base.territories.some((candidate) =>
-    candidate.ownerId === action.playerId && pendingTerritoryIds.includes(candidate.id));
-  const finished = pendingTerritoryIds.length === 0;
+  const nextActivePlayerId = base.territories.some((candidate) =>
+    candidate.ownerId === action.playerId && pendingTerritoryIds.includes(candidate.id))
+    ? action.playerId
+    : getNextActivationResolverPlayer(base, pendingTerritoryIds, action.playerId) ?? state.startPlayerId;
   const descriptions: EventDescription[] = [
     { type: GameEventType.DiamondNeutralBorderChanged, actorId: action.playerId,
       payload: { effectId: effect.id, sourceTerritoryId: source.id, neutralTerritoryId: target.id,
@@ -161,13 +164,13 @@ export function resolveNeutralDiamond(
     { type: GameEventType.TerritoryActivated, actorId: action.playerId,
       payload: { playerId: action.playerId, territoryId: source.id, selectedSuit: effect.selectedSuit } },
   ];
-  if (finished) descriptions.push({ type: GameEventType.ActivationPhaseFinished, payload: { round: state.round } });
   const events = createEvents(state, timestamp, descriptions);
-  const nextState: GameState = { ...base, activation: { pendingTerritoryIds, resolvedTerritoryIds },
-    activePlayerId: action.playerId, events: [...state.events, ...events] };
-  if (!activePlayerHasPending) {
-    const nextPhase = beginActionPhase(nextState, timestamp);
-    return { state: nextPhase.state, events: [...events, ...nextPhase.events] };
+  const nextState: GameState = { ...base, activation: { ...state.activation, pendingTerritoryIds, resolvedTerritoryIds,
+      activatedTerritoryIdsThisRound: [...activatedTerritoryIds, source.id] },
+    activePlayerId: nextActivePlayerId, events: [...state.events, ...events] };
+  if (pendingTerritoryIds.length === 0) {
+    const completed = completeActivationStep(nextState, timestamp);
+    return { state: completed.state, events: [...events, ...completed.events] };
   }
   return { state: nextState, events };
 }
@@ -194,6 +197,8 @@ export function applyAction(
       return finalizeMapCreation(state, action, context.randomSource, context.timestamp);
     case GameActionType.ActivateTerritory:
       return activateTerritory(state, action, context);
+    case GameActionType.RollNextActivationNumber:
+      return rollNextActivationNumber(state, action, context.randomSource, context.timestamp);
     case GameActionType.BeginStartAuctions:
       return beginStartAuctions(state, action.lastSetupPlayerId, context.randomSource, context.timestamp);
     case GameActionType.OpenNextStartAuction:

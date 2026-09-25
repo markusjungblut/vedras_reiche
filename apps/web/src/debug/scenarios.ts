@@ -95,32 +95,19 @@ function completeStartAuctions(scenario: DemoScenario): DemoScenario {
   return { state, randomSource, cardSource };
 }
 
-function ownedSuits(state: GameState): Set<Suit> {
-  return new Set(state.territories.filter((territory) => territory.ownerId !== null)
-    .map((territory) => territory.card?.suit)
-    .filter((suit): suit is Suit => suit !== undefined));
-}
-
-function activationSuits(state: GameState): Set<Suit> {
-  const pending = new Set(state.activation?.pendingTerritoryIds ?? []);
-  return new Set(state.territories.filter((territory) => pending.has(territory.id))
-    .map((territory) => territory.card?.suit)
-    .filter((suit): suit is Suit => suit !== undefined));
-}
-
-/** A scenario may choose a deterministic round stream that exposes both ♥ and ♣. */
+/** A scenario chooses a deterministic first activation step with a resolvable territory. */
 function beginDemonstrationRound(scenario: DemoScenario, seed: number): DemoScenario {
-  const suits = ownedSuits(scenario.state);
-  const seekHeartAndClub = suits.has(Suit.Hearts) && suits.has(Suit.Clubs);
   let fallback: DemoScenario | undefined;
   for (let attempt = 0; attempt < 1_024; attempt += 1) {
     const randomSource = new SeededRandomSource((seed + Math.imul(attempt, 1_048_583)) >>> 0);
-    const state = startRound(scenario.state, randomSource, TIMESTAMP).state;
-    const candidate = { state, randomSource, cardSource: scenario.cardSource };
-    if (state.phase === GamePhase.ActivationPhase) {
-      fallback ??= candidate;
-      const activated = activationSuits(state);
-      if (!seekHeartAndClub || (activated.has(Suit.Hearts) && activated.has(Suit.Clubs))) return candidate;
+    let state = startRound(scenario.state, randomSource, TIMESTAMP).state;
+    for (let step = 0; step < 3 && state.phase === GamePhase.ActivationPhase; step += 1) {
+      state = dispatch(state, { type: GameActionType.RollNextActivationNumber, playerId: state.startPlayerId }, randomSource, scenario.cardSource);
+      const candidate = { state, randomSource, cardSource: scenario.cardSource };
+      if (state.phase === GamePhase.ActivationPhase && state.activation?.pendingTerritoryIds.length) {
+        fallback ??= candidate;
+        return candidate;
+      }
     }
   }
   if (fallback !== undefined) return fallback;
@@ -154,10 +141,13 @@ function completeActivations(scenario: DemoScenario): DemoScenario {
   const { randomSource, cardSource } = scenario;
   let steps = 0;
   while (state.phase === GamePhase.ActivationPhase) {
-    if (++steps > 16) throw new Error("Der Aktivierungs-Debuglauf kam nicht zum Abschluss.");
+    if (++steps > 32) throw new Error("Der Aktivierungs-Debuglauf kam nicht zum Abschluss.");
     const source = state.territories.find((territory) =>
       territory.ownerId === state.activePlayerId && state.activation?.pendingTerritoryIds.includes(territory.id));
-    if (source === undefined || source.ownerId === null) throw new Error("Aktivierung ohne aktiven Spieler.");
+    if (source === undefined || source.ownerId === null) {
+      state = dispatch(state, { type: GameActionType.RollNextActivationNumber, playerId: state.startPlayerId }, randomSource, cardSource);
+      continue;
+    }
     state = dispatch(state, {
       type: GameActionType.ActivateTerritory,
       playerId: source.ownerId,
@@ -244,7 +234,8 @@ function neutralDiamondScenario(scenario: DemoScenario): DemoScenario {
   const target = base.territories.find((territory) => territory.ownerId === null &&
     getStateAdjacentTerritoryIds(base, source.id).includes(territory.id))!;
   const state: GameState = { ...base, phase: GamePhase.ActivationPhase, activePlayerId: source.ownerId,
-    activation: { pendingTerritoryIds: [source.id], resolvedTerritoryIds: [] },
+    activation: { pendingTerritoryIds: [source.id], resolvedTerritoryIds: [], activatedTerritoryIdsThisRound: [], nextActivationIndex: 1,
+      currentActivationNumber: source.card.activationNumber },
     territories: base.territories.map((territory) => territory.id === source.id
       ? { ...territory, card: { ...source.card!, suit: Suit.Diamonds } } : territory) };
   return { ...scenario, state: dispatch(state, { type: GameActionType.ActivateTerritory,

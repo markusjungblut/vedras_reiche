@@ -19,6 +19,8 @@ export interface ActivationRollReveal {
   readonly type: "ACTIVATION_ROLL_REVEAL";
   readonly id: string;
   readonly numbers: readonly number[];
+  /** Index of the freshly authoritative number; older entries were already visible. */
+  readonly revealIndex: number;
   readonly territoryIdsByNumber: Readonly<Record<number, readonly string[]>>;
 }
 
@@ -249,7 +251,20 @@ export function derivePresentationEvents(
         number,
         getActivatedTerritories(current, [number]),
       ]));
-      result.push({ type: "ACTIVATION_ROLL_REVEAL", id: event.id, numbers, territoryIdsByNumber });
+      result.push({ type: "ACTIVATION_ROLL_REVEAL", id: event.id, numbers, revealIndex: 0, territoryIdsByNumber });
+      continue;
+    }
+    if (event.type === GameEventType.ActivationNumberRolled) {
+      const number = event.payload.activationNumber;
+      const index = event.payload.index;
+      const values = event.payload.activationNumbers;
+      if (typeof number !== "number" || typeof index !== "number") continue;
+      const numbers = Array.isArray(values) && values.every((value) => typeof value === "number")
+        ? values as readonly number[] : [number];
+      const pending = Array.isArray(event.payload.pendingTerritoryIds)
+        ? event.payload.pendingTerritoryIds.filter((value): value is string => typeof value === "string") : [];
+      result.push({ type: "ACTIVATION_ROLL_REVEAL", id: event.id, numbers, revealIndex: index,
+        territoryIdsByNumber: { [number]: pending } });
       continue;
     }
     if (event.type === GameEventType.TerritoryActivated) {

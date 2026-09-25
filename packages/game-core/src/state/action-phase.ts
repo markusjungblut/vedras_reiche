@@ -91,11 +91,7 @@ function finalizeAdvancedState(
   return { state: scoring.state, events: [...events, ...scoring.events] };
 }
 
-/**
- * Completes a player's regular action and hands the turn to the next player's
- * personal activation. A player without a matching card immediately receives
- * their regular action instead.
- */
+/** Completes a regular action and hands the turn to the next player's regular action. */
 function advanceToNextPlayer(
   state: GameState,
   timestamp: string,
@@ -127,7 +123,7 @@ function advanceToNextPlayer(
 
   const next = {
     ...state,
-    phase: GamePhase.ActivationPhase,
+    phase: GamePhase.ActionPhase,
     activePlayerId: nextPlayerId,
     actionPhase: {
       completedPlayerIds: actionPhase.completedPlayerIds,
@@ -136,25 +132,42 @@ function advanceToNextPlayer(
     },
   };
   const transitioned = finalizeAdvancedState(state, next, timestamp, descriptions);
-  if (playerHasPendingActivation(transitioned.state, nextPlayerId)) return transitioned;
-  const action = beginActionPhase(transitioned.state, timestamp);
+  const action = startActiveBasicAction(transitioned.state, timestamp);
   return { state: action.state, events: [...transitioned.events, ...action.events] };
 }
 
-/**
- * Starts the active player's regular action after only that player's pending
- * activations have resolved. The shared round action state remains intact
- * while players alternate between activation and basic action.
- */
+/** Starts the active player's basic action and automatically forfeits only when none is legal. */
+function startActiveBasicAction(state: GameState, timestamp: string): ActionResult {
+  if (state.phase !== GamePhase.ActionPhase || state.activePlayerId === undefined) {
+    throw new DomainError(DomainErrorCode.InvalidPhase);
+  }
+  const playerId = state.activePlayerId;
+  const actionPhase = actionPhaseFor(state);
+  if (actionPhase.completedPlayerIds.includes(playerId)) throw new DomainError(DomainErrorCode.ActionAlreadyCompleted);
+  const descriptions: EventDescription[] = [
+    { type: GameEventType.ActionPhaseStarted, actorId: playerId, payload: { round: state.round, playerId } },
+  ];
+  const potential = getPotentialBasicActions(state, playerId);
+  if (potential.canOpenAuction || potential.canStartWar) return finalizeAdvancedState(state, state, timestamp, descriptions);
+  const completed: GameState = {
+    ...state,
+    actionPhase: { ...actionPhase, completedPlayerIds: [...actionPhase.completedPlayerIds, playerId] },
+  };
+  return advanceToNextPlayer(completed, timestamp, [...descriptions, {
+    type: GameEventType.ActionForfeited,
+    actorId: playerId,
+    payload: { round: state.round, playerId, reason: "NO_LEGAL_BASIC_ACTION" },
+  }]);
+}
+
+/** Starts the action phase once all three activation steps have completed. */
 export function beginActionPhase(state: GameState, timestamp: string): ActionResult {
   if (state.phase !== GamePhase.ActivationPhase || state.activePlayerId === undefined ||
       state.pendingDiamondBorderChanges.length !== 0 || state.auction !== undefined || state.pendingSplit !== undefined ||
       playerHasPendingActivation(state, state.activePlayerId)) {
     throw new DomainError(DomainErrorCode.InvalidPhase);
   }
-  const playerId = state.activePlayerId;
   const actionPhase = actionPhaseFor(state);
-  if (actionPhase.completedPlayerIds.includes(playerId)) throw new DomainError(DomainErrorCode.ActionAlreadyCompleted);
   const provisional: GameState = {
     ...state,
     phase: GamePhase.ActionPhase,
@@ -164,23 +177,7 @@ export function beginActionPhase(state: GameState, timestamp: string): ActionRes
       secondAuctionAvailable: false,
     },
   };
-  const descriptions: EventDescription[] = [
-    { type: GameEventType.ActionPhaseStarted, actorId: playerId, payload: { round: state.round, playerId } },
-  ];
-  const potential = getPotentialBasicActions(provisional, playerId);
-  if (potential.canOpenAuction || potential.canStartWar) return finalizeAdvancedState(state, provisional, timestamp, descriptions);
-  const completed: GameState = {
-    ...provisional,
-    actionPhase: {
-      ...provisional.actionPhase!,
-      completedPlayerIds: [...actionPhase.completedPlayerIds, playerId],
-    },
-  };
-  return advanceToNextPlayer(completed, timestamp, [...descriptions, {
-    type: GameEventType.ActionForfeited,
-    actorId: playerId,
-    payload: { round: state.round, playerId, reason: "NO_LEGAL_BASIC_ACTION" },
-  }]);
+  return startActiveBasicAction(provisional, timestamp);
 }
 
 /** Completes the active player's regular action after all resulting choices resolve. */

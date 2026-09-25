@@ -187,6 +187,49 @@ test("war participation counters survive a persisted room restart", async () => 
   }
 });
 
+test("a sequential activation step survives restart and reconnect without revealing a future roll", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vedras-sequential-activation-"));
+  try {
+    const store = new FileRoomStore(join(directory, "rooms"));
+    const roomsA = manager(store);
+    const { room, participant: anna, guest, annaToken, guestToken } = await startTwoPlayers(roomsA);
+    const snapshot = await store.load(room.roomId);
+    const baseState = createGameState({ gameId: room.roomId, startPlayerId: anna.playerId,
+      players: [{ id: anna.playerId, name: "Anna" }, { id: guest.participant.playerId, name: "Ben" }] });
+    const state = {
+      ...baseState,
+      phase: GamePhase.ActivationPhase,
+      round: 1,
+      activePlayerId: guest.participant.playerId,
+      activationNumbers: [4, 9],
+      activation: {
+        pendingTerritoryIds: ["B"],
+        resolvedTerritoryIds: ["A"],
+        activatedTerritoryIdsThisRound: ["A"],
+        nextActivationIndex: 2,
+        currentActivationNumber: 9,
+      },
+      territories: [
+        { id: "A", ownerId: anna.playerId, card: { suit: Suit.Hearts, activationNumber: 4 } },
+        { id: "B", ownerId: guest.participant.playerId, card: { suit: Suit.Hearts, activationNumber: 9 } },
+      ],
+    };
+    await store.save({ ...snapshot, status: "RUNNING", revision: room.revision + 1, gameState: state });
+
+    const roomsB = manager(store);
+    await roomsB.restore();
+    assert.equal(roomsB.authenticate(room.roomId, annaToken).participant.playerId, anna.playerId);
+    assert.equal(roomsB.authenticate(room.roomId, guestToken).participant.playerId, guest.participant.playerId);
+    const rejoinedView = roomsB.getPlayerView(roomsB.getRoom(room.roomId), guest.participant.playerId);
+    assert.deepEqual(rejoinedView.activationNumbers, [4, 9]);
+    assert.equal(rejoinedView.activation.currentActivationNumber, 9);
+    assert.deepEqual(rejoinedView.activation.activatedTerritoryIdsThisRound, ["A"]);
+    assert.deepEqual(rejoinedView.activation.pendingTerritoryIds, ["B"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("a failed durable save keeps the previous authoritative state and revision", async () => {
   const store = new TestRoomStore();
   const rooms = manager(store);

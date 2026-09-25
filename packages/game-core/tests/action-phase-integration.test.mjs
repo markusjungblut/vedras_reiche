@@ -83,17 +83,24 @@ function auction(state, playerId, territoryId, bids) {
 }
 
 test("AP2 activation and a full AP3 action phase preserve foreign winner turns and guard the next round", () => {
-  // Select B, then roll 2, 5, 9. Only B1 activates.
-  const first = startRound(readyGame(), new SequenceRandomSource([1, 1, 4, 3, 1, 5, 1]), timestamp);
+  // Select B, then roll the first number (2). Only B1 activates in this step.
+  const first = startRound(readyGame(), new SequenceRandomSource([1]), timestamp);
   assert.equal(first.state.phase, GamePhase.ActivationPhase);
   assert.equal(first.state.startPlayerId, "B");
-  assert.deepEqual(first.state.activation.pendingTerritoryIds, ["B1"]);
-  const activated = action(first.state, {
+  const rolledFirst = applyAction(first.state, { type: GameActionType.RollNextActivationNumber, playerId: "B" },
+    { randomSource: new SequenceRandomSource([1, 4]), timestamp });
+  assert.deepEqual(rolledFirst.state.activation.pendingTerritoryIds, ["B1"]);
+  const resolvedFirst = action(rolledFirst.state, {
     type: GameActionType.ActivateTerritory,
     playerId: "B",
     territoryId: "B1",
     choice: { type: "SPADE_STORE" },
   });
+  assert.equal(resolvedFirst.state.phase, GamePhase.ActivationPhase);
+  const rolledSecond = applyAction(resolvedFirst.state, { type: GameActionType.RollNextActivationNumber, playerId: "B" },
+    { randomSource: new SequenceRandomSource([3, 1]), timestamp });
+  const activated = applyAction(rolledSecond.state, { type: GameActionType.RollNextActivationNumber, playerId: "B" },
+    { randomSource: new SequenceRandomSource([5, 1]), timestamp });
   assert.equal(activated.state.phase, GamePhase.ActionPhase);
   assert.equal(activated.state.activePlayerId, "B");
   const beforeRejectedRound = structuredClone(activated.state);

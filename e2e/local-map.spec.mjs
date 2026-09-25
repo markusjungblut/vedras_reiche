@@ -106,7 +106,10 @@ test("authoritative combat values reveal briefly before an exact border-gain wav
   await expect(reveal).toBeVisible();
   await expect(reveal).toContainText("W6");
   await page.getByRole("button", { name: "Grenzgewinn bestätigen" }).click();
-  await expect(page.locator("rect.map-gain-overlay")).toHaveCount(5);
+  // The current sequential activation fixture also exposes three disconnected
+  // remnants that the core annexes automatically, so the visual wave covers
+  // all eight cells whose ownership changes.
+  await expect(page.locator("rect.map-gain-overlay")).toHaveCount(8);
   await expect(page.getByLabel("Letztes Kampfergebnis")).toContainText("Normaler Grenzgewinn");
 });
 

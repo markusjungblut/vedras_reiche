@@ -53,6 +53,8 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
       const numbers = event.payload.activationNumbers ?? event.payload.numbers;
       return Array.isArray(numbers) ? `Aktivierungszahlen: ${numbers.join(", ")}.` : "Aktivierungszahlen gewürfelt.";
     }
+    case GameEventType.ActivationNumberRolled:
+      return `Aktivierung ${field(event, "index") === "?" ? "?" : Number(field(event, "index")) + 1}/3: ${field(event, "activationNumber")}.`;
     case GameEventType.ActivationPhaseStarted: return "Aktivierungsphase beginnt.";
     case GameEventType.TerritoryActivationStarted: return `${named(event, "playerId", playerName)} aktiviert ${field(event, "territoryId")}.`;
     case GameEventType.TerritoryActivated: return `${field(event, "territoryId")} wurde aktiviert.`;

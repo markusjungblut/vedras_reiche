@@ -32,6 +32,7 @@ export enum GameActionType {
   ResolveNeutralDiamond = "RESOLVE_NEUTRAL_DIAMOND",
   ChooseLargestRealm = "CHOOSE_LARGEST_REALM",
   StartRound = "START_ROUND",
+  RollNextActivationNumber = "ROLL_NEXT_ACTIVATION_NUMBER",
 }
 
 export interface BeginMapCreationAction {
@@ -202,6 +203,12 @@ export interface StartRoundAction {
   readonly type: GameActionType.StartRound;
 }
 
+/** The core rolls the number; the client only authorizes the round's start player. */
+export interface RollNextActivationNumberAction {
+  readonly type: GameActionType.RollNextActivationNumber;
+  readonly playerId: PlayerId;
+}
+
 export type GameAction =
   | BeginMapCreationAction
   | CommitSetupBoundaryDraftAction
@@ -226,4 +233,5 @@ export type GameAction =
   | ResolveNeutralDiamondAction
   | ChooseLargestRealmAction
   | StartRoundAction
+  | RollNextActivationNumberAction
   | ActivateTerritoryAction;

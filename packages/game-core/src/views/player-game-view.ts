@@ -12,7 +12,7 @@ export type PublicPlayerView = Pick<Player, "id" | "name" | "globalInfluence" | 
 
 export type PlayerInputStatus = "ACTION_REQUIRED" | "OPTIONAL_DECISION" | "SUBMITTED" | "WAITING" | "PROCESSING";
 export type PlayerInputAction =
-  | "ACTIVATION" | "START_BID" | "NORMAL_BID" | "BASIC_ACTION"
+  | "ACTIVATION" | "ACTIVATION_ROLL" | "START_BID" | "NORMAL_BID" | "BASIC_ACTION"
   | "SPLIT_DIVISION" | "SPLIT_CHOICE" | "WAR_SPADE_CHOICE" | "BORDER_ADVANCE"
   | "WAR_CUT_DIVISION" | "WAR_CUT_CHOICE" | "DIAMOND_CORRECTION" | "LARGEST_REALM";
 
@@ -120,6 +120,14 @@ function playerInputFor(state: GameState, viewerPlayerId: PlayerId): PlayerInput
       : { status: "SUBMITTED", action: auction.kind === "START" ? "START_BID" : "NORMAL_BID", submittedBidCount, requiredBidCount };
   }
   if (state.phase === GamePhase.ActivationPhase) {
+    const awaitingRoll = state.activation !== undefined && state.activation.pendingTerritoryIds.length === 0 &&
+      state.pendingDiamondBorderChanges.length === 0 && state.activationNumbers.length < 3 &&
+      state.activePlayerId === state.startPlayerId;
+    if (awaitingRoll) {
+      return viewerPlayerId === state.startPlayerId
+        ? { status: "ACTION_REQUIRED", action: "ACTIVATION_ROLL", activePlayerId: state.startPlayerId }
+        : waiting(state.startPlayerId);
+    }
     return state.activePlayerId === viewerPlayerId
       ? { status: "ACTION_REQUIRED", action: "ACTIVATION", activePlayerId: viewerPlayerId }
       : waiting(state.activePlayerId);

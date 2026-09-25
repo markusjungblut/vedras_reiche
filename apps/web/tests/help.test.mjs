@@ -113,7 +113,25 @@ test("presentation reveals only authoritative activation values and pulses match
     type: "ACTIVATION_ROLL_REVEAL",
     id: "roll-1",
     numbers: [4, 9, 11],
+    revealIndex: 0,
     territoryIdsByNumber: { 4: ["G07"], 9: ["G03", "G07"], 11: ["G08"] },
+  }]);
+});
+
+test("presentation reveals one new authoritative activation number without future values", () => {
+  const state = presentationState({ phase: GamePhase.ActivationPhase });
+  const events = derivePresentationEvents(state, state, [event("roll-2", GameEventType.ActivationNumberRolled, {
+    activationNumber: 9,
+    index: 1,
+    activationNumbers: [4, 9],
+    pendingTerritoryIds: ["G03", "G07"],
+  })]);
+  assert.deepEqual(events, [{
+    type: "ACTIVATION_ROLL_REVEAL",
+    id: "roll-2",
+    numbers: [4, 9],
+    revealIndex: 1,
+    territoryIdsByNumber: { 9: ["G03", "G07"] },
   }]);
 });
 

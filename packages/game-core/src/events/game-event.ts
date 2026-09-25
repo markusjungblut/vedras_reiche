@@ -16,6 +16,7 @@ export enum GameEventType {
   StartPlayerSelected = "START_PLAYER_SELECTED",
   StartPlayerRotated = "START_PLAYER_ROTATED",
   ActivationNumbersRolled = "ACTIVATION_NUMBERS_ROLLED",
+  ActivationNumberRolled = "ACTIVATION_NUMBER_ROLLED",
   ActivationPhaseStarted = "ACTIVATION_PHASE_STARTED",
   TerritoryActivationStarted = "TERRITORY_ACTIVATION_STARTED",
   TerritoryActivated = "TERRITORY_ACTIVATED",

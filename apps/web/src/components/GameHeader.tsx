@@ -64,7 +64,7 @@ export function GameHeader({ state, playerName, mode = "LOCAL", viewerPlayerId, 
         {onOpenHelp && <button type="button" className="help-button" onClick={onOpenHelp} aria-label="Regelhilfe öffnen">? Hilfe</button>}
       </div>
       <div className="game-substatus">
-        {state.activationNumbers.length > 0 && <span><b>Aktivierungszahlen</b> <ActivationNumberReveal numbers={state.activationNumbers} reveal={activationReveal}/></span>}
+        {state.activationNumbers.length > 0 && <span><b>Aktivierung {state.activationNumbers.length}/3</b> · Zahl {state.activation?.currentActivationNumber ?? state.activationNumbers.at(-1)} · <ActivationNumberReveal numbers={state.activationNumbers} reveal={activationReveal}/></span>}
         {state.startAuctions && <span><b>Startauktion</b> Runde {state.startAuctions.round}</span>}
         {state.auction && <span><b>Laufende Auktion</b> {state.auction.territoryId}</span>}
         {state.pendingSplit && <span className="status-alert"><b>Teilung ausstehend</b> {state.pendingSplit.originalTerritoryId}</span>}

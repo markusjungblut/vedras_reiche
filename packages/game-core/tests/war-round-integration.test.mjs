@@ -36,16 +36,18 @@ test("three-player round combines activation, auction, spade war, border gain an
     map: createGridMap({ width: 40, height: 5, format: "A4" }, cells),
     territories: ids.map((id) => ({ id, ownerId: id.startsWith("N") ? null : id,
       card: { suit: id === "B" ? Suit.Spades : Suit.Hearts, activationNumber: id === "B" ? 1 : 12 } })) };
-  let round = startRound(state, new Dice(0, 1, 1, 2, 1, 3, 1), timestamp).state;
-  assert.equal(round.phase, GamePhase.ActionPhase);
-  assert.equal(round.activePlayerId, "A");
-  assert.deepEqual(round.activation.pendingTerritoryIds, ["B"]);
-  round = auction(round, "A", "N1");
+  let round = startRound(state, new Dice(0), timestamp).state;
+  round = act(round, { type: GameActionType.RollNextActivationNumber, playerId: "A" }, new Dice(1, 1));
   assert.equal(round.phase, GamePhase.ActivationPhase);
   assert.equal(round.activePlayerId, "B");
+  assert.deepEqual(round.activation.pendingTerritoryIds, ["B"]);
   round = act(round, { type: GameActionType.ActivateTerritory, playerId: "B", territoryId: "B",
     choice: { type: "SPADE_STORE" } });
+  round = act(round, { type: GameActionType.RollNextActivationNumber, playerId: "A" }, new Dice(2, 1));
+  round = act(round, { type: GameActionType.RollNextActivationNumber, playerId: "A" }, new Dice(3, 1));
   assert.equal(round.phase, GamePhase.ActionPhase);
+  assert.equal(round.activePlayerId, "A");
+  round = auction(round, "A", "N1");
   assert.equal(round.activePlayerId, "B");
   assert.equal(round.spadeActivations.length, 1);
   round = act(round, { type: GameActionType.StartWar, playerId: "B", attackerTerritoryId: "B", defenderTerritoryId: "C" });
@@ -64,7 +66,7 @@ test("three-player round combines activation, auction, spade war, border gain an
   round = auction(round, "C", "N2");
   assert.equal(round.phase, GamePhase.RoundReady);
   assert.ok(round.territories.find((territory) => territory.id === "B").participatedInWarThisRound);
-  const next = startRound(round, new Dice(4, 4, 5, 4, 6, 4), timestamp).state;
+  const next = startRound(round, new Dice(), timestamp).state;
   assert.equal(next.round, 2);
   assert.equal(next.territories.find((territory) => territory.id === "B").participatedInWarThisRound, false);
   assert.equal(next.spadeActivations.length, 0);

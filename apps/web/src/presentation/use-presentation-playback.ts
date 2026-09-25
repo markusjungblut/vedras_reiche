@@ -97,24 +97,24 @@ export function usePresentationPlayback(): {
     clearTimers(key);
     setPresentation((current) => ({
       ...current,
-      activationReveal: { id: event.id, numbers: event.numbers, revealedCount: 0 },
+      activationReveal: { id: event.id, numbers: event.numbers, revealedCount: event.revealIndex },
       territoryPulses: current.territoryPulses.filter((pulse) => !pulse.id.startsWith("activation:")),
     }));
-    event.numbers.forEach((number, index) => {
-      schedule(key, index * ACTIVATION_STEP_MS, () => {
-        setPresentation((current) => {
-          if (current.activationReveal?.id !== event.id) return current;
-          return { ...current, activationReveal: { ...current.activationReveal, revealedCount: index + 1 } };
-        });
-        event.territoryIdsByNumber[number]?.forEach((territoryId) => presentPulse({
-          type: "ACTIVATION_TERRITORY_PULSE",
-          id: "activation:" + event.id + ":" + index + ":" + territoryId,
-          territoryId,
-          durationMs: PULSE_MS,
-        }));
+    const number = event.numbers[event.revealIndex];
+    schedule(key, ACTIVATION_STEP_MS, () => {
+      setPresentation((current) => {
+        if (current.activationReveal?.id !== event.id) return current;
+        return { ...current, activationReveal: { ...current.activationReveal, revealedCount: event.revealIndex + 1 } };
       });
+      if (number === undefined) return;
+      event.territoryIdsByNumber[number]?.forEach((territoryId) => presentPulse({
+        type: "ACTIVATION_TERRITORY_PULSE",
+        id: "activation:" + event.id + ":" + event.revealIndex + ":" + territoryId,
+        territoryId,
+        durationMs: PULSE_MS,
+      }));
     });
-    schedule(key, event.numbers.length * ACTIVATION_STEP_MS + 210, () => setPresentation((current) => {
+    schedule(key, ACTIVATION_STEP_MS + 210, () => setPresentation((current) => {
       if (current.activationReveal?.id !== event.id) return current;
       const { activationReveal: _activationReveal, ...withoutActivation } = current;
       return withoutActivation;

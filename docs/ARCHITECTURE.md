@@ -93,9 +93,10 @@ Der Zustand hält aktuelle Runde, Höchstzahl, Phase und Startspieler. Die Reihe
 ```text
 zwei Startauktionsrunden abschließen
   → Runde beginnen
-  → drei verschiedene Aktivierungszahlen würfeln
-  → passende kontrollierte Gebiete ermitteln
-  → je Spieler: persönliche Aktivierungen abwickeln → eine Grundaktion abwickeln
+  → Aktivierung 1 würfeln → feste passende Gebiete abwickeln
+  → Aktivierung 2 würfeln → feste passende Gebiete abwickeln
+  → Aktivierung 3 würfeln → feste passende Gebiete abwickeln
+  → je Spieler: eine Grundaktion abwickeln
   → Runde beenden
   → nächste Runde oder SCORING → FINISHED
 ```
@@ -127,7 +128,7 @@ Die Gebotshöhen sind bis zur gemeinsamen Aufdeckung verborgenes Domain-Wissen. 
 
 ## Aktionsphase und normale Auktionen
 
-Die Spielerreihenfolge beginnt beim Startspieler. Der Zustand zeigt den aktuellen Spieler, abgeschlossene Grundaktionen und gegebenenfalls eine aktive Auktion oder ausstehende Teilung. Nach den persönlichen Aktivierungen eines Spielers steht ausschließlich diesem Spieler genau eine Grundaktion zu. Anschließend folgt die persönliche Aktivierung des nächsten Spielers. Nur der aktuelle Spieler darf seine normale Auktion eröffnen. Das Gebiet muss neutral sein und unmittelbar an mindestens eines seiner Gebiete angrenzen. Alle Spieler müssen bieten, auch ohne eigene Nachbarschaft zum Zielgebiet.
+Die Spielerreihenfolge beginnt beim Startspieler. Der Zustand zeigt den aktuellen Spieler, abgeschlossene Grundaktionen und gegebenenfalls eine aktive Auktion oder ausstehende Teilung. Nach dem dritten vollständig abgehandelten Aktivierungswurf steht jedem Spieler in dieser Reihenfolge genau eine Grundaktion zu. Anschließend folgt unmittelbar die Grundaktion des nächsten Spielers. Nur der aktuelle Spieler darf seine normale Auktion eröffnen. Das Gebiet muss neutral sein und unmittelbar an mindestens eines seiner Gebiete angrenzen. Alle Spieler müssen bieten, auch ohne eigene Nachbarschaft zum Zielgebiet.
 
 Ein normales Gebot besteht aus einem verfügbaren Grundgebot `1`, `2` oder `3` sowie einer nicht negativen ganzen Zahl globaler Einflusspunkte und gegebenenfalls lokalem Einfluss des Bieters auf genau diesem Gebiet. Beim Einreichen werden keine Ressourcen abgezogen. Nur Spieler, die bei der Auflösung tatsächlich Gebiet erhalten, bezahlen Einfluss und erschöpfen ihr Grundgebot. Sind `1`, `2` und `3` dadurch erschöpft, regeneriert sofort der ganze Satz. Ein Gewinn in einer fremden Auktion verbraucht die eigene Grundaktion nicht. Nach einem Besitzerwechsel verfällt aller noch auf dem Gebiet gespeicherte lokale Einfluss.
 
@@ -146,11 +147,11 @@ Krieg ist die alternative Grundaktion für ein eigenes Gebiet und einen angrenze
 
 ## Aktivierungsphase
 
-Für jede der drei Zahlen wählt der erste W6 eines von sechs benachbarten Zahlenpaaren zwischen 1 und 12. Der zweite W6 wählt bei 1 bis 3 die niedrigere und bei 4 bis 6 die höhere Zahl. Ein erneut getroffenes Ergebnis wird verworfen und neu gewürfelt; die Reihenfolge der drei unterschiedlichen Ergebnisse bleibt erhalten. Kontrollierte Gebiete mit einer passenden ersten oder zweiten Aktivierungszahl werden einmal vorgemerkt, neutrale Gebiete nicht.
+Für jede der drei nacheinander bestimmten Zahlen wählt der erste W6 eines von sechs benachbarten Zahlenpaaren zwischen 1 und 12. Der zweite W6 wählt bei 1 bis 3 die niedrigere und bei 4 bis 6 die höhere Zahl. Ein erneut getroffenes Ergebnis wird verworfen und neu gewürfelt; die bereits gewürfelten Zahlen bleiben im Rundenstate. Beim jeweiligen Wurf werden passende kontrollierte Gebiete als feste Kandidatenmenge vorgemerkt, neutrale Gebiete nicht und bereits in dieser Runde aktivierte TerritoryIds ebenfalls nicht.
 
-Die Liste wird zu Phasenbeginn festgelegt. Eine während der Phase durch ♣ neu erhaltene zweite Zahl führt erst ab der nächsten Runde zu einer zusätzlichen Aktivierung.
+Die Kandidatenliste entsteht erst beim jeweiligen Wurf. Eine während der Phase durch ♣ neu erhaltene zweite Zahl gilt sofort für kommende Würfe derselben Runde. Vergangene Würfe und die Kandidatenliste des laufenden Wurfs werden nicht rückwirkend geändert.
 
-Die Bearbeitungsreihenfolge beginnt beim Startspieler und läuft im Uhrzeigersinn. Der Aktivierungszustand zeigt den aktuellen Spieler und dessen offene Gebiete. Bei mehreren offenen Gebieten trifft der Spieler die Auswahl; die Engine legt ihre Reihenfolge nicht fest. Erst nach gültiger Symbol- und Zielwahl sowie ausgeführter oder ausdrücklich vorgemerkter Wirkung gilt ein Gebiet als abgehandelt. Danach bleibt derselbe Spieler für seine übrigen Gebiete aktiv. Sind seine persönlichen Aktivierungen erledigt oder fehlen sie, beginnt unmittelbar seine Grundaktion. Erst nach dieser Grundaktion wechselt der Core zum nächsten Spieler.
+Die Bearbeitungsreihenfolge beginnt beim Startspieler und läuft im Uhrzeigersinn. Der Aktivierungszustand zeigt den aktuellen Spieler und dessen offene Gebiete. Bei mehreren offenen Gebieten trifft der Spieler die Auswahl; die Engine legt ihre Reihenfolge nicht fest. Erst nach gültiger Symbol- und Zielwahl sowie ausgeführter oder ausdrücklich vorgemerkter Wirkung gilt ein Gebiet als abgehandelt. Danach bleibt derselbe Spieler für seine übrigen Gebiete aktiv. Erst wenn alle Kandidaten des aktuellen Wurfs abgeschlossen sind, kann der Startspieler die nächste Zahl würfeln. Nach dem dritten Schritt beginnt die Aktionsphase beim Startspieler.
 
 Die Symbolwahl berücksichtigt ein mögliches zweites Symbol. Eine Aktivierung löst genau eine der vorhandenen Fähigkeiten aus. ♣ kann zusätzlich eine zweite Aktivierungszahl oder ein zweites Symbol erzeugen; diese Spezialisierungen schließen sich gegenseitig aus, während eine Siedlung oder Stadt daneben bestehen kann. ♥ verändert globalen oder lokalen Einfluss. ♦ markiert eine gegnerische Grenze oder pausiert die Aktivierung für eine geometrische Verschiebung zu einem neutralen Gebiet. ♠ speichert Spieler, Herkunftsgebiet und Verfügbarkeit eines später einmal verwendbaren Kampfbonus.
 

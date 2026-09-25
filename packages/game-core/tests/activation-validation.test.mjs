@@ -5,6 +5,7 @@ import {
   DomainErrorCode,
   GameActionType,
   Suit,
+  applyAction,
   activateTerritory,
   createGameState,
   startRound,
@@ -25,7 +26,7 @@ function makeState() {
     { id: "b-heart", ownerId: "B", area: 20, adjacentTerritoryIds: [], card: { suit: Suit.Hearts, activationNumber: 5 } },
   ];
   const dice = { values: [0, 3, 1, 5, 1, 6, 4], nextInt() { return this.values.shift(); } };
-  return startRound({
+  const round = startRound({
     ...setup,
     territories,
     phase: "ROUND_READY",
@@ -39,6 +40,10 @@ function makeState() {
       availableBidsByPlayerId: {},
     },
   }, dice, timestamp).state;
+  return applyAction(round, { type: GameActionType.RollNextActivationNumber, playerId: "A" }, {
+    randomSource: dice,
+    timestamp,
+  }).state;
 }
 
 function action(playerId, territoryId, choice, selectedSuit) {
@@ -77,7 +82,7 @@ test("activation action validates phase, current player, ownership and pending s
     DomainErrorCode.TerritoryNotFound);
 
   const afterFirst = run(state, action("A", "a-heart", { type: "HEART_GLOBAL_INFLUENCE" })).state;
-  rejectsWithoutMutation(afterFirst,
+  rejectsWithoutMutation({ ...afterFirst, activePlayerId: "A" },
     action("A", "a-heart", { type: "HEART_GLOBAL_INFLUENCE" }),
     DomainErrorCode.TerritoryAlreadyActivated);
   rejectsWithoutMutation({ ...state, phase: "ACTION_PHASE" },

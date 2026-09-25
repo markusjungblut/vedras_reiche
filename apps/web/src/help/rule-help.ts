@@ -43,11 +43,11 @@ export const RULE_HELP: Readonly<Record<RuleHelpId, RuleHelpTopic>> = {
   },
   rounds: {
     id: "rounds", title: "Runden", short: "Eine Runde besteht aus Aktivierung und anschließenden Grundaktionen.",
-    long: "Zu Rundenbeginn werden Aktivierungszahlen bestimmt. In Spielerreihenfolge löst jede Person ihre passenden eigenen Gebietskarten aus und führt danach genau eine Grundaktion aus: Auktion oder Krieg. Ohne passende Karte beginnt die Grundaktion direkt. Nach der letzten Runde startet die Wertung.", keywords: ["phase", "aktivierung", "aktion", "rundenende"],
+    long: "Zu Rundenbeginn bestimmt der Startspieler nacheinander drei Aktivierungszahlen. Nach jeder Zahl werden alle passenden, noch nicht aktivierten Gebiete vollständig abgehandelt. Erst danach beginnt die Aktionsphase: In Spielerreihenfolge führt jede Person genau eine Grundaktion aus, Auktion oder Krieg. Nach der letzten Runde startet die Wertung.", keywords: ["phase", "aktivierung", "aktion", "rundenende"],
   },
   activation: {
     id: "activation", title: "Aktivierung", short: "Nur eigene Karten mit einer aktuellen Aktivierungszahl sind aktivierbar.",
-    long: "Zu Beginn der Runde werden drei Aktivierungszahlen bestimmt. Ein Gebiet kann aktiviert werden, wenn seine Karte mindestens eine davon trägt. Wähle danach das Symbol, dessen Fähigkeit du nutzen willst. Eine durch ♣ neu erhaltene zweite Zahl gilt erst ab der nächsten Runde.", keywords: ["zahlen", "würfel", "aktiv", "aktivierungsphase", "zweite zahl"],
+    long: "Der Startspieler bestimmt drei verschiedene Aktivierungszahlen einzeln. Nach jeder Zahl werden nur die bei diesem Wurf passenden, noch nicht aktivierten Gebiete abgehandelt. Ein Gebiet kann höchstens einmal pro Runde aktiviert werden. Eine durch ♣ neu erhaltene zweite Zahl gilt für spätere Würfe derselben Runde, aber nicht rückwirkend für vergangene oder bereits laufende Würfe.", keywords: ["zahlen", "würfel", "aktiv", "aktivierungsphase", "zweite zahl"],
   },
   diamonds: {
     id: "diamonds", title: "♦ Grenze", short: "♦ markiert Grenzen oder bereitet eine legale Verschiebung zu neutralem Gebiet vor.",
