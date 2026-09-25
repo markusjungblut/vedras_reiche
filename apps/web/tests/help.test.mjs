@@ -4,6 +4,7 @@ import { DomainError, DomainErrorCode, GameEventType, GamePhase, Suit } from "@v
 import { formatDomainError, getCurrentHelp, getHelpValues, renderRuleHelp, RULE_HELP } from "../.test-dist/help/rule-help.js";
 import { loadTutorialProgress, markIntroductionSeen, markTutorialSeen, resetTutorialProgress } from "../.test-dist/help/tutorial-state.js";
 import { getMapColorRegime } from "../.test-dist/ui/map-color-regime.js";
+import { getSetupRegionColor } from "../.test-dist/ui/setup-region-colors.js";
 import { POINT_OF_INTEREST_PRESENTATIONS, POINT_OF_INTEREST_RULE_SUMMARY } from "../.test-dist/ui/point-of-interest-presentation.js";
 import { derivePresentationEvents } from "../.test-dist/presentation/game-presentation.js";
 
@@ -64,7 +65,7 @@ test("scoring help explains front territories and remaining influence", () => {
 test("map colors switch only with the authoritative phase and POI copy stays shared", () => {
   assert.equal(getMapColorRegime({ phase: GamePhase.MapCreation }), "SETUP_TERRITORIES");
   assert.equal(getMapColorRegime({ phase: GamePhase.Setup }), "SETUP_TERRITORIES");
-  assert.equal(getMapColorRegime({ phase: GamePhase.StartAuctions }), "SETUP_TERRITORIES");
+  assert.equal(getMapColorRegime({ phase: GamePhase.StartAuctions }), "OWNERSHIP");
   assert.equal(getMapColorRegime({ phase: GamePhase.ActivationPhase }), "OWNERSHIP");
   assert.equal(getMapColorRegime({ phase: GamePhase.ActionPhase }), "OWNERSHIP");
   assert.match(POINT_OF_INTEREST_PRESENTATIONS.LANDMARK.shortEffect, /\+25 % Wertung/);
@@ -75,6 +76,12 @@ test("map colors switch only with the authoritative phase and POI copy stays sha
   assert.match(POINT_OF_INTEREST_RULE_SUMMARY, /★ Wahrzeichen/);
   assert.match(RULE_HELP.pois.long, /◆ Relikt/);
   assert.match(RULE_HELP.factions.long, /\+30 %/);
+});
+
+test("setup region colors remain distinct beyond the former six-color palette", () => {
+  const colors = Array.from({ length: 28 }, (_, index) => getSetupRegionColor(index));
+  assert.equal(new Set(colors).size, colors.length);
+  assert.equal(getSetupRegionColor("region-7"), getSetupRegionColor("region-7"));
 });
 
 test("domain errors receive understandable neutral messages", () => {
@@ -149,7 +156,7 @@ test("presentation confirms only the suit selected by an authoritative activatio
   assert.equal(completed[1].type, "ACTIVATION_TERRITORY_PULSE");
 });
 
-test("presentation uses one normal-auction wave and preserves the start-auction color regime", () => {
+test("presentation uses one normal-auction wave and marks start-auction gains", () => {
   const previous = presentationState({ ownerId: null });
   const current = presentationState({ ownerId: "anna" });
   const events = derivePresentationEvents(previous, current, [

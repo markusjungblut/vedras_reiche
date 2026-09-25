@@ -31,12 +31,13 @@ function open(state, territoryId = "X", playerId = "A") {
   return openNormalAuction(state, { type: GameActionType.OpenAuction, playerId, territoryId }, timestamp);
 }
 
-function submit(state, playerId, basicBid, globalInfluence = 0, localInfluence = 0, overrides = {}) {
+function submit(state, playerId, basicBid, globalInfluence = 0, localInfluence, overrides = {}) {
+  const automaticLocal = state.territories.find((territory) => territory.id === state.auction.territoryId)?.localInfluenceByPlayerId?.[playerId] ?? 0;
   return submitNormalAuctionBid(state, {
     type: GameActionType.SubmitAuctionBid,
     auctionId: state.auction.id,
     playerId,
-    bid: { kind: "NORMAL", basicBid, globalInfluence, localInfluence },
+    bid: { kind: "NORMAL", basicBid, globalInfluence, localInfluence: localInfluence ?? automaticLocal },
     ...overrides,
   }, timestamp);
 }
@@ -92,6 +93,7 @@ test("bid validity checks basic bid and exact territory resources without chargi
   rejectsWithoutMutation(opened, () => submit(opened, "A", 1, 7), DomainErrorCode.InsufficientGlobalInfluence);
   rejectsWithoutMutation(opened, () => submit(opened, "A", 1, 0, -1), DomainErrorCode.InvalidBid);
   rejectsWithoutMutation(opened, () => submit(opened, "A", 1, 0, 2), DomainErrorCode.InsufficientLocalInfluence);
+  rejectsWithoutMutation(opened, () => submit(opened, "A", 1, 0, 0), DomainErrorCode.InsufficientLocalInfluence);
   rejectsWithoutMutation(opened, () => submit(opened, "A", 1, 0, 0, { bid: { kind: "START", value: 1 } }), DomainErrorCode.InvalidBid);
   const hugeGlobal = { ...opened, players: opened.players.map((player) => player.id === "A"
     ? { ...player, globalInfluence: Number.MAX_SAFE_INTEGER } : player) };
@@ -156,7 +158,7 @@ test("winning with the last available basic bid immediately refreshes all three"
 
 test("two highest bidders create a pending split with immediate roles and no payment", () => {
   let state = open(stateWith()).state;
-  state = submit(state, "A", 2, 2).state;
+  state = submit(state, "A", 2, 3).state;
   state = submit(state, "B", 3, 1).state;
   const final = submit(state, "C", 1);
   assert.equal(final.state.auction, undefined);
@@ -173,19 +175,19 @@ test("two highest bidders create a pending split with immediate roles and no pay
 
 test("first three-way tie permits one optional second auction; second tie cannot open a third", () => {
   let state = open(stateWith()).state;
-  state = submit(state, "A", 2).state;
+  state = submit(state, "A", 3).state;
   state = submit(state, "B", 2).state;
-  const firstTie = submit(state, "C", 2);
+  const firstTie = submit(state, "C", 1);
   assert.equal(firstTie.state.territories[1].ownerId, null);
   assert.equal(firstTie.state.actionPhase.secondAuctionAvailable, true);
   assert.equal(firstTie.state.players[0].globalInfluence, 6);
-  assert.deepEqual(firstTie.state.players[0].availableBasicBids, [1, 3]);
+  assert.deepEqual(firstTie.state.players[0].availableBasicBids, [1, 2]);
   assert.ok(firstTie.events.some((event) => event.type === GameEventType.SecondAuctionAvailable));
   state = open(firstTie.state, "Y").state;
   assert.equal(state.actionPhase.auctionsOpenedByActivePlayer, 2);
-  state = submit(state, "A", 1).state;
-  state = submit(state, "B", 1).state;
-  const secondTie = submit(state, "C", 1);
+  state = submit(state, "A", 2, 1).state;
+  state = submit(state, "B", 1, 2).state;
+  const secondTie = submit(state, "C", 2, 1);
   assert.equal(secondTie.state.actionPhase.secondAuctionAvailable, false);
   assert.equal(secondTie.state.territories.find((territory) => territory.id === "Y").ownerId, null);
   rejectsWithoutMutation(secondTie.state, () => open(secondTie.state, "X"), DomainErrorCode.SecondAuctionUnavailable);
@@ -198,8 +200,8 @@ test("an unresolved highest tie exhausts only highest bids, preserves influence,
     players: base.players.map((player) => ({ ...player, availableBasicBids: player.id === "D" ? [1, 2, 3] : [1] })),
   };
   let state = open(base).state;
-  state = submit(state, "A", 1, 4).state;
-  state = submit(state, "B", 1, 4).state;
+  state = submit(state, "A", 1, 6).state;
+  state = submit(state, "B", 1, 5).state;
   state = submit(state, "C", 1, 4).state;
   const result = submit(state, "D", 1, 3);
 

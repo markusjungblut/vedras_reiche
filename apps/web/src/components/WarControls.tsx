@@ -137,17 +137,19 @@ export function WarControls({ state, editor, onAction, viewerPlayerId, selectedP
       <p><strong>Verteidiger</strong><br/><Name state={state} id={war.defenderPlayerId}/> · {war.defenderTerritoryId}<br/>Fläche {war.defenderArea} · Festungen {state.pointsOfInterest.filter((poi) => poi.type === "FORTRESS" && map.cells[`${poi.position.x},${poi.position.y}`] === war.defenderTerritoryId).length}</p>
     </div>
     {war.stage === "AWAITING_COMBAT_CHOICES" && [war.attackerPlayerId, war.defenderPlayerId]
-      .filter((playerId) => viewerPlayerId === undefined || playerId === viewerPlayerId).map((playerId) => {
+      .filter((playerId) => viewerPlayerId === undefined || playerId === viewerPlayerId).flatMap((playerId) => {
       const locked = Object.hasOwn(war.spadeChoices, playerId);
       const opponentId = playerId === war.attackerPlayerId ? war.defenderTerritoryId : war.attackerTerritoryId;
       const options = getAvailableWarSpades(state, playerId, opponentId);
+      if (locked || options.length === 0) return [];
       return <div key={playerId} className="war-choice">
-        <h4><Name state={state} id={playerId}/> · ♠ einsetzen?</h4>
-        {locked ? <p>✓ Entscheidung bestätigt und bis zum Kampf verdeckt</p> : <div className="button-row">
-          <button className="secondary-button" onClick={() => onAction({ type: GameActionType.SetWarSpadeChoice, warId: war.id, playerId, spadeActivationId: null })}>Keine</button>
+        <h4>♠-Bonus verfügbar</h4>
+        <p>{options.map((option) => `${option.sourceTerritoryId} kann für diesen Kampf +${option.bonus} geben.`).join(" ")}</p>
+        <div className="button-row">
+          <button className="secondary-button" onClick={() => onAction({ type: GameActionType.SetWarSpadeChoice, warId: war.id, playerId, spadeActivationId: null })}>Nicht einsetzen</button>
           {options.map((option) => <button className="secondary-button" key={option.id} onClick={() => onAction({ type: GameActionType.SetWarSpadeChoice,
             warId: war.id, playerId, spadeActivationId: option.id })}>♠ aus {option.sourceTerritoryId}: +{option.bonus}</button>)}
-        </div>}
+        </div>
       </div>;
     })}
     {combat && <div className="war-result">

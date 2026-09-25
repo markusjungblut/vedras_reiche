@@ -188,6 +188,14 @@ function createFinalResult(state: GameState, scoring: ScoringState): GameResult 
   return { playerResults, winnerPlayerIds: playerResults.filter((result) => result.totalScoreHundredths === highest).map((result) => result.playerId) };
 }
 
+/**
+ * Computes current territory scoring with the same rules as final scoring.
+ * Tied largest realms stay unresolved, exactly as they would before their owner chooses one.
+ */
+export function createScoringPreview(state: GameState): GameResult {
+  return createFinalResult(state, createScoringState(state));
+}
+
 function completeScoring(state: GameState, scoring: ScoringState, timestamp: string): ActionResult {
   const result = createFinalResult(state, scoring);
   const descriptions: EventDescription[] = [

@@ -118,7 +118,14 @@ export function setWarSpadeChoice(
   const used = new Set([choices[war.attackerPlayerId], choices[war.defenderPlayerId]].filter((id): id is string => !!id));
   const spadeActivations = state.spadeActivations.map((effect) => used.has(effect.id) ? { ...effect, status: "USED" as const } : effect);
   for (const id of used) descriptions.push({ type: GameEventType.SpadeActivationUsed, payload: { warId: war.id, activationId: id } });
-  descriptions.push({ type: GameEventType.CombatRolled, payload: { warId: war.id, ...combat } });
+  descriptions.push({ type: GameEventType.CombatRolled, payload: {
+    warId: war.id,
+    attackerPlayerId: war.attackerPlayerId,
+    defenderPlayerId: war.defenderPlayerId,
+    attackerTerritoryId: war.attackerTerritoryId,
+    defenderTerritoryId: war.defenderTerritoryId,
+    ...combat,
+  } });
   if (war.borderMark !== undefined) descriptions.push({
     type: GameEventType.DiamondBorderMarkConsumed, payload: { warId: war.id, markId: war.borderMark.id },
   });
@@ -203,7 +210,9 @@ export function proposeBorderAdvance(state: GameState, action: ProposeBorderAdva
   });
   const descriptions: EventDescription[] = [
     { type: GameEventType.BorderAdvanceResolved, actorId: action.playerId,
-      payload: { warId: war.id, claimedCells: action.claimedCells,
+      payload: { warId: war.id, winnerPlayerId: action.playerId,
+        winnerTerritoryId: war.combat.winnerTerritoryId, loserTerritoryId: war.combat.loserTerritoryId,
+        claimedCells: action.claimedCells,
         directTransferCells: validation.directTransferCells ?? action.claimedCells,
         annexedDisconnectedCells: validation.annexedDisconnectedCells ?? [], maximumDepth: war.maximumDepth,
         weakeningAssessment: limitation } },

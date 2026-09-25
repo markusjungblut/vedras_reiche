@@ -21,7 +21,7 @@ class Dice {
 }
 
 function fixture({ a = 40, b = 40, format = "A4", weakA = false, weakB = false,
-  markPlayer, spades = [], fortresses = [] } = {}) {
+  markPlayer, spades = [{ id: "default", playerId: "P", sourceTerritoryId: "A", status: "AVAILABLE" }], fortresses = [] } = {}) {
   const height = 5;
   const widthA = Math.ceil(a / height);
   const widthB = Math.ceil(b / height);
@@ -52,10 +52,15 @@ function act(state, action, random = new Dice()) {
 }
 function start(state) { return act(state, { type: GameActionType.StartWar, playerId: "P", attackerTerritoryId: "A", defenderTerritoryId: "B" }).state; }
 function fight(state, dice, aSpade = null, bSpade = null) {
-  let next = act(state, { type: GameActionType.SetWarSpadeChoice, warId: state.pendingWar.id,
-    playerId: "P", spadeActivationId: aSpade }, new Dice()).state;
-  next = act(next, { type: GameActionType.SetWarSpadeChoice, warId: state.pendingWar.id,
-    playerId: "Q", spadeActivationId: bSpade }, new Dice(...dice)).state;
+  let next = state;
+  if (!Object.hasOwn(next.pendingWar.spadeChoices, "P")) {
+    next = act(next, { type: GameActionType.SetWarSpadeChoice, warId: next.pendingWar.id,
+      playerId: "P", spadeActivationId: aSpade }, new Dice(...dice)).state;
+  }
+  if (next.pendingWar && !Object.hasOwn(next.pendingWar.spadeChoices, "Q")) {
+    next = act(next, { type: GameActionType.SetWarSpadeChoice, warId: next.pendingWar.id,
+      playerId: "Q", spadeActivationId: bSpade }, new Dice(...dice)).state;
+  }
   return next;
 }
 
@@ -71,9 +76,16 @@ function largeWarFixture({ attackerWidth = 50, markPlayer } = {}) {
       { id: "A", ownerId: "P", card: { suit: Suit.Spades, activationNumber: 2 } },
       { id: "B", ownerId: "Q", card: { suit: Suit.Clubs, activationNumber: 3 } },
     ],
+    spadeActivations: [{ id: "default", playerId: "P", sourceTerritoryId: "A", status: "AVAILABLE" }],
     borderMarks: markPlayer ? [{ id: "mark", territoryIds: ["A", "B"], playerId: markPlayer }] : [],
   };
 }
+
+test("a war with no legal spade effects resolves the choices automatically", () => {
+  const started = act(fixture({ spades: [] }), { type: GameActionType.StartWar, playerId: "P", attackerTerritoryId: "A", defenderTerritoryId: "B" }, new Dice(4, 3));
+  assert.equal(started.state.pendingWar?.stage, "AWAITING_BORDER_ADVANCE");
+  assert.equal(started.state.events.filter((event) => event.type === GameEventType.WarSpadeChoiceLocked).length, 2);
+});
 
 test("combat has no attacker bonus, ties lock both territories and consume the mark", () => {
   const initial = fixture({ markPlayer: "P" });
@@ -150,6 +162,7 @@ function warEligibilityState({ width = 50, height = 50, area = 150, participatio
       { id: "A", ownerId: "P", warParticipationCountThisRound: participationCount, warsInitiatedThisRound: initiatedCount },
       { id: "B", ownerId: "Q" },
     ],
+    spadeActivations: [{ id: "default", playerId: "P", sourceTerritoryId: "A", status: "AVAILABLE" }],
   };
 }
 

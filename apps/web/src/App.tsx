@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   applyAction,
   createGameState,
+  createScoringPreview,
   GameActionType,
   GamePhase,
   DIGITAL_BOARD_HEIGHT,
@@ -38,15 +39,15 @@ import { EventLog } from "./components/EventLog";
 import { GameHeader } from "./components/GameHeader";
 import { PlayerPanel } from "./components/PlayerPanel";
 import { StateInspector } from "./components/StateInspector";
+import { MusicControls } from "./components/MusicControls";
 import { TerritoryBoard, TerritoryOverview } from "./components/TerritoryBoard";
 import { TerritoryDetails } from "./components/TerritoryDetails";
 import { ResultPanel, ScoringPanel } from "./components/ScoringPanel";
-import { MusicControls } from "./components/MusicControls";
 import { getMapEditor, NeutralDiamondControls, RecentWarResult, WarControls, type MapEditor } from "./components/WarControls";
 import { ActivationNumberReveal, AuctionResultReveal, WarDiceReveal } from "./components/PresentationFeedback";
 import { createScenario, type ScenarioKind } from "./debug/scenarios";
 import type { CardSource, RandomSource } from "@vedras/game-core";
-import { suitName, suitSymbol } from "./formatters/suit-label";
+import { suitName } from "./formatters/suit-label";
 import { DemoCardSource } from "./debug/demo-card-source";
 import { SeededRandomSource } from "./debug/seeded-random-source";
 import { LocalGameController, type GameController } from "./controllers/game-controller";
@@ -322,29 +323,6 @@ function ErrorBanner({ message, onDismiss }: { readonly message: string; readonl
   </div>;
 }
 
-function SecretFactionPanel({ state, playerId, factionSuit, visible, onVisibleChange, localPassAndPlay, onPlayerChange }: {
-  state: GameReadModel;
-  playerId?: string | undefined;
-  factionSuit?: Suit | undefined;
-  visible: boolean;
-  onVisibleChange: (visible: boolean) => void;
-  localPassAndPlay: boolean;
-  onPlayerChange: (id: string) => void;
-}) {
-  if (state.phase === GamePhase.Finished) return null;
-  const player = state.players.find((item) => item.id === playerId) ?? state.players[0];
-  if (!player || !factionSuit) return null;
-  return <section className="panel secret-faction-panel" aria-label="Eigene geheime Fraktion">
-    <div className="panel-heading"><div><p className="eyebrow">Persönlich</p><h2>Geheime Fraktion</h2></div></div>
-    {localPassAndPlay && <Field label="Bildschirm für"><select value={player.id} onChange={(event) => { onPlayerChange(event.target.value); onVisibleChange(false); }}>
-      {state.players.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
-    </select></Field>}
-    {!visible ? <><p>Nur {player.name} kann diese Information sehen.</p><button type="button" className="primary-button" onClick={() => onVisibleChange(true)}>Fraktion anzeigen</button></>
-      : <><p className="secret-faction">{suitSymbol(factionSuit)} {suitName(factionSuit).toUpperCase()}</p>
-        <button type="button" className="secondary-button" onClick={() => onVisibleChange(false)}>Fraktion verbergen</button></>}
-  </section>;
-}
-
 interface ControlProps {
   readonly state: GameReadModel;
   readonly actionTerritoryId?: string | undefined;
@@ -377,7 +355,6 @@ function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlPro
   const [startBid, setStartBid] = useState(0);
   const [basicBid, setBasicBid] = useState(1);
   const [globalInfluence, setGlobalInfluence] = useState(0);
-  const [localInfluence, setLocalInfluence] = useState(0);
   if (!auction) return null;
   const localBidderId = auction.eligiblePlayerIds.find((id) => auction.submittedBids[id] === undefined);
   const bidderId = viewerPlayerId ?? localBidderId;
@@ -390,9 +367,8 @@ function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlPro
     ? basicBid as 1 | 2 | 3 : basicAvailable[0];
   const chosenStartBid = startAvailable.includes(startBid) ? startBid : startAvailable[0];
   const maxGlobal = bidder?.globalInfluence ?? 0;
-  const maxLocal = bidderId === undefined ? 0 : territory?.localInfluenceByPlayerId?.[bidderId] ?? 0;
+  const automaticLocal = bidderId === undefined ? 0 : territory?.localInfluenceByPlayerId?.[bidderId] ?? 0;
   const selectedGlobal = Math.min(globalInfluence, maxGlobal);
-  const selectedLocal = Math.min(localInfluence, maxLocal);
   const ownBid = viewerPlayerId === undefined || auction.submittedBids[viewerPlayerId] === undefined
     ? undefined : auction.submittedBids[viewerPlayerId];
   const canSubmit = bidderId !== undefined && auction.submittedBids[bidderId] === undefined &&
@@ -426,27 +402,24 @@ function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlPro
             {basicAvailable.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </Field>
-        <div className="number-fields">
-          <Field label={`Globaler Einfluss (0–${maxGlobal})`}>
-            <input type="number" min="0" max={maxGlobal} step="1" value={selectedGlobal}
-              onChange={(event) => setGlobalInfluence(Math.max(0, Number(event.target.value)))} />
-          </Field>
-          <Field label={`Lokaler Einfluss auf ${auction.territoryId} (0–${maxLocal})`}>
-            <input type="number" min="0" max={maxLocal} step="1" value={selectedLocal}
-              onChange={(event) => setLocalInfluence(Math.max(0, Number(event.target.value)))} />
-          </Field>
+        <Field label={`Globaler Einfluss (0–${maxGlobal})`}>
+          <input type="number" min="0" max={maxGlobal} step="1" value={selectedGlobal}
+            onChange={(event) => setGlobalInfluence(Math.max(0, Number(event.target.value)))} />
+        </Field>
+        <div className="bid-breakdown" aria-label="Zusammensetzung des Gebots">
+          <span>Grundgebot: {chosenBasic ?? 0}</span><span>Global: +{selectedGlobal}</span>
+          {automaticLocal > 0 && <span>Lokal auf {auction.territoryId}: +{automaticLocal} automatisch</span>}
+          <strong>Gesamt: {(chosenBasic ?? 0) + selectedGlobal + automaticLocal}</strong>
         </div>
-        <p className="bid-total">Gebotswert: {(chosenBasic ?? 0) + selectedGlobal + selectedLocal}</p>
         <button type="button" className="primary-button" disabled={chosenBasic === undefined}
           onClick={() => {
             if (chosenBasic === undefined || bidderId === undefined) return;
             onAction({ type: GameActionType.SubmitAuctionBid, playerId: bidderId,
               auctionId: auction.id,
               bid: { kind: "NORMAL", basicBid: chosenBasic,
-                globalInfluence: selectedGlobal, localInfluence: selectedLocal } });
+                globalInfluence: selectedGlobal, localInfluence: automaticLocal } });
             setBasicBid(1);
             setGlobalInfluence(0);
-            setLocalInfluence(0);
           }}>Gebot verdeckt abgeben</button>
       </>}
       <small>Nach der Abgabe bleibt nur dein eigenes Gebot sichtbar.</small>
@@ -784,7 +757,7 @@ function SetupControls(props: ControlProps) {
     {!setupCanEdit && <p className="muted">Du bist nicht am Zug. Der Server akzeptiert nur Aktionen des aktiven Spielers.</p>}
     <p>Gebiete aktuell: {mapCreation.regionCount} · Nach diesem Entwurf: {previewCount} · {previewMessage}</p>
     <small>Bestätigte Kanten: {mapCreation.borders.edgeKeys.length} · Draft-Kanten: {edges.length} · Vorschauflächen: {previewAreas.join(" + ")} = {previewAreas.reduce((sum, area) => sum + area, 0)}</small>
-    <small>{draft.mode === "ERASER" ? "Der Radiergummi entfernt nur Kanten aus dem aktuellen lokalen Entwurf." : "Der Grenzstift snappt präzise auf Rastervertices und erzeugt nur Kanten zwischen Zellen."}</small>
+    {draft.mode === "ERASER" && <small>Der Radiergummi entfernt nur Kanten aus dem aktuellen lokalen Entwurf.</small>}
     <div className="button-row">
       <button type="button" className="secondary-button" disabled={!setupCanEdit || edges.length === 0} onClick={undo}>Rückgängig</button>
       <button type="button" className="primary-button" disabled={!setupCanEdit || !previewValid} onClick={commit}>{correction ? "Korrektur übernehmen" : "Teilung bestätigen"}</button>
@@ -875,7 +848,6 @@ export default function App() {
   const [selectedTerritoryId, setSelectedTerritoryId] = useState<string | undefined>();
   const [actionTerritoryId, setActionTerritoryId] = useState<string | undefined>();
   const [partChoiceDraft, setPartChoiceDraft] = useState<{ readonly key: string; readonly part: "A" | "B" } | undefined>();
-  const [showScoreLabels, setShowScoreLabels] = useState(false);
   const [account, setAccount] = useState<AccountDto | null | undefined>(undefined);
   const [accountMode, setAccountMode] = useState<"LOGIN" | "REGISTER">("LOGIN");
   const [accountUsername, setAccountUsername] = useState("");
@@ -1229,7 +1201,6 @@ export default function App() {
       setSetupDraft({ mode: "PEN", strokes: [] });
       setFactionVisible(false);
       setPrivacyPlayerId(demo.state.players[0]?.id);
-      setShowScoreLabels(false);
       setSelectedTerritoryId(undefined);
       setScenario(kind);
       setSeed(chosenSeed);
@@ -1627,21 +1598,18 @@ export default function App() {
     if (multiplayer !== null && multiplayer.playerId !== split?.dividerPlayerId) return;
     setSplitDraft(null);
   };
-  const scoring = state?.scoring;
-  const realmHighlights = scoring ? (() => {
-    const ids = new Set<string>();
-    for (const candidateIds of Object.values(scoring.largestRealmCandidateIdsByPlayerId)) {
-      for (const componentId of candidateIds ?? []) ids.add(componentId);
-    }
-    for (const componentId of Object.values(scoring.selectedLargestRealmComponentIdByPlayerId)) if (componentId !== undefined) ids.add(componentId);
-    return scoring.realmComponents.filter((component) => ids.has(component.id)).map((component) => ({
-      componentId: component.id,
-      territoryIds: component.territoryIds,
-      selected: Object.values(scoring.selectedLargestRealmComponentIdByPlayerId).includes(component.id),
-    }));
-  })() : undefined;
-  const scoreHundredthsByTerritoryId = state?.result ? Object.fromEntries(state.result.playerResults.flatMap((player) =>
-    player.territoryScores.map((score) => [score.territoryId, score.scoreHundredths]))) : undefined;
+  const bonusBreakdownsByTerritoryId = state === null ? undefined : (() => {
+    const previewState = {
+      ...state,
+      players: state.players.map((player) => {
+        const { secretFactionSuit: _hiddenFaction, ...publicPlayer } = player as GameState["players"][number];
+        return player.id === viewerPlayerId && viewerFactionSuit !== undefined
+          ? { ...publicPlayer, secretFactionSuit: viewerFactionSuit } : publicPlayer;
+      }),
+    } as GameState;
+    return Object.fromEntries(createScoringPreview(previewState).playerResults.flatMap((player) =>
+      player.territoryScores.map((score) => [score.territoryId, score])));
+  })();
   const savedSessions = Object.values(savedMultiplayerSessions).sort((left, right) => right.lastOpenedAt!.localeCompare(left.lastOpenedAt!));
   const savedSessionGroups: readonly { readonly title: string; readonly sessions: readonly SavedMultiplayerSession[] }[] = [
     { title: "Laufende Partien", sessions: savedSessions.filter((session) => session.availability !== "UNAVAILABLE" && session.room?.status === "RUNNING") },
@@ -1813,7 +1781,12 @@ export default function App() {
         viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} room={multiplayerRoom} connectionStatus={multiplayer ? remoteConnectionStatus : undefined}
         onOpenHelp={() => openHelp()} onCopyRoomCode={multiplayerRoom ? () => void copyToClipboard(multiplayerRoom.roomId, "Raumcode kopiert.") : undefined}
         onCopyInviteLink={inviteLink ? () => void copyToClipboard(inviteLink, "Einladungslink kopiert.") : undefined}
-        activationReveal={presentation.activationReveal} />
+        activationReveal={presentation.activationReveal}
+        factionSuit={viewerFactionSuit} factionVisible={factionVisible} onFactionVisibleChange={setFactionVisible}
+        localPassAndPlay={!multiplayer} onFactionPlayerChange={setPrivacyPlayerId}
+        soundEnabled={soundEnabled} onToggleSound={toggleSound}
+        musicState={musicState} onMusicEnabledChange={setMusicEnabled}
+        onMusicVolumeChange={(volume) => musicManager.setVolume(volume)} onStartMusic={startMusic} />
       <main className="dashboard">
         <section className="toolbar panel">
           {scenario ? <>
@@ -1828,10 +1801,6 @@ export default function App() {
             </Field>
             <button type="button" className="secondary-button" onClick={reset}>Demo zurücksetzen</button>
           </> : !multiplayer && <p className="muted">Kartenbau und Spielablauf verwenden den echten Game Core.</p>}
-          <button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={toggleSound}>{soundEnabled ? "🔊 Sound an" : "🔇 Sound aus"}</button>
-          <MusicControls state={musicState} onEnabledChange={setMusicEnabled} onVolumeChange={(volume) => musicManager.setVolume(volume)} onStart={startMusic} />
-          {state.phase === GamePhase.Finished && <label className="debug-toggle"><input type="checkbox" checked={showScoreLabels}
-            onChange={(event) => setShowScoreLabels(event.target.checked)} /> Wertungsansicht auf der Karte</label>}
           {state.phase === GamePhase.Finished && multiplayer && <div className="button-row" aria-label="Beendete Partie">
             <button type="button" className="secondary-button" onClick={() => document.getElementById("result-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Ergebnis ansehen</button>
             <button type="button" className="secondary-button" onClick={() => document.querySelector(".board-column")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Karte ansehen</button>
@@ -1851,12 +1820,9 @@ export default function App() {
         {multiplayer && activeRoomPlayer !== undefined && activeRoomPlayer.playerId !== multiplayer.playerId && <div role="status" className="connection-banner">Warte auf {activeRoomPlayer.name} …{activeRoomPlayer.connected ? "" : ` ${activeRoomPlayer.name} ist derzeit getrennt.`}</div>}
         {multiplayer && state.phase === GamePhase.Finished && rematchOfferRoomId !== undefined && rematchOfferRoomId !== multiplayer.roomId && <div role="status" className="connection-banner">Der Host hat ein Rematch erstellt. <button type="button" className="secondary-button" onClick={openRematchOffer}>Rematch beitreten</button></div>}
         <div className="game-table">
-          <aside className="personal-column" aria-label="Persönliche Informationen">
-            <SecretFactionPanel state={state} playerId={viewerPlayerId} factionSuit={viewerFactionSuit} visible={factionVisible}
-              onVisibleChange={setFactionVisible} localPassAndPlay={!multiplayer} onPlayerChange={setPrivacyPlayerId} />
-            <FirstGameHint state={state} viewerPlayerId={viewerPlayerId} progress={tutorialProgress}
-              onDismiss={dismissTutorialHint} onOpenHelp={openHelp} />
-            {selectedTerritoryId && <TerritoryDetails state={state} territoryId={selectedTerritoryId} playerName={name} />}
+          <aside className="details-column" aria-label="Ausgewähltes Gebiet">
+            {selectedTerritoryId ? <TerritoryDetails state={state} territoryId={selectedTerritoryId} playerName={name} />
+              : <section className="panel details-panel details-empty"><p className="eyebrow">Ausgewähltes Gebiet</p><p className="empty-state">Wähle ein Gebiet auf der Karte.</p></section>}
           </aside>
           <div className="board-column">
             <TerritoryBoard state={state} selectedId={selectedTerritoryId}
@@ -1865,8 +1831,7 @@ export default function App() {
               viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} focusTerritoryId={state.pendingSplit?.originalTerritoryId ?? state.pendingWar?.attackerTerritoryId}
               partChoice={currentPartChoice === undefined ? undefined : { ...currentPartChoice, onChoose: (part) => setPartChoiceDraft({ key: currentPartChoice.key, part }) }} playerName={name}
               splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
-              editor={editor} onToggleMapCell={toggleMapCell} realmHighlights={realmHighlights}
-              scoreHundredthsByTerritoryId={scoreHundredthsByTerritoryId} showScoreLabels={showScoreLabels}
+              editor={editor} onToggleMapCell={toggleMapCell} bonusBreakdownsByTerritoryId={bonusBreakdownsByTerritoryId}
               setupEditor={setupEditor} onSetupSelectCell={selectSetupCell}
               onSetupStrokePreview={previewSetupStroke} onSetupStrokeCommit={commitSetupStroke} onSetupStrokeErase={eraseSetupStroke} />
           </div>
@@ -1884,14 +1849,15 @@ export default function App() {
                 activationReveal={presentation.activationReveal}
                 selectedPart={currentPartChoice?.selectedPart} onSelectPart={(part) => currentPartChoice && setPartChoiceDraft({ key: currentPartChoice.key, part })} /></fieldset>
               {state.phase === GamePhase.Finished && <FinishedMatchFacts detail={finishedMatchDetail} />}
-              <RecentWarResult state={state} /></ActionPanel>
+              <RecentWarResult state={state} />
+              <FirstGameHint state={state} viewerPlayerId={viewerPlayerId} progress={tutorialProgress}
+                onDismiss={dismissTutorialHint} onOpenHelp={openHelp} />
+            </ActionPanel>
           </div>
-          <div className="players-column">
+          <aside className="right-column">
             <PlayerPanel state={state} playerName={name} viewerPlayerId={multiplayer?.playerId ?? privacyPlayerId} room={multiplayerRoom} />
-          </div>
-          <div className="event-column">
             <EventLog events={state.events} playerName={name} />
-          </div>
+          </aside>
         </div>
         <TerritoryOverview state={state} selectedId={selectedTerritoryId} viewerPlayerId={viewerPlayerId} highlightedIds={highlightedIds}
           onSelect={toggleTerritorySelection} playerName={name} />

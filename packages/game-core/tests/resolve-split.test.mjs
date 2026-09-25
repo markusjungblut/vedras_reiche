@@ -37,7 +37,7 @@ function normalSplit() {
     territories: [
       { id: "home", ownerId: "A", area: 20, adjacentTerritoryIds: ["X"] },
       { id: "X", ownerId: null, area: 20, adjacentTerritoryIds: ["home"], card: originalCard,
-        localInfluenceByPlayerId: { A: 1, B: 2, C: 3 } },
+        localInfluenceByPlayerId: { A: 1, B: 2, C: 0 } },
     ],
   };
   let state = openNormalAuction(base, {

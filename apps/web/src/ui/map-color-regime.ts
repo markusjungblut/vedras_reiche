@@ -5,7 +5,7 @@ import type { GameReadModel } from "../game-read-model";
 export type MapColorRegime = "SETUP_TERRITORIES" | "OWNERSHIP";
 
 export function getMapColorRegime(state: Pick<GameReadModel, "phase">): MapColorRegime {
-  return state.phase === GamePhase.MapCreation || state.phase === GamePhase.Setup || state.phase === GamePhase.StartAuctions
+  return state.phase === GamePhase.MapCreation || state.phase === GamePhase.Setup
     ? "SETUP_TERRITORIES"
     : "OWNERSHIP";
 }

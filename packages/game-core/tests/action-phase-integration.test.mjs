@@ -178,6 +178,7 @@ test("a legal war snapshots geometry and locks both territories for the round", 
       territory("B1", "B", ["A1"]),
     ],
     map: createGridMap({ width: 16, height: 5, format: "A4" }, cells),
+    spadeActivations: [{ id: "keep-choice", playerId: "A", sourceTerritoryId: "A1", status: "AVAILABLE" }],
   };
   const phase = beginActionPhase(base, timestamp);
   assert.equal(phase.state.phase, GamePhase.ActionPhase);

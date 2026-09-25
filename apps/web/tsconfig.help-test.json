@@ -5,5 +5,5 @@
     "outDir": ".test-dist",
     "rootDir": "src"
   },
-  "include": ["src/help/rule-help.ts", "src/help/tutorial-state.ts", "src/map/territory-label-anchor.ts", "src/ui/music-timeline.ts", "src/ui/music-manager.ts", "src/ui/map-color-regime.ts", "src/ui/point-of-interest-presentation.ts", "src/game-read-model.ts", "src/presentation/game-presentation.ts"]
+  "include": ["src/help/rule-help.ts", "src/help/tutorial-state.ts", "src/map/territory-label-anchor.ts", "src/ui/music-timeline.ts", "src/ui/music-manager.ts", "src/ui/map-color-regime.ts", "src/ui/point-of-interest-presentation.ts", "src/ui/setup-region-colors.ts", "src/game-read-model.ts", "src/presentation/game-presentation.ts"]
 }

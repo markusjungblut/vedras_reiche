@@ -107,7 +107,7 @@ test("a 100 by 100 board remains interactive after the authoritative start", asy
     await expect(host.locator(".map-cell")).toHaveCount(10_000);
     await map.hover();
     await host.mouse.wheel(0, -120);
-    await expect(host.locator(".map-legend")).toContainText("116 %");
+    await expect(host.locator(".map-nav-controls")).toContainText("116 %");
     const viewBeforePan = await map.getAttribute("viewBox");
     const mapBox = await map.boundingBox();
     if (mapBox === null) throw new Error("Die große Rasterkarte hat keine Bildschirmgeometrie.");

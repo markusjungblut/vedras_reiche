@@ -15,7 +15,7 @@ import { applySymbolAbility } from "./apply-symbol-ability.js";
 import { getSharedBorder, reconcileMapBoundFeatures, validateBorderAdvance } from "../map/index.js";
 import { getNeutralDiamondDepth } from "../rules/grid-depth.js";
 import type { ResolveNeutralDiamondAction } from "../actions/game-action.js";
-import { resolveDiamondCorrection, setWarSpadeChoice, proposeBorderAdvance, proposeWarCut, chooseWarCut } from "../war/war.js";
+import { getAvailableWarSpades, resolveDiamondCorrection, setWarSpadeChoice, proposeBorderAdvance, proposeWarCut, chooseWarCut } from "../war/war.js";
 import { chooseLargestRealm } from "../scoring/scoring.js";
 import {
   beginMapCreation,
@@ -30,6 +30,29 @@ export interface ActivationContext {
   readonly randomSource: RandomSource;
   readonly cardSource?: CardSource;
   readonly timestamp: string;
+}
+
+/** Automatically records a pass when a player has no legal ♠ effect for this war. */
+function startWarWithAutomaticSpadePasses(
+  state: GameState,
+  action: Extract<GameAction, { readonly type: GameActionType.StartWar }>,
+  context: ActivationContext,
+): ActionResult {
+  let result = startPendingWar(state, action, context.timestamp);
+  for (const playerId of [result.state.pendingWar?.attackerPlayerId, result.state.pendingWar?.defenderPlayerId]) {
+    const war = result.state.pendingWar;
+    if (playerId === undefined || war?.stage !== "AWAITING_COMBAT_CHOICES" || Object.hasOwn(war.spadeChoices, playerId)) continue;
+    const opponentTerritoryId = playerId === war.attackerPlayerId ? war.defenderTerritoryId : war.attackerTerritoryId;
+    if (getAvailableWarSpades(result.state, playerId, opponentTerritoryId).length > 0) continue;
+    const locked = setWarSpadeChoice(result.state, {
+      type: GameActionType.SetWarSpadeChoice,
+      warId: war.id,
+      playerId,
+      spadeActivationId: null,
+    }, context.randomSource, context.timestamp);
+    result = { state: locked.state, events: [...result.events, ...locked.events] };
+  }
+  return result;
 }
 
 export function activateTerritory(
@@ -247,7 +270,7 @@ export function applyAction(
       }
       return forfeitCurrentBasicAction(state, context.timestamp);
     case GameActionType.StartWar:
-      return startPendingWar(state, action, context.timestamp);
+      return startWarWithAutomaticSpadePasses(state, action, context);
     case GameActionType.SetWarSpadeChoice:
       return setWarSpadeChoice(state, action, context.randomSource, context.timestamp);
     case GameActionType.ProposeBorderAdvance:

@@ -65,8 +65,8 @@ test("two accounts create, join and start an authoritative room", async ({ brows
     const map = host.getByRole("img", { name: "Vedras Rasterkarte" });
     await expect(map).toBeVisible();
     await expect(guest.getByRole("img", { name: "Vedras Rasterkarte" })).toBeVisible();
-    await expect(host.getByText("1 Regionen", { exact: true })).toBeVisible();
-    await expect(guest.getByText("1 Regionen", { exact: true })).toBeVisible();
+    await expect(host.getByRole("heading", { name: "Gebiete: 1 / 12" })).toBeVisible();
+    await expect(guest.getByRole("heading", { name: "Gebiete: 1 / 12" })).toBeVisible();
     await expect(host.locator(".game-header .room-status")).toContainText(roomCode);
     await expect(host.getByRole("button", { name: "Regelhilfe öffnen" })).toBeVisible();
     await host.locator(".party-menu > summary").click();

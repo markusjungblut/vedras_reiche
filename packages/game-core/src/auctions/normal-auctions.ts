@@ -131,7 +131,8 @@ function validateBid(state: GameState, action: SubmitAuctionBidAction): NormalAu
   if (territory === undefined || territory.ownerId !== null) {
     throw new DomainError(DomainErrorCode.InvalidAuctionTarget);
   }
-  if (action.bid.localInfluence > (territory.localInfluenceByPlayerId?.[action.playerId] ?? 0)) {
+  const automaticLocalInfluence = territory.localInfluenceByPlayerId?.[action.playerId] ?? 0;
+  if (action.bid.localInfluence !== automaticLocalInfluence) {
     throw new DomainError(DomainErrorCode.InsufficientLocalInfluence);
   }
   return action.bid;

@@ -101,19 +101,36 @@ export function eventLabel(event: GameEvent, playerName: PlayerName): string {
     case GameEventType.LargestRealmChoiceRequired: return `${named(event, "playerId", playerName)} wählt das größte Reich.`;
     case GameEventType.LargestRealmSelected: return `${named(event, "playerId", playerName)} hat ein größtes Reich gewählt.`;
     case GameEventType.ScoringCompleted: return "Endwertung abgeschlossen.";
-    case GameEventType.WarStarted: return `Krieg zwischen ${field(event, "attackerTerritoryId")} und ${field(event, "defenderTerritoryId")} begonnen.`;
+    case GameEventType.WarStarted: return `${named(event, "playerId", playerName)} (${field(event, "attackerTerritoryId")}) greift ${named(event, "defenderPlayerId", playerName)} (${field(event, "defenderTerritoryId")}) an.`;
     case GameEventType.WarSpadeChoiceLocked: return `${named(event, "playerId", playerName)} hat die ♠-Wahl bestätigt.`;
-    case GameEventType.CombatRolled: return `Kampf: Angreifer ${field(event, "attackerRoll")} + ♠ ${field(event, "attackerSpadeBonus")} = ${field(event, "attackerTotal")}; Verteidiger ${field(event, "defenderRoll")} + ♠ ${field(event, "defenderSpadeBonus")} + Festungen ${field(event, "defenderFortressBonus")} = ${field(event, "defenderTotal")}. Differenz ${field(event, "difference")}.`;
+    case GameEventType.CombatRolled: {
+      const attackerTerritoryId = field(event, "attackerTerritoryId");
+      const defenderTerritoryId = field(event, "defenderTerritoryId");
+      const attacker = named(event, "attackerPlayerId", playerName);
+      const defender = named(event, "defenderPlayerId", playerName);
+      const difference = field(event, "difference");
+      if (field(event, "outcome") === "TIE" || difference === "0") {
+        return `Kampf ${attacker} (${attackerTerritoryId}) gegen ${defender} (${defenderTerritoryId}): Gleichstand bei ${field(event, "attackerTotal")} zu ${field(event, "defenderTotal")}.`;
+      }
+      const winnerTerritoryId = field(event, "winnerTerritoryId");
+      const winnerIsAttacker = winnerTerritoryId === attackerTerritoryId;
+      const winner = winnerIsAttacker ? attacker : defender;
+      const loser = winnerIsAttacker ? defender : attacker;
+      const loserTerritoryId = winnerIsAttacker ? defenderTerritoryId : attackerTerritoryId;
+      const outcomes: Record<string, string> = { BORDER_ADVANCE: "Grenzgewinn", STRONG_ADVANCE: "starker Vorstoß", CONQUEST: "vollständige Eroberung", CUT_AND_CHOOSE: "Gebietsteilung" };
+      return `${winner} (${winnerTerritoryId}) gewinnt gegen ${loser} (${loserTerritoryId}): ${outcomes[field(event, "outcome")] ?? field(event, "outcome")}, Differenz ${difference}.`;
+    }
     case GameEventType.SpadeActivationUsed: return "♠-Aktivierung eingesetzt.";
     case GameEventType.BorderAdvanceRequired: return `Grenzgewinn bis ${field(event, "maximumDepth")} Kästchen Tiefe möglich.`;
     case GameEventType.BorderAdvanceResolved: {
+      const direct = cellCount(event, "directTransferCells");
       const annexed = cellCount(event, "annexedDisconnectedCells");
-      return annexed === 0 ? "Grenzverschiebung bestätigt."
-        : `Grenzverschiebung bestätigt; ${annexed} abgeschnittene Kästchen fallen ebenfalls an den Gewinner.`;
+      const gained = direct + annexed;
+      return `${named(event, "winnerPlayerId", playerName)} gewinnt ${gained} Kästchen von ${field(event, "loserTerritoryId")}${annexed > 0 ? `, einschließlich ${annexed} automatisch annektierter Kästchen` : ""}.`;
     }
     case GameEventType.TerritoryWeakened: return `${field(event, "territoryId")} wurde geschwächt.`;
     case GameEventType.TerritoryWeakeningRemoved: return `Schwächung von ${field(event, "territoryId")} entfernt.`;
-    case GameEventType.TerritoryConquered: return `${field(event, "territoryId")} wurde vollständig von ${named(event, "ownerId", playerName)} erobert.`;
+    case GameEventType.TerritoryConquered: return `${named(event, "ownerId", playerName)} erobert ${field(event, "territoryId")} vollständig und übernimmt ${field(event, "conqueredAreaCells")} Kästchen.`;
     case GameEventType.WarCutRequired: return "Durchbruch: Gewinner zieht eine Teilungsgrenze.";
     case GameEventType.WarCutProposed: return "Teilung des besiegten Gebiets vorgeschlagen.";
     case GameEventType.WarCutChoiceMade: return "Verlierer hat seinen Gebietsteil gewählt.";
