@@ -11,7 +11,7 @@ import { CryptoCardSource } from "../dist/random.js";
 import { RoomError, RoomManager } from "../dist/room-manager.js";
 import { FileRoomStore } from "../dist/room-store.js";
 import { broadcastRoom, createVedrasServer } from "../dist/server.js";
-import { GameActionType, GamePhase, Suit, createGameState } from "@vedras/game-core";
+import { GameActionType, GamePhase, Suit, allocateNextTerritoryId, createGameState } from "@vedras/game-core";
 import { MAX_MAP_CELLS, MAX_MAP_HEIGHT, MAX_MAP_WIDTH, MAX_WEBSOCKET_PAYLOAD_BYTES, NetworkErrorCode } from "@vedras/protocol";
 
 class FixedRandomSource {
@@ -182,6 +182,36 @@ test("war participation counters survive a persisted room restart", async () => 
       { id: "A", participation: 1, initiated: 1 },
       { id: "B", participation: 2, initiated: 0 },
     ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the next territory display number survives a persisted room restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vedras-territory-labels-"));
+  try {
+    const store = new FileRoomStore(join(directory, "rooms"));
+    const roomsA = manager(store);
+    const { room, participant: anna, guest } = await startTwoPlayers(roomsA);
+    const snapshot = await store.load(room.roomId);
+    const state = {
+      ...createGameState({ gameId: room.roomId, startPlayerId: anna.playerId,
+        players: [{ id: anna.playerId, name: "Anna" }, { id: guest.participant.playerId, name: "Ben" }] }),
+      phase: GamePhase.ActionPhase,
+      nextTerritoryDisplayNumber: 15,
+      territories: [
+        { id: "G08", ownerId: anna.playerId, area: 20, adjacentTerritoryIds: [] },
+        { id: "G14", ownerId: guest.participant.playerId, area: 20, adjacentTerritoryIds: [] },
+      ],
+      events: [{ payload: { newTerritoryId: "G14" } }],
+    };
+    await store.save({ ...snapshot, status: "RUNNING", revision: room.revision + 1, gameState: state });
+
+    const roomsB = manager(store);
+    await roomsB.restore();
+    const restored = roomsB.getRoom(room.roomId).gameState;
+    assert.equal(restored.nextTerritoryDisplayNumber, 15);
+    assert.deepEqual(allocateNextTerritoryId(restored), { territoryId: "G15", nextTerritoryDisplayNumber: 16 });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

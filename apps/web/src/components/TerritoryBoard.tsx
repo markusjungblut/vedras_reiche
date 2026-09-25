@@ -85,6 +85,13 @@ interface TerritoryBoardProps {
   onSetupStrokePreview?: (edges: readonly SetupBorderEdge[]) => void;
   onSetupStrokeCommit?: (edges: readonly SetupBorderEdge[]) => void;
   onSetupStrokeErase?: (edges: readonly SetupBorderEdge[]) => void;
+  warSplitBoundaryEditor?: {
+    readonly targetId: string;
+    readonly draftEdges: readonly SetupBorderEdge[];
+    readonly editable: boolean;
+  } | undefined;
+  onWarSplitStrokePreview?: (edges: readonly SetupBorderEdge[]) => void;
+  onWarSplitStrokeCommit?: (edges: readonly SetupBorderEdge[]) => void;
 }
 
 interface TerritoryCardProps {
@@ -167,7 +174,8 @@ function TerritoryCard({ territory, area, ownerIndex, ownerName, selected, highl
 }
 
 export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, highlightedIds, presentation, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
-  bonusBreakdownsByTerritoryId, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: TerritoryBoardProps) {
+  bonusBreakdownsByTerritoryId, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase,
+  warSplitBoundaryEditor, onWarSplitStrokePreview, onWarSplitStrokeCommit }: TerritoryBoardProps) {
   const [viewMode, setViewMode] = useState<MapViewMode>("TERRITORIES");
   const map = state.map;
   const selectedTerritory = selectedId && state.territories.find((item) => item.id === selectedId);
@@ -191,7 +199,9 @@ export function TerritoryBoard({ state, selectedId, onSelect, onClearSelection, 
       splitDraft={splitDraft} onToggleSplitCell={onToggleSplitCell} editor={editor} onToggleMapCell={onToggleMapCell}
       bonusBreakdownsByTerritoryId={bonusBreakdownsByTerritoryId} viewMode={viewMode} onViewModeChange={setViewMode}
       setupEditor={setupEditor} onSetupSelectCell={onSetupSelectCell} onSetupStrokePreview={onSetupStrokePreview}
-      onSetupStrokeCommit={onSetupStrokeCommit} onSetupStrokeErase={onSetupStrokeErase} /> : <p className="panel-hint">Keine Karte im Setup.</p>}
+      onSetupStrokeCommit={onSetupStrokeCommit} onSetupStrokeErase={onSetupStrokeErase}
+      warSplitBoundaryEditor={warSplitBoundaryEditor} onWarSplitStrokePreview={onWarSplitStrokePreview}
+      onWarSplitStrokeCommit={onWarSplitStrokeCommit} /> : <p className="panel-hint">Keine Karte im Setup.</p>}
     {contextualHint && <p className="panel-hint">{contextualHint}</p>}
   </section>;
 }
@@ -291,10 +301,14 @@ interface RasterMapProps {
   readonly onSetupStrokePreview?: TerritoryBoardProps["onSetupStrokePreview"];
   readonly onSetupStrokeCommit?: TerritoryBoardProps["onSetupStrokeCommit"];
   readonly onSetupStrokeErase?: TerritoryBoardProps["onSetupStrokeErase"];
+  readonly warSplitBoundaryEditor?: TerritoryBoardProps["warSplitBoundaryEditor"];
+  readonly onWarSplitStrokePreview?: TerritoryBoardProps["onWarSplitStrokePreview"];
+  readonly onWarSplitStrokeCommit?: TerritoryBoardProps["onWarSplitStrokeCommit"];
 }
 
 function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds, highlightedIds, presentation, viewerPlayerId, focusTerritoryId, partChoice, playerName, splitDraft, onToggleSplitCell, editor, onToggleMapCell,
-  bonusBreakdownsByTerritoryId, viewMode, onViewModeChange, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase }: RasterMapProps) {
+  bonusBreakdownsByTerritoryId, viewMode, onViewModeChange, setupEditor, onSetupSelectCell, onSetupStrokePreview, onSetupStrokeCommit, onSetupStrokeErase,
+  warSplitBoundaryEditor, onWarSplitStrokePreview, onWarSplitStrokeCommit }: RasterMapProps) {
   const map = state.map!;
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -363,8 +377,9 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
   }, [presentation?.gainWaves]);
   const waveTerritoryIds = useMemo(() => new Set(presentation?.gainWaves.flatMap((wave) =>
     wave.territoryId === undefined ? [] : [wave.territoryId]) ?? []), [presentation?.gainWaves]);
-  const overlayTerritoryId = partChoice?.territoryId ?? split?.originalTerritoryId;
-  const splitAKeys = useMemo(() => partChoice?.partAKeys ?? split?.proposal?.partACells.map((cell) => `${cell.x},${cell.y}`) ?? splitDraft?.partAKeys ?? [], [partChoice, split, splitDraft]);
+  const overlayTerritoryId = partChoice?.territoryId ?? split?.originalTerritoryId ?? (editor?.mode === "CUT" ? editor.targetId : undefined);
+  const splitAKeys = useMemo(() => partChoice?.partAKeys ?? split?.proposal?.partACells.map((cell) => `${cell.x},${cell.y}`) ?? splitDraft?.partAKeys ??
+    (editor?.mode === "CUT" ? editor.selected.map((cell) => `${cell.x},${cell.y}`) : []), [editor, partChoice, split, splitDraft]);
   const splitA = useMemo(() => new Set(splitAKeys), [splitAKeys]);
   const splitId = overlayTerritoryId;
   const hasSplitOverlay = overlayTerritoryId !== undefined && splitA.size > 0;
@@ -391,10 +406,13 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
     return regions;
   }, [setupEditor]);
   const setupDraftSegments = setupEditor?.draftEdges.map(setupBorderEdgeToSegment) ?? [];
+  const warSplitDraftSegments = warSplitBoundaryEditor?.draftEdges.map(setupBorderEdgeToSegment) ?? [];
   const colorRegime = getMapColorRegime(state);
   const setupCanDraw = setupEditor !== undefined && setupEditor.mode !== "POI" && setupEditor.editable && setupAllowed.size > 0;
-  const canPan = !setupCanDraw;
-  const interactionOwnsMap = setupEditor !== undefined || editor !== undefined || (split !== undefined && split.stage !== "AWAITING_CHOICE") || partChoice?.canChoose === true;
+  const warSplitCanDraw = warSplitBoundaryEditor !== undefined && warSplitBoundaryEditor.editable;
+  const boundaryCanDraw = setupCanDraw || warSplitCanDraw;
+  const canPan = !boundaryCanDraw;
+  const interactionOwnsMap = setupEditor !== undefined || warSplitBoundaryEditor !== undefined || editor !== undefined || (split !== undefined && split.stage !== "AWAITING_CHOICE") || partChoice?.canChoose === true;
   const pointerToGridPoint = (event: { readonly currentTarget: SVGSVGElement; readonly clientX: number; readonly clientY: number }): GridVertex | undefined => {
     const transform = event.currentTarget.getScreenCTM();
     if (transform === null) return undefined;
@@ -447,12 +465,27 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
     });
   }, [focusTerritoryId, height, territoryLabels, width]);
   const strokeForPointerPoints = (points: readonly GridVertex[]): SetupBorderEdge[] => createPenStroke(points, width, height);
-  const previewPointerStroke = (points: readonly GridVertex[]) => onSetupStrokePreview?.(strokeForPointerPoints(points));
+  const boundaryStroke = (points: readonly GridVertex[]): SetupBorderEdge[] => {
+    const stroke = strokeForPointerPoints(points);
+    if (warSplitBoundaryEditor === undefined) return stroke;
+    return stroke.filter((edge) => map.cells[`${edge.from.x},${edge.from.y}`] === warSplitBoundaryEditor.targetId &&
+      map.cells[`${edge.to.x},${edge.to.y}`] === warSplitBoundaryEditor.targetId);
+  };
+  const previewPointerStroke = (points: readonly GridVertex[]) => {
+    const stroke = boundaryStroke(points);
+    if (warSplitBoundaryEditor !== undefined) onWarSplitStrokePreview?.(stroke);
+    else onSetupStrokePreview?.(stroke);
+  };
   const finishPointerStroke = () => {
     const drawing = setupPointer.current;
     if (drawing === undefined) return;
     setupPointer.current = undefined;
-    const stroke = strokeForPointerPoints(drawing.points);
+    const stroke = boundaryStroke(drawing.points);
+    if (warSplitBoundaryEditor !== undefined) {
+      if (stroke.length > 0) onWarSplitStrokeCommit?.(stroke);
+      else onWarSplitStrokePreview?.([]);
+      return;
+    }
     if (stroke.length > 0 && setupEditor?.mode === "ERASER") onSetupStrokeErase?.(stroke);
     else if (stroke.length > 0) onSetupStrokeCommit?.(stroke);
     else onSetupStrokePreview?.([]);
@@ -477,7 +510,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         <button type="button" className="secondary-button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Einpassen</button>
       </div>
     </div>
-    <svg ref={svgRef} className={`raster-map map-colors-${colorRegime.toLowerCase()} map-view-${viewMode.toLowerCase()} ${split || editor || setupEditor ? "is-splitting" : ""} ${zoom <= 1.1 ? "is-zoomed-out" : ""} ${canPan ? "can-pan" : ""} ${isPanning ? "is-panning" : ""}`}
+    <svg ref={svgRef} className={`raster-map map-colors-${colorRegime.toLowerCase()} map-view-${viewMode.toLowerCase()} ${split || editor || setupEditor || warSplitBoundaryEditor ? "is-splitting" : ""} ${boundaryCanDraw ? "is-boundary-drawing" : ""} ${zoom <= 1.1 ? "is-zoomed-out" : ""} ${canPan ? "can-pan" : ""} ${isPanning ? "is-panning" : ""}`}
       data-map-color-regime={colorRegime}
       viewBox={`${viewX} ${viewY} ${viewportWidth} ${viewportHeight}`}
       preserveAspectRatio="xMidYMid meet"
@@ -493,7 +526,7 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
           }
           return;
         }
-        if (!setupCanDraw) return;
+        if (!boundaryCanDraw) return;
         if (event.button !== 0) return;
         event.preventDefault();
         const point = pointerToGridPoint(event);
@@ -629,7 +662,10 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         const splitPart = hasSplitOverlay && territoryId === splitId
           ? splitA.has(key) ? "map-cell-part-a" : "map-cell-part-b" : "";
         const editPart = editor && territoryId === editor.targetId
-          ? editorSelected.has(key) ? "map-cell-part-a" : editorAllowed.has(key) ? "map-cell-corridor" : editor.mode === "CUT" ? "map-cell-part-b" : "" : "";
+          ? editor.mode === "CUT"
+            ? warSplitBoundaryEditor === undefined ? editorSelected.has(key) ? "map-cell-part-a" : "map-cell-part-b" : ""
+            : editorSelected.has(key) ? "map-cell-part-a" : editorAllowed.has(key) ? "map-cell-corridor" : ""
+          : "";
         const annexedPart = editor && territoryId === editor.targetId && editorAnnexed.has(key) ? "map-cell-annexed" : "";
         const setupPart = setupEditor && setupAllowed.has(key)
           ? setupEditor.editable ? "map-cell-setup-available" : "map-cell-setup-locked" : "";
@@ -668,6 +704,8 @@ function RasterMap({ state, selectedId, onSelect, onClearSelection, neighborIds,
         x2={edge.x + edge.dx} y2={edge.y + edge.dy} className="map-territory-border" />)}
       {setupDraftSegments.map((edge, index) => <line key={`setup-draft-${index}`} x1={edge.x} y1={edge.y}
         x2={edge.x + edge.dx} y2={edge.y + edge.dy} className="map-setup-draft-border" />)}
+      {warSplitDraftSegments.map((edge, index) => <line key={`war-split-draft-${index}`} x1={edge.x} y1={edge.y}
+        x2={edge.x + edge.dx} y2={edge.y + edge.dy} className="map-split-border" />)}
       {splitBoundary.map((edge, index) => <line key={`split-${index}`} x1={edge.x} y1={edge.y}
         x2={edge.x + edge.dx} y2={edge.y + edge.dy} className="map-split-border" />)}
       {activeBorders.map((edge, index) => {

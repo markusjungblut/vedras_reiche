@@ -124,7 +124,7 @@ test("a raster start auction tie uses divider proposal and chooser decision", ()
     splitId: state.pendingSplit.id, playerId: "A", partACells, originalCardPart: "A" }, timestamp).state;
   state = chooseSplitPart(state, { type: GameActionType.ChooseSplitPart,
     splitId: state.pendingSplit.id, playerId: "B", chosenPart: "B" }, random, timestamp).state;
-  const other = state.territories.find((territory) => territory.id.startsWith("Gebiet "));
+  const other = state.territories.find((territory) => /^G\d+$/.test(territory.id));
   assert.equal(state.territories.find((territory) => territory.id === "t1").ownerId, "A");
   assert.equal(other.ownerId, "B");
   assert.equal(state.territories.find((territory) => territory.id === "t1").card.suit, Suit.Hearts);
@@ -287,7 +287,7 @@ test("split resolution keeps the start auction pending until controlled map part
   assert.equal(result.state.startAuctions.round, 2);
   assert.equal(result.state.pendingSplit, undefined);
   assert.equal(result.state.territories.find((territory) => territory.id === "t1").ownerId, "A");
-  assert.equal(result.state.territories.find((territory) => territory.id.startsWith("Gebiet ")).ownerId, "B");
+  assert.equal(result.state.territories.find((territory) => /^G\d+$/.test(territory.id)).ownerId, "B");
   assert.equal(result.events.some((event) => event.type === GameEventType.TerritorySplitResolved), true);
 });
 

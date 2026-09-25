@@ -26,6 +26,8 @@ export interface GameState {
   /** Array order is the permanent clockwise player order. */
   readonly players: readonly Player[];
   readonly territories: readonly Territory[];
+  /** Next monotonically assigned player-facing territory number. */
+  readonly nextTerritoryDisplayNumber?: number;
   /** Authoritative raster geometry; omitted only during pre-map setup. */
   readonly map?: GridMapState;
   /** Present while the players create the initial raster map. */

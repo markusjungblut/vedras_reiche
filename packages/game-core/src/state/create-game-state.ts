@@ -36,6 +36,7 @@ export function createGameState({ gameId, players, startPlayerId }: NewGame): Ga
     maxRounds,
     players: [...players],
     territories: [],
+    nextTerritoryDisplayNumber: 1,
     pointsOfInterest: [],
     borderMarks: [],
     startPlayerId,

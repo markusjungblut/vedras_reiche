@@ -328,7 +328,7 @@ export function finalizeMapCreation(state: GameState, action: FinalizeMapCreatio
   const lastSetupPlayerId = mapCreation.lastSetupPlayerId ?? state.lastSetupPlayerId;
   if (lastSetupPlayerId === undefined) throw new DomainError(DomainErrorCode.InvalidMapCreationState, "No map drawing turn was recorded.");
   return result({ ...state, phase: GamePhase.Setup, map, territories, players: assignSecretFactions(state, random),
-    mapCreation: undefined, activePlayerId: undefined, lastSetupPlayerId }, timestamp, [
+    nextTerritoryDisplayNumber: territories.length + 1, mapCreation: undefined, activePlayerId: undefined, lastSetupPlayerId }, timestamp, [
     { type: GameEventType.MapCreationCompleted, actorId: action.playerId, payload: { territoryCount: territories.length, lastSetupPlayerId } },
     { type: GameEventType.TerritoryCardsAssigned, payload: { territoryCount: territories.length } },
     { type: GameEventType.SecretFactionsAssigned, payload: { playerCount: state.players.length } },

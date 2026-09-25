@@ -15,6 +15,14 @@ export interface MapEditor {
   readonly annexedDisconnectedCells: readonly GridCell[];
 }
 
+export interface WarCutWorkflow {
+  readonly stage: "DRAW_BOUNDARY" | "PREVIEW_BOUNDARY" | "FINE_TUNE_CELLS";
+  readonly boundaryMessage: string;
+  readonly canAdoptBoundary: boolean;
+  readonly onAdoptBoundary: () => void;
+  readonly onResetBoundary: () => void;
+}
+
 export function getMapEditor(state: GameReadModel, selectedKeys?: readonly string[]): MapEditor | undefined {
   const map = state.map;
   if (!map) return undefined;
@@ -36,7 +44,7 @@ export function getMapEditor(state: GameReadModel, selectedKeys?: readonly strin
   if (war?.stage === "AWAITING_CUT_DIVISION" && war.combat?.loserTerritoryId) {
     const cells = getTerritoryCells(map, war.combat.loserTerritoryId);
     return { key: `${war.id}:${war.stage}`, mode: "CUT", targetId: war.combat.loserTerritoryId,
-      selectable: cells, selected: selectedKeys === undefined ? cells.slice(0, Math.floor(cells.length / 2)) : selectedKeys.map(parseKey), annexedDisconnectedCells: [] };
+      selectable: cells, selected: selectedKeys === undefined ? [] : selectedKeys.map(parseKey), annexedDisconnectedCells: [] };
   }
   if (war?.stage === "AWAITING_CUT_CHOICE" && war.combat?.loserTerritoryId && war.proposal) {
     return { key: `${war.id}:${war.stage}`, mode: "CUT", targetId: war.combat.loserTerritoryId,
@@ -98,11 +106,12 @@ export function RecentWarResult({ state }: { state: GameReadModel }) {
   </section>;
 }
 
-export function WarControls({ state, editor, onAction, viewerPlayerId, selectedPart, onSelectPart }: {
+export function WarControls({ state, editor, onAction, viewerPlayerId, selectedPart, onSelectPart, cutWorkflow }: {
   state: GameReadModel; editor?: MapEditor | undefined; onAction: (action: GameAction) => void;
   viewerPlayerId?: string | undefined;
   selectedPart?: "A" | "B" | undefined;
   onSelectPart?: ((part: "A" | "B") => void) | undefined;
+  cutWorkflow?: WarCutWorkflow | undefined;
 }) {
   const war = state.pendingWar;
   const map = state.map;
@@ -169,13 +178,28 @@ export function WarControls({ state, editor, onAction, viewerPlayerId, selectedP
         warId: war.id, playerId: winnerPlayerId, claimedCells: editor.selected })}>Grenzgewinn bestätigen</button>
     </>}
     {war.stage === "AWAITING_CUT_DIVISION" && editor && splitValidation && <>
-      <h4>Gewinner zieht die Grenze</h4>
-      <p>Teil A {editor.selected.length} · Teil B {splitValidation.partBCells.length} · Mindestfläche {getMinimumTerritoryArea(map)}</p>
-      <p>Zusammenhang A {areCellsOrthogonallyConnected(editor.selected) ? "✓" : "✗"} · B {areCellsOrthogonallyConnected(splitValidation.partBCells) ? "✓" : "✗"}</p>
-      <p>Der Verlierer wählt zuerst. Sein Teil behält automatisch die ursprüngliche Karte.</p>
+      <h4>Gebiet teilen</h4>
+      <p>Ziehe eine Grenze durch {loserId}, sodass zwei legale Teile entstehen. Der Verlierer wählt anschließend den Teil mit der ursprünglichen Karte.</p>
       {!mayResolveWar && <p className="winner-message">Warte darauf, dass <Name state={state} id={winnerPlayerId}/> die Grenze zeichnet.</p>}
-      <button className="primary-button" disabled={!mayResolveWar || !splitValidation.valid} onClick={() => onAction({ type: GameActionType.ProposeWarCut,
-        warId: war.id, playerId: winnerPlayerId, partACells: editor.selected })}>Teilung bestätigen</button>
+      {cutWorkflow?.stage === "DRAW_BOUNDARY" && <p className="winner-message">{cutWorkflow.boundaryMessage}</p>}
+      {cutWorkflow?.stage === "PREVIEW_BOUNDARY" && <>
+        <p>{cutWorkflow.boundaryMessage}</p>
+        <div className="button-row">
+          <button className="primary-button" disabled={!mayResolveWar || !cutWorkflow.canAdoptBoundary} onClick={cutWorkflow.onAdoptBoundary}>Grenze übernehmen</button>
+          <button className="secondary-button" disabled={!mayResolveWar} onClick={cutWorkflow.onResetBoundary}>Grenze neu zeichnen</button>
+        </div>
+      </>}
+      {cutWorkflow?.stage === "FINE_TUNE_CELLS" && <>
+        <p>Feinjustierung: Klicke einzelne Kästchen an, wenn du die Aufteilung noch korrigieren möchtest.</p>
+        <p>Teil A {editor.selected.length} · Teil B {splitValidation.partBCells.length} · Mindestfläche {getMinimumTerritoryArea(map)}</p>
+        <p>Zusammenhang A {areCellsOrthogonallyConnected(editor.selected) ? "✓" : "✗"} · B {areCellsOrthogonallyConnected(splitValidation.partBCells) ? "✓" : "✗"}</p>
+        <p>{splitValidation.valid ? "Beide Teile sind zusammenhängend und regelkonform." : `Noch nicht gültig: ${splitValidation.reason ?? "Mindestgröße oder Zusammenhang fehlt"}.`}</p>
+        <div className="button-row">
+          <button className="primary-button" disabled={!mayResolveWar || !splitValidation.valid} onClick={() => onAction({ type: GameActionType.ProposeWarCut,
+            warId: war.id, playerId: winnerPlayerId, partACells: editor.selected })}>Teilung bestätigen</button>
+          <button className="secondary-button" disabled={!mayResolveWar} onClick={cutWorkflow.onResetBoundary}>Grenze neu zeichnen</button>
+        </div>
+      </>}
     </>}
     {war.stage === "AWAITING_CUT_CHOICE" && war.proposal && <>
       <h4><Name state={state} id={loserPlayerId}/> wählt den Teil, den er behält</h4>

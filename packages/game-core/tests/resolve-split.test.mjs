@@ -30,6 +30,7 @@ function normalSplit() {
     round: 1,
     activePlayerId: "A",
     actionPhase: { completedPlayerIds: [], auctionsOpenedByActivePlayer: 0, secondAuctionAvailable: false },
+    nextTerritoryDisplayNumber: 13,
     map: createGridMap({ width: 9, height: 5, format: "A4" }, Object.fromEntries(
       Array.from({ length: 45 }, (_, index) => [
         `${index % 9},${Math.floor(index / 9)}`, index === 0 ? "home" : "X",
@@ -116,7 +117,7 @@ function legalRasterChoice(state, cardSource = { drawAndReplace: () => newCard }
 }
 
 function newPart(state, originalId) {
-  return state.territories.find((territory) => territory.id === "new" || territory.id.startsWith("Gebiet "));
+  return state.territories.find((territory) => territory.id === "new" || /^G\d+$/.test(territory.id));
 }
 
 function reduceOriginalArea(state, territoryId, area) {
@@ -144,6 +145,7 @@ test("normal legal split pays both winners only after resolution and clears loca
   const resolved = legalRasterChoice(pending);
   assert.equal(resolved.state.pendingSplit, undefined);
   assert.equal(resolved.state.territories.find((territory) => territory.id === "X").ownerId, "A");
+  assert.equal(newPart(resolved.state, "X").id, "G13");
   assert.equal(newPart(resolved.state, "X").ownerId, "B");
   assert.deepEqual(resolved.state.territories.find((territory) => territory.id === "X").localInfluenceByPlayerId, {});
   assert.deepEqual(newPart(resolved.state, "X").localInfluenceByPlayerId, {});

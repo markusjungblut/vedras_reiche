@@ -23,6 +23,7 @@ import {
   areCellsOrthogonallyConnected,
   analyzeSetupPartitionChange,
   deriveSetupRegions,
+  deriveTerritorySplitFromBoundary,
   normalizeSetupBorderEdges,
   toSetupBorderEdgeKey,
   type SetupBorderEdge,
@@ -43,7 +44,7 @@ import { MusicControls } from "./components/MusicControls";
 import { TerritoryBoard, TerritoryOverview } from "./components/TerritoryBoard";
 import { TerritoryDetails } from "./components/TerritoryDetails";
 import { ResultPanel, ScoringPanel } from "./components/ScoringPanel";
-import { getMapEditor, NeutralDiamondControls, RecentWarResult, WarControls, type MapEditor } from "./components/WarControls";
+import { getMapEditor, NeutralDiamondControls, RecentWarResult, WarControls, type MapEditor, type WarCutWorkflow } from "./components/WarControls";
 import { ActivationNumberReveal, AuctionResultReveal, WarDiceReveal } from "./components/PresentationFeedback";
 import { createScenario, type ScenarioKind } from "./debug/scenarios";
 import type { CardSource, RandomSource } from "@vedras/game-core";
@@ -109,6 +110,13 @@ type SetupMode = "PEN" | "ERASER" | "CORRECTION";
 interface SetupDraft {
   readonly mode: SetupMode;
   /** Local, zero-area border edges. The authoritative state changes only at commit. */
+  readonly strokes: readonly (readonly SetupBorderEdge[])[];
+  readonly activeStroke?: readonly SetupBorderEdge[] | undefined;
+}
+
+interface WarSplitBoundaryDraft {
+  readonly key: string;
+  readonly stage: WarCutWorkflow["stage"];
   readonly strokes: readonly (readonly SetupBorderEdge[])[];
   readonly activeStroke?: readonly SetupBorderEdge[] | undefined;
 }
@@ -348,6 +356,7 @@ interface ControlProps {
   readonly onSelectPart?: (part: "A" | "B") => void;
   readonly factionSuits?: Readonly<Partial<Record<string, Suit>>> | undefined;
   readonly activationReveal?: PresentationState["activationReveal"];
+  readonly cutWorkflow?: WarCutWorkflow | undefined;
 }
 
 function AuctionBidControls({ state, onAction, viewerPlayerId }: Pick<ControlProps, "state" | "onAction" | "viewerPlayerId">) {
@@ -804,7 +813,8 @@ function PhaseControls(props: ControlProps) {
   }
   if (state.pendingSplit) return <SplitEditor {...props} />;
   if (state.pendingWar) return <WarControls state={state} editor={props.editor} onAction={onAction}
-    viewerPlayerId={props.viewerPlayerId} selectedPart={props.selectedPart} onSelectPart={props.onSelectPart} />;
+    viewerPlayerId={props.viewerPlayerId} selectedPart={props.selectedPart} onSelectPart={props.onSelectPart}
+    cutWorkflow={props.cutWorkflow} />;
   if (state.pendingDiamondBorderChanges.length > 0) return <NeutralDiamondControls state={state} editor={props.editor} onAction={onAction} />;
   switch (state.phase) {
     case GamePhase.Setup:
@@ -868,6 +878,7 @@ export default function App() {
   const [errorDismissVersion, setErrorDismissVersion] = useState(0);
   const [splitDraft, setSplitDraft] = useState<SplitDraft | null>(null);
   const [mapDraft, setMapDraft] = useState<{ key: string; keys: readonly string[] } | null>(null);
+  const [warSplitBoundaryDraft, setWarSplitBoundaryDraft] = useState<WarSplitBoundaryDraft | null>(null);
   const [setupDraft, setSetupDraft] = useState<SetupDraft>({ mode: "PEN", strokes: [] });
   const [privacyPlayerId, setPrivacyPlayerId] = useState<string | undefined>();
   const [factionVisible, setFactionVisible] = useState(false);
@@ -1089,6 +1100,7 @@ export default function App() {
     setSetupDraft({ mode: "PEN", strokes: [] });
     setSplitDraft(null);
     setMapDraft(null);
+    setWarSplitBoundaryDraft(null);
     setPrivacyPlayerId(storedSession.playerId);
     setFactionVisible(false);
     setSavedMultiplayerSessions(rememberMultiplayerSession(storedSession));
@@ -1198,6 +1210,7 @@ export default function App() {
       }), false);
       setSplitDraft(null);
       setMapDraft(null);
+      setWarSplitBoundaryDraft(null);
       setSetupDraft({ mode: "PEN", strokes: [] });
       setFactionVisible(false);
       setPrivacyPlayerId(demo.state.players[0]?.id);
@@ -1389,6 +1402,7 @@ export default function App() {
       setSeed(selected);
       setSplitDraft(null);
       setMapDraft(null);
+      setWarSplitBoundaryDraft(null);
       setSetupDraft({ mode: "PEN", strokes: [] });
       setSelectedTerritoryId(undefined);
       setPrivacyPlayerId(firstPlayerId);
@@ -1466,10 +1480,32 @@ export default function App() {
   ];
   const split = state?.pendingSplit;
   const editorBase = state ? getMapEditor(state) : undefined;
-  const editor = state ? getMapEditor(state, mapDraft && mapDraft.key === editorBase?.key ? mapDraft.keys : undefined) : undefined;
+  const pendingWarCut = state?.pendingWar?.stage === "AWAITING_CUT_DIVISION" && state.pendingWar.combat?.loserTerritoryId
+    ? state.pendingWar : undefined;
+  const warCutKey = pendingWarCut === undefined ? undefined : `${pendingWarCut.id}:${pendingWarCut.stage}`;
+  const currentWarSplitDraft = warCutKey !== undefined && warSplitBoundaryDraft?.key === warCutKey
+    ? warSplitBoundaryDraft : warCutKey === undefined ? undefined : { key: warCutKey, stage: "DRAW_BOUNDARY" as const, strokes: [] };
+  const warSplitEdges = currentWarSplitDraft === undefined ? [] : mergeDraftEdges([
+    ...currentWarSplitDraft.strokes,
+    ...(currentWarSplitDraft.activeStroke === undefined ? [] : [currentWarSplitDraft.activeStroke]),
+  ]);
+  const warBoundaryPreview = state?.map && pendingWarCut?.combat?.loserTerritoryId !== undefined
+    ? deriveTerritorySplitFromBoundary(state.map, pendingWarCut.combat.loserTerritoryId, warSplitEdges) : undefined;
+  const warBoundaryValidation = state?.map && pendingWarCut?.combat?.loserTerritoryId !== undefined && warBoundaryPreview?.valid
+    ? validateTerritorySplit(state.map, pendingWarCut.combat.loserTerritoryId, warBoundaryPreview.partACells) : undefined;
+  const mapDraftKeys = mapDraft && mapDraft.key === editorBase?.key ? mapDraft.keys : undefined;
+  const previewKeys = (currentWarSplitDraft?.stage === "DRAW_BOUNDARY" || currentWarSplitDraft?.stage === "PREVIEW_BOUNDARY") && warBoundaryPreview?.valid
+    ? warBoundaryPreview.partACells.map((cell) => `${cell.x},${cell.y}`) : undefined;
+  const editor = state ? getMapEditor(state, mapDraftKeys ?? previewKeys) : undefined;
+  const isWarSplitFineTune = currentWarSplitDraft?.stage === "FINE_TUNE_CELLS";
+  const warCutWinnerPlayerId = pendingWarCut?.combat?.winnerTerritoryId === pendingWarCut?.attackerTerritoryId
+    ? pendingWarCut?.attackerPlayerId : pendingWarCut?.defenderPlayerId;
+  const canEditWarCut = pendingWarCut !== undefined && (multiplayer === null || multiplayer.playerId === warCutWinnerPlayerId) &&
+    (multiplayer === null || remoteConnectionStatus === "CONNECTED");
   const toggleMapCell = (cell: GridCell) => {
     if (!multiplayerConnected) return;
     if (!editor) return;
+    if (editor.mode === "CUT" && !isWarSplitFineTune) return;
     const pendingWar = state?.pendingWar;
     const winningPlayerId = pendingWar?.combat === undefined ? undefined
       : pendingWar.combat.winnerTerritoryId === pendingWar.attackerTerritoryId
@@ -1481,6 +1517,39 @@ export default function App() {
     const key = `${cell.x},${cell.y}`;
     const current = editor.selected.map((item) => `${item.x},${item.y}`);
     setMapDraft({ key: editor.key, keys: current.includes(key) ? current.filter((item) => item !== key) : [...current, key] });
+  };
+  const previewWarSplitStroke = (edges: readonly SetupBorderEdge[]) => {
+    if (!currentWarSplitDraft || !canEditWarCut || currentWarSplitDraft.stage !== "DRAW_BOUNDARY") return;
+    setWarSplitBoundaryDraft({ ...currentWarSplitDraft, activeStroke: edges });
+  };
+  const commitWarSplitStroke = (edges: readonly SetupBorderEdge[]) => {
+    if (!currentWarSplitDraft || !canEditWarCut || currentWarSplitDraft.stage !== "DRAW_BOUNDARY") return;
+    setWarSplitBoundaryDraft({ key: currentWarSplitDraft.key, stage: "PREVIEW_BOUNDARY",
+      strokes: [...currentWarSplitDraft.strokes, edges] });
+  };
+  const resetWarSplitBoundary = () => {
+    if (!currentWarSplitDraft || !canEditWarCut) return;
+    setMapDraft(null);
+    setWarSplitBoundaryDraft({ key: currentWarSplitDraft.key, stage: "DRAW_BOUNDARY", strokes: [] });
+  };
+  const adoptWarSplitBoundary = () => {
+    if (!currentWarSplitDraft || !canEditWarCut || !warBoundaryPreview?.valid || !warBoundaryValidation?.valid) return;
+    setMapDraft({ key: currentWarSplitDraft.key, keys: warBoundaryPreview.partACells.map((cell) => `${cell.x},${cell.y}`) });
+    setWarSplitBoundaryDraft({ key: currentWarSplitDraft.key, stage: "FINE_TUNE_CELLS", strokes: currentWarSplitDraft.strokes });
+  };
+  const warCutWorkflow: WarCutWorkflow | undefined = currentWarSplitDraft === undefined ? undefined : {
+    stage: currentWarSplitDraft.stage,
+    boundaryMessage: currentWarSplitDraft.stage === "DRAW_BOUNDARY"
+      ? warSplitEdges.length === 0 ? "Ziehe eine Grenze durch das Gebiet. Beide entstehenden Teile müssen legal sein."
+        : warBoundaryPreview?.valid !== true ? "Die Linie trennt das Gebiet noch nicht in genau zwei Teile."
+          : warBoundaryValidation?.valid ? "Vorschau: Beide Teile sind legal. Zeichne weiter oder lass die Linie los."
+            : `Vorschau noch nicht legal: ${warBoundaryValidation?.reason ?? "Mindestgröße oder Zusammenhang fehlt"}.`
+      : warBoundaryPreview?.valid !== true ? "Die gezeichnete Grenze muss das Gebiet in genau zwei Teile trennen."
+        : warBoundaryValidation?.valid ? "Vorschau: Beide Teile sind legal. Übernimm die Grenze für die Feinjustierung."
+          : `Vorschau noch nicht legal: ${warBoundaryValidation?.reason ?? "Mindestgröße oder Zusammenhang fehlt"}.`,
+    canAdoptBoundary: warBoundaryPreview?.valid === true && warBoundaryValidation?.valid === true,
+    onAdoptBoundary: adoptWarSplitBoundary,
+    onResetBoundary: resetWarSplitBoundary,
   };
   const mapCreation = state?.mapCreation;
   const setupPoiType: Partial<Record<MapCreationStage, PointOfInterestType>> = {
@@ -1833,7 +1902,11 @@ export default function App() {
               splitDraft={currentSplitDraft} onToggleSplitCell={toggleSplitCell}
               editor={editor} onToggleMapCell={toggleMapCell} bonusBreakdownsByTerritoryId={bonusBreakdownsByTerritoryId}
               setupEditor={setupEditor} onSetupSelectCell={selectSetupCell}
-              onSetupStrokePreview={previewSetupStroke} onSetupStrokeCommit={commitSetupStroke} onSetupStrokeErase={eraseSetupStroke} />
+              onSetupStrokePreview={previewSetupStroke} onSetupStrokeCommit={commitSetupStroke} onSetupStrokeErase={eraseSetupStroke}
+              warSplitBoundaryEditor={currentWarSplitDraft && pendingWarCut?.combat?.loserTerritoryId && currentWarSplitDraft.stage === "DRAW_BOUNDARY" ? {
+                targetId: pendingWarCut.combat.loserTerritoryId, draftEdges: warSplitEdges, editable: canEditWarCut,
+              } : undefined}
+              onWarSplitStrokePreview={previewWarSplitStroke} onWarSplitStrokeCommit={commitWarSplitStroke} />
           </div>
           <div className="action-column">
             <ActionPanel><AuctionResultReveal result={presentation.auctionResult} playerName={name}/>
@@ -1847,7 +1920,8 @@ export default function App() {
                 onSetPrivacyPlayerId={setPrivacyPlayerId} onSetFactionVisible={setFactionVisible}
                 factionSuits={factionSuits}
                 activationReveal={presentation.activationReveal}
-                selectedPart={currentPartChoice?.selectedPart} onSelectPart={(part) => currentPartChoice && setPartChoiceDraft({ key: currentPartChoice.key, part })} /></fieldset>
+                selectedPart={currentPartChoice?.selectedPart} onSelectPart={(part) => currentPartChoice && setPartChoiceDraft({ key: currentPartChoice.key, part })}
+                cutWorkflow={warCutWorkflow} /></fieldset>
               {state.phase === GamePhase.Finished && <FinishedMatchFacts detail={finishedMatchDetail} />}
               <RecentWarResult state={state} />
               <FirstGameHint state={state} viewerPlayerId={viewerPlayerId} progress={tutorialProgress}

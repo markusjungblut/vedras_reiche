@@ -361,23 +361,35 @@ test("defender can win, and a weakened attacker is conquered symmetrically", () 
   assert.equal(getTerritoryArea(fought.map, "A"), 40);
 });
 
-test("war cut keeps the chosen original card and moves POIs and settlements with cells", () => {
+test("war cut keeps the losing territory label and card, then allocates the next regular label", () => {
   const base = fixture({ fortresses: [{ x: 8, y: 0 }] });
-  const state = { ...base, territories: base.territories.map((territory) => territory.id === "B"
-    ? { ...territory, settlement: "SETTLEMENT", settlementFeature: { id: "s", kind: "SETTLEMENT", position: { x: 8, y: 0 } } }
-    : territory) };
-  let fought = fight(start(state), [6, 1]);
+  const state = {
+    ...base,
+    nextTerritoryDisplayNumber: 14,
+    map: { ...base.map, cells: Object.fromEntries(Object.entries(base.map.cells).map(([key, id]) => [key,
+      id === "A" ? "G07" : id === "B" ? "G08" : id])) },
+    territories: base.territories.map((territory) => {
+      const id = territory.id === "A" ? "G07" : territory.id === "B" ? "G08" : territory.id;
+      return id === "G08" ? { ...territory, id, settlement: "SETTLEMENT",
+        settlementFeature: { id: "s", kind: "SETTLEMENT", position: { x: 8, y: 0 } } } : { ...territory, id };
+    }),
+    spadeActivations: base.spadeActivations.map((activation) => ({ ...activation,
+      sourceTerritoryId: activation.sourceTerritoryId === "A" ? "G07" : activation.sourceTerritoryId })),
+  };
+  let fought = act(state, { type: GameActionType.StartWar, playerId: "P", attackerTerritoryId: "G07", defenderTerritoryId: "G08" }).state;
+  fought = fight(fought, [6, 1]);
   const warId = fought.pendingWar.id;
   const partA = [];
   for (let y = 0; y < 5; y++) for (let x = 8; x < 12; x++) partA.push({ x, y });
   fought = act(fought, { type: GameActionType.ProposeWarCut, warId, playerId: "P", partACells: partA }).state;
   const chosen = act(fought, { type: GameActionType.ChooseWarCut, warId, playerId: "Q", chosenPart: "B" }).state;
-  const newPart = chosen.territories.find((territory) => territory.id.startsWith("B:war:"));
-  assert.equal(chosen.territories.find((territory) => territory.id === "B").ownerId, "Q");
-  assert.equal(chosen.territories.find((territory) => territory.id === "B").card.additionalSuit, Suit.Hearts);
+  const newPart = chosen.territories.find((territory) => territory.id === "G14");
+  assert.equal(chosen.territories.find((territory) => territory.id === "G08").ownerId, "Q");
+  assert.equal(chosen.territories.find((territory) => territory.id === "G08").card.additionalSuit, Suit.Hearts);
+  assert.ok(newPart);
   assert.equal(newPart.ownerId, "P");
   assert.equal(newPart.card.additionalSuit, undefined);
-  assert.notEqual(`${newPart.card.suit}:${newPart.card.activationNumber}`, `${state.territories[1].card.suit}:${state.territories[1].card.activationNumber}`);
+  assert.notEqual(`${newPart.card.suit}:${newPart.card.activationNumber}`, `${state.territories.find((territory) => territory.id === "G08").card.suit}:${state.territories.find((territory) => territory.id === "G08").card.activationNumber}`);
   assert.equal(newPart.participatedInWarThisRound, true);
   assert.equal(newPart.warParticipationLockedThisRound, true);
   assert.deepEqual(canTerritoryParticipateInWar(chosen, newPart.id), { allowed: false, reason: "NORMAL_TERRITORY_LIMIT" });
@@ -397,7 +409,7 @@ test("marked cut permits one-cell correction toward the marker", () => {
   assert.equal(fought.pendingWar.stage, "AWAITING_DIAMOND_CORRECTION");
   const corrected = act(fought, { type: GameActionType.ResolveDiamondCorrection, warId, playerId: "P",
     claimedCells: [{ x: 13, y: 0 }] }).state;
-  const newId = corrected.territories.find((territory) => territory.id.startsWith("B:war:")).id;
+  const newId = corrected.territories.find((territory) => /^G\d+$/.test(territory.id)).id;
   assert.equal(corrected.map.cells["13,0"], newId);
   assert.equal(corrected.pendingWar, undefined);
   assert.equal(corrected.borderMarks.length, 0);
@@ -430,7 +442,7 @@ test("war cut duplicates only the printed card when all 48 cards are used", () =
   for (let y = 0; y < 5; y++) for (let x = 8; x < 12; x++) partA.push({ x, y });
   fought = act(fought, { type: GameActionType.ProposeWarCut, warId, playerId: "P", partACells: partA }).state;
   const chosen = act(fought, { type: GameActionType.ChooseWarCut, warId, playerId: "Q", chosenPart: "B" }).state;
-  const newCard = chosen.territories.find((territory) => territory.id.startsWith("B:war:")).card;
+  const newCard = chosen.territories.find((territory) => /^G\d+$/.test(territory.id)).card;
   assert.equal(newCard.suit, base.territories[1].card.suit);
   assert.equal(newCard.activationNumber, base.territories[1].card.activationNumber);
   assert.equal(newCard.additionalSuit, undefined);

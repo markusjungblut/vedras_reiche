@@ -21,6 +21,7 @@ import type { RandomSource } from "../utils/random-source.js";
 import type { CardSource } from "../utils/card-source.js";
 import type { NormalAuctionBid, PendingTerritorySplit } from "./auction-state.js";
 import { completeStartAuctionAfterSplit } from "./start-auctions.js";
+import { allocateNextTerritoryId } from "../rules/territory-names.js";
 
 const BASIC_BIDS = [1, 2, 3] as const;
 
@@ -91,18 +92,6 @@ function validateNewCard(state: GameState, original: Territory, newPart: Territo
       card.additionalSuit !== undefined) {
     invalid();
   }
-}
-
-/** New map regions receive a short, reload-safe player-facing name. */
-function nextSplitTerritoryId(state: GameState): TerritoryId {
-  const used = new Set(state.territories.map((territory) => territory.id));
-  const highestNamed = Math.max(0, ...state.territories.flatMap((territory) => {
-    const match = /^Gebiet (\d+)$/.exec(territory.id);
-    return match === null ? [] : [Number(match[1])];
-  }));
-  let index = Math.max(state.territories.length + 1, highestNamed + 1);
-  while (used.has(`Gebiet ${index}`)) index += 1;
-  return `Gebiet ${index}`;
 }
 
 function appendEvents(
@@ -463,7 +452,8 @@ export function chooseSplitPart(
   }
   const original = state.territories.find((territory) => territory.id === split.originalTerritoryId);
   if (original === undefined || original.ownerId !== null || original.card === undefined) invalid();
-  const newTerritoryId = nextSplitTerritoryId(state);
+  const allocation = allocateNextTerritoryId(state);
+  const newTerritoryId = allocation.territoryId;
   if (state.territories.some((territory) => territory.id === newTerritoryId)) invalid();
   const chooserGetsOriginal = action.chosenPart === split.proposal.originalCardPart;
   const originalOwnerId = chooserGetsOriginal ? roles.firstChooserPlayerId : roles.dividerPlayerId;
@@ -509,7 +499,8 @@ export function chooseSplitPart(
     payload: { splitId: split.id, originalTerritoryId: split.originalTerritoryId, newTerritoryId },
   }]);
   return {
-    state: { ...resolved.state, map: mapResult.map, events: [...resolved.state.events, ...events] },
+    state: { ...resolved.state, map: mapResult.map, nextTerritoryDisplayNumber: allocation.nextTerritoryDisplayNumber,
+      events: [...resolved.state.events, ...events] },
     events: [...resolved.events, ...events],
   };
 }

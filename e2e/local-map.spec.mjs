@@ -257,6 +257,72 @@ test("direct drag pans without consuming the next territory click", async ({ pag
   await expect(page.locator(".details-column .details-panel")).toBeVisible();
 });
 
+async function mapPointForGrid(map, x, y) {
+  return map.evaluate((element, coordinate) => {
+    const transform = element.getScreenCTM();
+    if (transform === null) throw new Error("Rasterkarte hat keine Bildschirmtransformation.");
+    const point = new DOMPoint(coordinate.x, coordinate.y).matrixTransform(transform);
+    return { x: point.x, y: point.y };
+  }, { x, y });
+}
+
+async function drawWarSplitBoundary(page, map, territoryId, startY, endY) {
+  const cells = map.locator(`rect.map-cell[data-territory-id="${territoryId}"]`);
+  const coordinates = await cells.evaluateAll((elements) => elements.map((cell) => ({
+    x: Number(cell.getAttribute("x")), y: Number(cell.getAttribute("y")),
+  })));
+  const minimumX = Math.min(...coordinates.map((cell) => cell.x));
+  const maximumX = Math.max(...coordinates.map((cell) => cell.x));
+  const dividerX = (minimumX + maximumX + 1) / 2;
+  const start = await mapPointForGrid(map, dividerX, startY);
+  const end = await mapPointForGrid(map, dividerX, endY);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (let step = 1; step <= 12; step += 1) {
+    await page.mouse.move(start.x + (end.x - start.x) * step / 12, start.y + (end.y - start.y) * step / 12);
+  }
+  await page.mouse.up();
+}
+
+test("war cut starts blank, derives a split from a boundary, and keeps cell tuning optional", async ({ page }) => {
+  await openWithoutIntroduction(page, "/?developer=1");
+  await page.getByRole("button", { name: "Debug-Szenarien" }).click();
+  await page.getByRole("button", { name: "Krieg · Teilung" }).click();
+
+  const map = page.getByRole("img", { name: "Vedras Rasterkarte" });
+  await expect(map).toBeVisible();
+  const instruction = page.getByText(/Ziehe eine Grenze durch G\d+/);
+  await expect(instruction).toBeVisible();
+  await expect(map.locator("rect.map-cell-part-a")).toHaveCount(0);
+  const territoryId = (await instruction.textContent())?.match(/durch (G\d+)/)?.[1];
+  if (!territoryId) throw new Error("Das Zielgebiet der Kriegsteilung fehlt.");
+  const targetCells = await map.locator(`rect.map-cell[data-territory-id="${territoryId}"]`).evaluateAll((elements) =>
+    elements.map((cell) => Number(cell.getAttribute("y"))));
+  const minimumY = Math.min(...targetCells);
+  const maximumY = Math.max(...targetCells);
+
+  await drawWarSplitBoundary(page, map, territoryId, minimumY, minimumY + 1);
+  await expect(page.getByText("Die gezeichnete Grenze muss das Gebiet in genau zwei Teile trennen.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Grenze übernehmen" })).toBeDisabled();
+  await page.getByRole("button", { name: "Grenze neu zeichnen" }).click();
+
+  await drawWarSplitBoundary(page, map, territoryId, minimumY, maximumY + 1);
+  await expect(page.getByText("Vorschau: Beide Teile sind legal. Übernimm die Grenze für die Feinjustierung.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Grenze übernehmen" })).toBeEnabled();
+  await page.getByRole("button", { name: "Grenze übernehmen" }).click();
+  await expect(page.getByText(/Feinjustierung: Klicke einzelne Kästchen/)).toBeVisible();
+
+  const selectedCells = map.locator("rect.map-cell-part-a");
+  const selectedCount = await selectedCells.count();
+  await selectedCells.first().click();
+  await expect.poll(() => selectedCells.count()).toBe(selectedCount - 1);
+  await expect(page.getByRole("button", { name: "Teilung bestätigen" })).toBeDisabled();
+  await map.locator("rect.map-cell-part-b").first().click();
+  await expect(page.getByRole("button", { name: "Teilung bestätigen" })).toBeEnabled();
+  await page.getByRole("button", { name: "Teilung bestätigen" }).click();
+  await expect(page.getByText(/wählt den Teil, den er behält/)).toBeVisible();
+});
+
 test("the border editor shows direct and automatic transfer previews", async ({ page }) => {
   await openWithoutIntroduction(page, "/?developer=1");
   await page.getByRole("button", { name: "Debug-Szenarien" }).click();

@@ -16,6 +16,7 @@ import { PointOfInterestType } from "../model/point-of-interest.js";
 import { getBreakthroughThreshold } from "../rules/territory-size.js";
 import { scaleGridDepth } from "../rules/grid-depth.js";
 import { lockTerritoryAfterWarCut } from "../rules/war-participation.js";
+import { allocateNextTerritoryId } from "../rules/territory-names.js";
 import { finishCurrentBasicAction } from "../state/action-phase.js";
 import type { CombatResult, PendingWar } from "../state/action-phase-state.js";
 import { GamePhase } from "../state/game-phase.js";
@@ -251,13 +252,14 @@ export function chooseWarCut(
   const originalCells = action.chosenPart === "A" ? war.proposal.partACells : war.proposal.partBCells;
   const validation = validateTerritorySplit(state.map, loser.id, originalCells);
   if (!validation.valid || loser.card === undefined) throw new DomainError(DomainErrorCode.InvalidWarSplit);
-  const newId = `${loser.id}:war:${state.events.length + 1}`;
+  const allocation = allocateNextTerritoryId(state);
+  const newId = allocation.territoryId;
   if (state.territories.some((territory) => territory.id === newId)) throw new DomainError(DomainErrorCode.InvalidWarSplit);
   const newCard = drawNewCard(state, loser.card, random, cardSource);
   const map = applyTerritorySplitToMap(state.map, loser.id, newId, originalCells);
   const { area: _area, adjacentTerritoryIds: _adjacency, ...withoutCached } = loser;
   const next = reconcileMapBoundFeatures({
-    ...state, map,
+    ...state, map, nextTerritoryDisplayNumber: allocation.nextTerritoryDisplayNumber,
     territories: [
       ...state.territories.map((territory) => territory.id === loser.id
         ? lockTerritoryAfterWarCut(withoutCached) : territory),

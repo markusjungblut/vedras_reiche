@@ -152,6 +152,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .map-cell.map-cell-part-a, .map-cell.map-cell-part-a:hover { fill: #a97234; }
 .map-cell.map-cell-part-b, .map-cell.map-cell-part-b:hover { fill: #3674a4; }
 .map-cell-setup-available { fill: #233d68 !important; cursor: crosshair; }
+.raster-map.is-boundary-drawing, .raster-map.is-boundary-drawing .map-cell { cursor: crosshair; }
 .map-cell-setup-locked { cursor: not-allowed; }
 .map-cell-setup-selected, .map-cell-setup-selected:hover { fill: #d08a42 !important; }
 .map-cell-realm-candidate-0 { fill: #735eaf !important; }
